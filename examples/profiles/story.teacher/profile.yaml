@@ -1,0 +1,41 @@
+name: story.teacher
+language: pl
+document_type: opowiadanie ucznia
+reviewer_role: nauczyciel języka polskiego
+review_pipeline:
+  - sentence
+  - paragraph
+  - section
+  - document
+apply_policy:
+  typo: apply
+  grammar: apply
+  punctuation: apply
+  unclear_sentence: suggest
+  style: suggest
+  structure: suggest
+  plot_issue: comment
+action_policy:
+  apply_policy:
+    typo: apply
+    grammar: apply
+    punctuation: apply
+    unclear_sentence: suggest
+    style: suggest
+    structure: suggest
+    plot_issue: comment
+  allowed_action_types_for_auto_apply:
+    - replace
+    - delete
+    - insert_before
+    - insert_after
+  block_when_requires_human_decision: true
+  require_llm_apply_hint: false
+  min_confidence_for_auto_apply: 0.0
+  max_severity_for_auto_apply: high
+action_policies:
+  opowiadanie ucznia:
+    max_severity_for_auto_apply: medium
+outputs:
+  reviewed_docx: true
+  corrected_docx: true
