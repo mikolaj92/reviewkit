@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from reviewkit.context import ReviewContextProvider
+from reviewkit.document import ReviewDocument
 from reviewkit.llm import LLMClient
 from reviewkit.models import ReviewResult, ReviewStats
 from reviewkit.parser_docx import load_docx
@@ -40,4 +41,11 @@ def review_document(
         corrected_docx=corrected_path,
         document_summary=state.document_summary,
         stats=ReviewStats.from_actions(actions),
+        warnings=_document_warnings(document),
     )
+
+
+def _document_warnings(document: ReviewDocument) -> list[str]:
+    if document.metadata.get("tracked_revisions_detected") == "true":
+        return ["Input DOCX contains tracked revisions."]
+    return []

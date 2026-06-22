@@ -3,7 +3,7 @@ from typing import Any
 
 from docx import Document as DocxDocument
 
-from reviewkit import ReviewResult, review_document
+from reviewkit import ReviewResult, parser_docx, review_document
 from reviewkit.context import ReviewContext, ReviewContextProvider
 from reviewkit.document import ReviewDocument
 from reviewkit.llm import MockLLMClient
@@ -267,6 +267,25 @@ def test_context_provider_is_included_in_prompts(tmp_path: Path) -> None:
 
     assert "external_review_context" in llm.calls[0].content
     assert "Dike-style grounding" in llm.calls[0].content
+
+
+def test_tracked_revision_inputs_are_reported_as_warning(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(parser_docx, "_contains_tracked_revisions", lambda path: True)
+
+    result = _run_with_single_sentence_action(
+        tmp_path,
+        action={
+            "id": "a1",
+            "scope": "sentence",
+            "action_type": "comment",
+            "node_id": "p1.s1",
+            "comment": "Sprawdź historię zmian.",
+            "confidence": 1.0,
+        },
+        text="To jest tekst.",
+    )
+
+    assert result.warnings == ["Input DOCX contains tracked revisions."]
 
 
 def _run_with_single_sentence_action(
