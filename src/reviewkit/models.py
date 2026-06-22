@@ -132,3 +132,4 @@ class ReviewResult(BaseModel):
     corrected_docx: Path | None
     document_summary: str | None
     stats: ReviewStats
+    warnings: list[str] = Field(default_factory=list)
