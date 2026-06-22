@@ -128,7 +128,7 @@ def test_applied_actions_are_written_to_corrected_docx(tmp_path: Path) -> None:
     assert "bład" not in corrected_text
 
 
-def test_suggestion_text_edits_are_marked_in_reviewed_and_applied_in_corrected(
+def test_suggestion_text_edits_are_marked_in_reviewed_but_not_applied_in_corrected(
     tmp_path: Path,
 ) -> None:
     result = _run_with_single_sentence_action(
@@ -151,9 +151,9 @@ def test_suggestion_text_edits_are_marked_in_reviewed_and_applied_in_corrected(
     reviewed_comments = _docx_comments(result.reviewed_docx)
     assert "[DELETE: bardzo][INSERT: wyjątkowo]" in reviewed_text
     assert "SUGGESTION" in reviewed_comments
-    assert "wyjątkowo" in corrected_text
-    assert "bardzo" not in corrected_text
     assert result.actions[0].status == ActionStatus.NOT_APPLIED
+    assert "bardzo" in corrected_text
+    assert "wyjątkowo" not in corrected_text
 
 
 def test_conflict_is_not_applied(tmp_path: Path) -> None:
@@ -198,7 +198,8 @@ def test_document_type_action_policy_can_change_review_status(tmp_path: Path) ->
     assert result.actions[0].status == ActionStatus.NEEDS_HUMAN_DECISION
     assert "exceeds policy threshold" in (result.actions[0].policy_reason or "")
     corrected_text = _docx_text(result.corrected_docx)
-    assert "błąd" in corrected_text
+    assert "bład" in corrected_text
+    assert "błąd" not in corrected_text
 
 
 def test_policy_guard_blocks_corrected_when_protected_placeholder_changes(
