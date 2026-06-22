@@ -54,7 +54,7 @@ def apply_corrections_to_text(text: str, actions: Iterable[ReviewAction]) -> str
 
 
 def should_apply_to_corrected(action: ReviewAction) -> bool:
-    if action.status == ActionStatus.CONFLICT:
+    if action.status != ActionStatus.APPLIED:
         return False
     if action.metadata.get("blocked_from_corrected") is True:
         return False
