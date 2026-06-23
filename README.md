@@ -85,15 +85,12 @@ Markdown files contain reviewer instructions that can be edited by teachers, law
 
 ## DOCX Rendering
 
-`python-docx` does not expose native Track Changes as a high-level API. The first renderer is
-therefore pragmatic:
+`reviewed.docx` uses Word-compatible OpenXML revisions for text edits:
 
-- `reviewed.docx` uses inline markers for text edits and Word comments when available.
+- text edits are written as native `w:ins` / `w:del` tracked changes;
+- review notes are written as Word comments when available.
 - `corrected.docx` applies deterministic text-edit actions into a clean document.
 - Conflicts and hard safety-guard violations are not applied to `corrected.docx`.
-
-The renderer module contains a TODO where this can be replaced with true Word Track Changes /
-OpenXML support.
 
 ## Dike-Inspired Extension Points
 

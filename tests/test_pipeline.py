@@ -1,5 +1,7 @@
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 from docx import Document as DocxDocument
 
@@ -10,6 +12,8 @@ from reviewkit.llm import MockLLMClient
 from reviewkit.models import ActionStatus, ReviewActionType
 from reviewkit.profile import ReviewProfile
 from reviewkit.state import ReviewState
+
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 def test_hierarchical_review_passes_lower_level_results(tmp_path: Path) -> None:
@@ -128,7 +132,7 @@ def test_applied_actions_are_written_to_corrected_docx(tmp_path: Path) -> None:
     assert "bład" not in corrected_text
 
 
-def test_suggestion_text_edits_are_marked_in_reviewed_but_not_applied_in_corrected(
+def test_suggestion_text_edits_are_tracked_in_reviewed_but_not_applied_in_corrected(
     tmp_path: Path,
 ) -> None:
     result = _run_with_single_sentence_action(
@@ -147,9 +151,11 @@ def test_suggestion_text_edits_are_marked_in_reviewed_but_not_applied_in_correct
     )
 
     corrected_text = _docx_text(result.corrected_docx)
-    reviewed_text = _docx_text(result.reviewed_docx)
     reviewed_comments = _docx_comments(result.reviewed_docx)
-    assert "[DELETE: bardzo][INSERT: wyjątkowo]" in reviewed_text
+    reviewed_xml = _docx_document_xml(result.reviewed_docx)
+    assert "[DELETE:" not in reviewed_xml
+    assert _revision_texts(result.reviewed_docx, "del", "delText") == ["bardzo"]
+    assert _revision_texts(result.reviewed_docx, "ins", "t") == ["wyjątkowo"]
     assert "SUGGESTION" in reviewed_comments
     assert result.actions[0].status == ActionStatus.NOT_APPLIED
     assert "bardzo" in corrected_text
@@ -329,6 +335,21 @@ def _docx_comments(path: Path | None) -> str:
     assert path is not None
     docx = DocxDocument(str(path))
     return "\n".join(comment.text for comment in docx.comments)
+
+
+def _docx_document_xml(path: Path | None) -> str:
+    assert path is not None
+    with ZipFile(path) as archive:
+        return archive.read("word/document.xml").decode()
+
+
+def _revision_texts(path: Path | None, revision_tag: str, text_tag: str) -> list[str]:
+    root = ElementTree.fromstring(_docx_document_xml(path))
+    return [
+        "".join(element.itertext())
+        for element in root.findall(f".//{_W}{revision_tag}")
+        if element.find(f".//{_W}{text_tag}") is not None
+    ]
 
 
 class _StaticContextProvider(ReviewContextProvider):

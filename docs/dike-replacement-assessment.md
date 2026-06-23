@@ -107,8 +107,8 @@ Ten runtime nie jest tylko edytorem dokumentów. To deterministyczny subsystem c
 | Finding model | Bogaty legal/compliance model | Generyczny `ReviewAction` | Potrzebny mapper Finding -> ReviewAction |
 | Corrected policy | Rozbudowana, profile-driven | Prosta apply policy | Trzeba dodać policy hooks/guards |
 | Posejdon placeholders | Guard w Dike | Brak | Trzeba dodać guard przed auto-apply |
-| Comments | Dike używa komentarzy `python-docx` | ReviewKit ma minimalne markery | Można podnieść renderer ReviewKit do komentarzy Worda |
-| Track Changes | Brak pełnego OpenXML | Brak, TODO | Wspólny przyszły temat |
+| Comments | Dike używa komentarzy `python-docx` | ReviewKit używa komentarzy Worda | Zostawić generycznie w core |
+| Track Changes | Brak pełnego OpenXML | Tak, `w:ins` / `w:del` w `reviewed.docx` | ReviewKit może być lepszym rendererem review |
 | Reports JSON/MD | Tak | Nie taki cel | Nie zastępować przez ReviewKit |
 | Batch/cache/audit/history | Tak | Brak | Zostawić w Fali/Dike/Argus |
 
@@ -197,6 +197,7 @@ ReviewKit może teraz zastąpić około **40-50% legacy Dike DOCX review flow**:
 - LLM abstraction,
 - statusy akcji,
 - corrected/reviewed output,
+- komentarze Worda i podstawowe Track Changes,
 - ogólny model profili.
 
 ReviewKit nie może jeszcze zastąpić:
@@ -207,8 +208,6 @@ ReviewKit nie może jeszcze zastąpić:
 - Dike review packets,
 - profile-driven corrected policy,
 - Posejdon placeholder safety,
-- bogatego parsera DOCX/PDF,
-- komentarzy Worda w rendererze.
+- bogatego parsera DOCX/PDF.
 
 Po dodaniu adapterów i policy hooks ReviewKit może przejąć **80-90% legacy Dike DOCX artifact flow**, ale Dike nadal powinien zostać legal/compliance providerem.
-
