@@ -9,11 +9,16 @@ from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile
 
 WRITING_ACTIONS = {
+    ReviewActionType.REPLACE_TEXT,
+    ReviewActionType.DELETE_TEXT,
+    ReviewActionType.INSERT_TEXT,
     ReviewActionType.REPLACE,
     ReviewActionType.DELETE,
     ReviewActionType.INSERT_BEFORE,
     ReviewActionType.INSERT_AFTER,
 }
+
+_SENSITIVE_TEXT_PATTERN = re.compile(r"\d|https?://|[\w.+-]+@[\w.-]+|[€$£¥]|\{\{[^}]+\}\}")
 
 _SEVERITY_ORDER = {
     "info": 0,
@@ -83,10 +88,11 @@ class ActionPolicy:
                 reason="Action requested human decision and policy blocks auto-apply.",
             )
 
-        if self.config.require_llm_apply_hint and action.apply_to_corrected is not True:
+        has_apply_hint = action.apply_hint is True or action.apply_to_corrected is True
+        if self.config.require_llm_apply_hint and not has_apply_hint:
             return ActionPolicyDecision(
                 status=ActionStatus.NOT_APPLIED,
-                reason="Policy requires explicit model apply_to_corrected=true.",
+                reason="Policy requires explicit model apply_hint=true or apply_to_corrected=true.",
             )
 
         if action.confidence < self.config.min_confidence_for_auto_apply:
@@ -161,9 +167,6 @@ class ActionPolicy:
         return ActionStatus.NOT_APPLIED
 
     def _guard_reason(self, action: ReviewAction, *, node_text: str) -> str | None:
-        if not self.config.protected_patterns:
-            return None
-
         changed_text = _apply_action_to_text(node_text, action)
         for protected in self.config.protected_patterns:
             if not protected.preserve:
@@ -178,6 +181,10 @@ class ActionPolicy:
                     f"Protected pattern {protected.name!r} changed during auto-apply; "
                     "human decision is required."
                 )
+        if not self.config.auto_apply_sensitive_text and _sensitive_text_changed(
+            action, node_text=node_text, changed_text=changed_text
+        ):
+            return "sensitive text changed during auto-apply; human decision is required."
         return None
 
     @staticmethod
@@ -201,6 +208,24 @@ def _apply_action_to_text(text: str, action: ReviewAction) -> str:
     original = action.original_text or ""
     replacement = action.replacement_text or ""
 
+    if action.locator and action.locator.char_start is not None and action.locator.char_end is not None:
+        start = action.locator.char_start
+        end = action.locator.char_end
+        if action.action_type == ReviewActionType.REPLACE_TEXT:
+            return f"{text[:start]}{replacement}{text[end:]}"
+        if action.action_type == ReviewActionType.DELETE_TEXT:
+            return f"{text[:start]}{text[end:]}"
+        if action.action_type == ReviewActionType.INSERT_TEXT:
+            return f"{text[:start]}{replacement}{text[start:]}"
+
+    if action.action_type == ReviewActionType.REPLACE_TEXT and original:
+        return text.replace(original, replacement, 1)
+    if action.action_type == ReviewActionType.DELETE_TEXT and original:
+        return text.replace(original, "", 1)
+    if action.action_type == ReviewActionType.INSERT_TEXT:
+        if original:
+            return text.replace(original, f"{original}{replacement}", 1)
+        return f"{text}{replacement}"
     if action.action_type == ReviewActionType.REPLACE and original:
         return text.replace(original, replacement, 1)
     if action.action_type == ReviewActionType.DELETE and original:
@@ -214,3 +239,23 @@ def _apply_action_to_text(text: str, action: ReviewAction) -> str:
             return text.replace(original, f"{original}{replacement}", 1)
         return f"{text}{replacement}"
     return text
+
+
+def _sensitive_text_changed(
+    action: ReviewAction, *, node_text: str, changed_text: str
+) -> bool:
+    if action.action_type not in WRITING_ACTIONS or node_text == changed_text:
+        return False
+    touched_text = " ".join(
+        part
+        for part in [action.original_text, action.replacement_text, _located_text(node_text, action)]
+        if part
+    )
+    return bool(_SENSITIVE_TEXT_PATTERN.search(touched_text))
+
+
+def _located_text(node_text: str, action: ReviewAction) -> str | None:
+    locator = action.locator
+    if locator is None or locator.char_start is None or locator.char_end is None:
+        return None
+    return node_text[locator.char_start : locator.char_end]

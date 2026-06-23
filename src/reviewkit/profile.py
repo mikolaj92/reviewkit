@@ -6,9 +6,9 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from reviewkit.models import ReviewActionType, ReviewScope
+from reviewkit.models import ReviewActionType, ReviewDimension, ReviewScope
 
 
 class OutputConfig(BaseModel):
@@ -26,6 +26,9 @@ class ActionPolicyConfig(BaseModel):
     apply_policy: dict[str, str] = Field(default_factory=dict)
     allowed_action_types_for_auto_apply: list[ReviewActionType] = Field(
         default_factory=lambda: [
+            ReviewActionType.REPLACE_TEXT,
+            ReviewActionType.DELETE_TEXT,
+            ReviewActionType.INSERT_TEXT,
             ReviewActionType.REPLACE,
             ReviewActionType.DELETE,
             ReviewActionType.INSERT_BEFORE,
@@ -33,12 +36,15 @@ class ActionPolicyConfig(BaseModel):
         ]
     )
     block_when_requires_human_decision: bool = True
-    require_llm_apply_hint: bool = False
+    require_llm_apply_hint: bool = True
     blocked_categories: list[str] = Field(default_factory=list)
-    min_confidence_for_auto_apply: float = 0.0
-    max_severity_for_auto_apply: str = "critical"
+    min_confidence_for_auto_apply: float = 0.85
+    max_severity_for_auto_apply: str = "medium"
     max_priority_for_auto_apply: str | None = None
     protected_patterns: list[ProtectedPatternConfig] = Field(default_factory=list)
+    auto_apply_requires_unique_match: bool = True
+    auto_apply_sensitive_text: bool = False
+    ambiguous_edit_behavior: str = "conflict"
 
     def merged(self, override: "ActionPolicyConfig | None") -> "ActionPolicyConfig":
         if override is None:
@@ -58,10 +64,15 @@ class ActionPolicyConfig(BaseModel):
 class ReviewProfile(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    profile_id: str | None = None
     name: str
+    display_name: str | None = None
+    description: str | None = None
     language: str
     document_type: str
     reviewer_role: str
+    review_instructions: str | None = None
+    review_dimensions: list[str | ReviewDimension] = Field(default_factory=list)
     review_pipeline: list[ReviewScope] = Field(
         default_factory=lambda: [
             ReviewScope.SENTENCE,
@@ -76,10 +87,21 @@ class ReviewProfile(BaseModel):
     outputs: OutputConfig = Field(default_factory=OutputConfig)
     profile_path: Path | None = None
     markdown_files: dict[str, str] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _fill_profile_identity(self) -> "ReviewProfile":
+        if self.profile_id is None:
+            self.profile_id = self.name
+        if self.display_name is None:
+            self.display_name = self.name
+        return self
 
     @property
     def instructions_text(self) -> str:
-        sections = []
+        sections: list[str] = []
+        if self.review_instructions:
+            sections.append(self.review_instructions.strip())
         for filename, text in self.markdown_files.items():
             sections.append(f"## {filename}\n{text.strip()}")
         return "\n\n".join(sections)

@@ -140,6 +140,9 @@ def _is_trackable_edit(action: ReviewAction) -> bool:
     if action.metadata.get("blocked_from_corrected") is True:
         return False
     return action.action_type in {
+        ReviewActionType.REPLACE_TEXT,
+        ReviewActionType.DELETE_TEXT,
+        ReviewActionType.INSERT_TEXT,
         ReviewActionType.REPLACE,
         ReviewActionType.DELETE,
         ReviewActionType.INSERT_BEFORE,
@@ -157,9 +160,8 @@ def _add_reviewed_runs(
         return revision_id
 
     segments = _paragraph_segments(paragraph)
-    for action in actions:
-        if _is_trackable_edit(action):
-            segments, revision_id = _track_action(segments, action, revision_id)
+    for action in _trackable_actions_in_application_order(actions):
+        segments, revision_id = _track_action(segments, action, revision_id)
 
     for action in actions:
         if not _comment_text(action):
@@ -174,29 +176,57 @@ def _add_reviewed_runs(
     return revision_id
 
 
+def _trackable_actions_in_application_order(actions: list[ReviewAction]) -> list[ReviewAction]:
+    locator_actions: list[tuple[int, int, int, ReviewAction]] = []
+    other_actions: list[ReviewAction] = []
+    for index, action in enumerate(actions):
+        if not _is_trackable_edit(action):
+            continue
+        action_range = _locator_action_range(action)
+        if action_range is None:
+            other_actions.append(action)
+            continue
+        start, end = action_range
+        locator_actions.append((start, end, index, action))
+    locator_actions.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    return [item[3] for item in locator_actions] + other_actions
+
+
 def _track_action(
     segments: list[_Segment],
     action: ReviewAction,
     revision_id: int,
 ) -> tuple[list[_Segment], int]:
-    if action.action_type in {ReviewActionType.REPLACE, ReviewActionType.DELETE}:
-        if not action.original_text:
+    if action.action_type in {
+        ReviewActionType.REPLACE_TEXT,
+        ReviewActionType.DELETE_TEXT,
+        ReviewActionType.REPLACE,
+        ReviewActionType.DELETE,
+    }:
+        action_range = _action_range(segments, action)
+        if action_range is None:
             return segments, revision_id
-        start = _visible_text(segments).find(action.original_text)
-        if start < 0:
-            return segments, revision_id
-        end = start + len(action.original_text)
+        start, end = action_range
         deleted = _visible_slice(segments, start, end, "del", action.id)
         replacement: list[_Segment] = deleted
-        if action.action_type == ReviewActionType.REPLACE and action.replacement_text:
+        if action.action_type in {
+            ReviewActionType.REPLACE_TEXT,
+            ReviewActionType.REPLACE,
+        } and action.replacement_text:
             replacement.append(
                 _Segment("ins", action.replacement_text, _rpr_at(segments, start), action.id)
             )
         revision_id = _assign_revision_ids(replacement, revision_id)
         return _replace_visible_range(segments, start, end, replacement), revision_id
 
-    if action.action_type in {ReviewActionType.INSERT_BEFORE, ReviewActionType.INSERT_AFTER}:
-        if action.original_text:
+    if action.action_type in {
+        ReviewActionType.INSERT_TEXT,
+        ReviewActionType.INSERT_BEFORE,
+        ReviewActionType.INSERT_AFTER,
+    }:
+        if action.action_type == ReviewActionType.INSERT_TEXT and action.locator:
+            offset = action.locator.char_start or 0
+        elif action.original_text:
             start = _visible_text(segments).find(action.original_text)
             if start < 0:
                 return segments, revision_id
@@ -324,6 +354,26 @@ def _assign_revision_ids(segments: list[_Segment], revision_id: int) -> int:
 
 def _visible_text(segments: list[_Segment]) -> str:
     return "".join(segment.text for segment in segments if segment.kind == "text")
+
+
+def _action_range(segments: list[_Segment], action: ReviewAction) -> tuple[int, int] | None:
+    locator_range = _locator_action_range(action)
+    if locator_range is not None:
+        return locator_range
+    if not action.original_text:
+        return None
+    start = _visible_text(segments).find(action.original_text)
+    if start < 0:
+        return None
+    return start, start + len(action.original_text)
+
+
+def _locator_action_range(action: ReviewAction) -> tuple[int, int] | None:
+    if not action.locator:
+        return None
+    if action.locator.char_start is None or action.locator.char_end is None:
+        return None
+    return action.locator.char_start, action.locator.char_end
 
 
 def _visible_len(segments: list[_Segment]) -> int:
@@ -505,6 +555,9 @@ def _comment_text(action: ReviewAction) -> str | None:
 
 def _comment_label(action: ReviewAction) -> str:
     if action.action_type in {
+        ReviewActionType.REPLACE_TEXT,
+        ReviewActionType.DELETE_TEXT,
+        ReviewActionType.INSERT_TEXT,
         ReviewActionType.REPLACE,
         ReviewActionType.DELETE,
         ReviewActionType.INSERT_BEFORE,
