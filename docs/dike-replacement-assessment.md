@@ -98,7 +98,7 @@ Ten runtime nie jest tylko edytorem dokumentów. To deterministyczny subsystem c
 
 | Obszar | Dike | ReviewKit dziś | Wniosek |
 | --- | --- | --- | --- |
-| DOCX input | Tak, legacy i shipped parsers | Tak, podstawowo | ReviewKit potrzebuje lepszych segmentów z locatorami |
+| DOCX input | Tak, legacy i shipped parsers | Tak, body/tabele/header/footer z locatorami | ReviewKit potrzebuje jeszcze bogatszego parsera |
 | Hierarchia review | Paragraph-first, sekcje/dokument agregowane | Sentence -> paragraph -> section -> document | ReviewKit ma lepszą docelową architekturę review |
 | LLM provider | OpenAI-compatible przez gateway | Generyczny `LLMClient` | ReviewKit jest bardziej wymienny |
 | Profile | YAML, ale mocno Dike-specific | Folder YAML/Markdown dla ludzi | ReviewKit pasuje do profili reviewerów |
@@ -107,8 +107,8 @@ Ten runtime nie jest tylko edytorem dokumentów. To deterministyczny subsystem c
 | Finding model | Bogaty legal/compliance model | Generyczny `ReviewAction` | Potrzebny mapper Finding -> ReviewAction |
 | Corrected policy | Rozbudowana, profile-driven | Prosta apply policy | Trzeba dodać policy hooks/guards |
 | Posejdon placeholders | Guard w Dike | Brak | Trzeba dodać guard przed auto-apply |
-| Comments | Dike używa komentarzy `python-docx` | ReviewKit używa komentarzy Worda | Zostawić generycznie w core |
-| Track Changes | Brak pełnego OpenXML | Tak, `w:ins` / `w:del` w `reviewed.docx` | ReviewKit może być lepszym rendererem review |
+| Comments | Dike używa komentarzy `python-docx` | ReviewKit kotwiczy komentarze na fragmencie | Zostawić generycznie w core |
+| Track Changes | Brak pełnego OpenXML | Tak, in-place `w:ins` / `w:del` w `reviewed.docx` | ReviewKit może być lepszym rendererem review |
 | Reports JSON/MD | Tak | Nie taki cel | Nie zastępować przez ReviewKit |
 | Batch/cache/audit/history | Tak | Brak | Zostawić w Fali/Dike/Argus |
 
@@ -136,13 +136,14 @@ Minimalny plan:
    - `ComplianceReport/Finding` -> `ReviewAction`.
 
 5. Ulepszyć parser DOCX:
-   - body, tables, headers, footers, comments, footnotes,
+   - comments, footnotes,
    - stable locator / segment id,
    - wykrywanie tracked revisions.
 
 6. Ulepszyć renderer:
-   - Word comments przez `document.comments.add_comment`,
-   - reviewed output z komentarzami i propozycjami zmian,
+   - reviewed output patchowany in-place dla body/tabel/headerów/footerów,
+   - Word comments kotwiczone na fragmencie,
+   - propozycje zmian jako `w:ins` / `w:del`,
    - corrected output bez nagłówków raportowych, jako czysty skorygowany dokument tam, gdzie to możliwe.
 
 7. Dodać profil `dike.legal-review` albo adapter profilu Dike:

@@ -85,10 +85,11 @@ Markdown files contain reviewer instructions that can be edited by teachers, law
 
 ## DOCX Rendering
 
-`reviewed.docx` uses Word-compatible OpenXML revisions for text edits:
+`reviewed.docx` starts from the source DOCX and patches reviewed paragraphs in place:
 
-- text edits are written as native `w:ins` / `w:del` tracked changes;
-- review notes are written as Word comments when available.
+- body, table, header and footer paragraphs keep the original document structure;
+- text edits are written as native `w:ins` / `w:del` tracked changes around the changed text;
+- review notes are anchored as Word comments on the reviewed fragment when possible.
 - `corrected.docx` applies deterministic text-edit actions into a clean document.
 - Conflicts and hard safety-guard violations are not applied to `corrected.docx`.
 
