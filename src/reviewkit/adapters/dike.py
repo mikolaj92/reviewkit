@@ -100,8 +100,9 @@ def _action_from_finding(finding: Mapping[str, Any] | object) -> ReviewAction:
 def _as_mapping(value: Mapping[str, Any] | object) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return value
-    if hasattr(value, "model_dump"):
-        dumped = value.model_dump(mode="json")
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        dumped = model_dump(mode="json")
         return dumped if isinstance(dumped, Mapping) else {}
     if is_dataclass(value) and not isinstance(value, type):
         return {field.name: getattr(value, field.name) for field in fields(value)}
