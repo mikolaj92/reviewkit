@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from docx import Document as DocxDocument
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 from reviewkit.actions import actions_for_paragraph, apply_corrections_to_text
 from reviewkit.document import ReviewDocument
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
+
+_SegmentKind = Literal["text", "ins", "del"]
+_Segment = tuple[_SegmentKind, str]
 
 
 def render_reviewed_docx(
@@ -17,24 +23,27 @@ def render_reviewed_docx(
     actions: list[ReviewAction],
     output_path: str | Path,
 ) -> Path:
-    # TODO: Replace this marker-based renderer with true Word Track Changes/comments
-    # via OpenXML once the low-level implementation is introduced.
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     docx = DocxDocument()
+    revision_id = 1
 
     for section in document.sections:
         if section.title:
             docx.add_heading(section.title, level=1)
         for paragraph in section.paragraphs:
             paragraph_actions = actions_for_paragraph(document, paragraph, actions)
-            docx_paragraph = docx.add_paragraph(_reviewed_text(paragraph.text, paragraph_actions))
+            docx_paragraph = docx.add_paragraph()
+            revision_id = _add_reviewed_runs(
+                docx_paragraph,
+                paragraph.text,
+                paragraph_actions,
+                revision_id,
+            )
             for action in paragraph_actions:
                 comment = _comment_text(action)
                 if comment and not _add_comment(docx, docx_paragraph, comment):
-                    marker = _comment_marker(action)
-                    if marker:
-                        docx.add_paragraph(marker)
+                    docx.add_paragraph(comment)
 
         section_comments = [
             _comment_text(action)
@@ -87,42 +96,113 @@ def render_corrected_docx(
     return path
 
 
-def _reviewed_text(text: str, actions: list[ReviewAction]) -> str:
-    result = text
+def _add_reviewed_runs(
+    paragraph: Any,
+    text: str,
+    actions: list[ReviewAction],
+    revision_id: int,
+) -> int:
+    for kind, value in _reviewed_segments(text, actions):
+        if kind == "text":
+            _append_text_run(paragraph._p, value)
+            continue
+        _append_revision(paragraph._p, kind, value, revision_id)
+        revision_id += 1
+    return revision_id
+
+
+def _reviewed_segments(text: str, actions: list[ReviewAction]) -> list[_Segment]:
+    segments: list[_Segment] = [("text", text)]
     for action in actions:
         if action.status == ActionStatus.CONFLICT:
             continue
         if action.metadata.get("blocked_from_corrected") is True:
             continue
         if action.action_type == ReviewActionType.REPLACE and action.original_text:
-            result = result.replace(
+            segments = _replace_once(
+                segments,
                 action.original_text,
-                f"[DELETE: {action.original_text}][INSERT: {action.replacement_text or ''}]",
-                1,
+                [
+                    ("del", action.original_text),
+                    ("ins", action.replacement_text or ""),
+                ],
             )
         elif action.action_type == ReviewActionType.DELETE and action.original_text:
-            result = result.replace(action.original_text, f"[DELETE: {action.original_text}]", 1)
+            segments = _replace_once(segments, action.original_text, [("del", action.original_text)])
         elif action.action_type == ReviewActionType.INSERT_BEFORE:
-            insert = f"[INSERT: {action.replacement_text or ''}]"
+            insert: _Segment = ("ins", action.replacement_text or "")
             if action.original_text:
-                result = result.replace(action.original_text, f"{insert}{action.original_text}", 1)
+                segments = _replace_once(
+                    segments,
+                    action.original_text,
+                    [insert, ("text", action.original_text)],
+                )
             else:
-                result = f"{insert}{result}"
+                segments = [insert, *segments]
         elif action.action_type == ReviewActionType.INSERT_AFTER:
-            insert = f"[INSERT: {action.replacement_text or ''}]"
+            insert = ("ins", action.replacement_text or "")
             if action.original_text:
-                result = result.replace(action.original_text, f"{action.original_text}{insert}", 1)
+                segments = _replace_once(
+                    segments,
+                    action.original_text,
+                    [("text", action.original_text), insert],
+                )
             else:
-                result = f"{result}{insert}"
-    return result
+                segments = [*segments, insert]
+    return [(kind, value) for kind, value in segments if value]
 
 
-def _comment_marker(action: ReviewAction) -> str | None:
-    comment = _comment_text(action)
-    if comment is None:
-        return None
-    label = _comment_label(action)
-    return f"[{label}: {comment}]"
+def _replace_once(
+    segments: list[_Segment],
+    needle: str,
+    replacement: list[_Segment],
+) -> list[_Segment]:
+    if not needle:
+        return segments
+
+    for index, (kind, value) in enumerate(segments):
+        if kind != "text":
+            continue
+        before, found, after = value.partition(needle)
+        if not found:
+            continue
+
+        updated: list[_Segment] = []
+        if before:
+            updated.append(("text", before))
+        updated.extend(segment for segment in replacement if segment[1])
+        if after:
+            updated.append(("text", after))
+        return [*segments[:index], *updated, *segments[index + 1 :]]
+    return segments
+
+
+def _append_text_run(parent: Any, text: str) -> None:
+    run = OxmlElement("w:r")
+    text_element = OxmlElement("w:t")
+    _set_text(text_element, text)
+    run.append(text_element)
+    parent.append(run)
+
+
+def _append_revision(parent: Any, kind: Literal["ins", "del"], text: str, revision_id: int) -> None:
+    revision = OxmlElement(f"w:{kind}")
+    revision.set(qn("w:id"), str(revision_id))
+    revision.set(qn("w:author"), "ReviewKit")
+    revision.set(qn("w:date"), datetime.now(UTC).replace(microsecond=0).isoformat())
+
+    run = OxmlElement("w:r")
+    text_element = OxmlElement("w:t" if kind == "ins" else "w:delText")
+    _set_text(text_element, text)
+    run.append(text_element)
+    revision.append(run)
+    parent.append(revision)
+
+
+def _set_text(element: Any, text: str) -> None:
+    if text[:1].isspace() or text[-1:].isspace():
+        element.set(qn("xml:space"), "preserve")
+    element.text = text
 
 
 def _comment_text(action: ReviewAction) -> str | None:
