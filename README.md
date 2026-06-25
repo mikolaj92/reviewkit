@@ -157,8 +157,7 @@ Existing extension points include:
 - per-document-type `action_policy` / `action_policies` in profile YAML,
 - policy reasons, source-system tags, evidence refs and references on `ReviewAction`,
 - protected-pattern guards for corrected output safety,
-- `ReviewContextProvider` for grounding, classifier results or external evidence,
-- structural Dike adapters under `reviewkit.adapters.dike`.
+- `ReviewContextProvider` for grounding, classifier results or external evidence.
 
 ## Limitations
 
