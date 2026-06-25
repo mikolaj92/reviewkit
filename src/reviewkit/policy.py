@@ -28,17 +28,6 @@ _SEVERITY_ORDER = {
     "critical": 4,
 }
 
-_PRIORITY_ORDER = {
-    "niski": 0,
-    "low": 0,
-    "średni": 1,
-    "sredni": 1,
-    "medium": 1,
-    "wysoki": 2,
-    "high": 2,
-    "critical": 3,
-}
-
 
 @dataclass(frozen=True)
 class ActionPolicyDecision:
@@ -118,8 +107,8 @@ class ActionPolicy:
         if (
             action.priority is not None
             and self.config.max_priority_for_auto_apply is not None
-            and _priority_rank(action.priority)
-            > _priority_rank(self.config.max_priority_for_auto_apply)
+            and _priority_rank(action.priority, self.config.priority_order)
+            > _priority_rank(self.config.max_priority_for_auto_apply, self.config.priority_order)
         ):
             return ActionPolicyDecision(
                 status=ActionStatus.NEEDS_HUMAN_DECISION,
@@ -152,6 +141,9 @@ class ActionPolicy:
             return ActionStatus.NEEDS_HUMAN_DECISION
         if policy in {"suggest", "comment"}:
             return ActionStatus.NOT_APPLIED
+
+        if action.requires_human_decision and self.config.block_when_requires_human_decision:
+            return ActionStatus.NEEDS_HUMAN_DECISION
 
         if action.action_type in {ReviewActionType.RISK, ReviewActionType.QUESTION}:
             return ActionStatus.NEEDS_HUMAN_DECISION
@@ -200,8 +192,8 @@ def _severity_rank(value: str) -> int:
     return _SEVERITY_ORDER.get(value.strip().lower(), _SEVERITY_ORDER["medium"])
 
 
-def _priority_rank(value: str) -> int:
-    return _PRIORITY_ORDER.get(value.strip().lower(), _PRIORITY_ORDER["medium"])
+def _priority_rank(value: str, order: dict[str, int]) -> int:
+    return order.get(value.strip().lower(), order.get("medium", 0))
 
 
 def _apply_action_to_text(text: str, action: ReviewAction) -> str:

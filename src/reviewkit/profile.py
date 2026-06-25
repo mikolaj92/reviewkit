@@ -41,6 +41,9 @@ class ActionPolicyConfig(BaseModel):
     min_confidence_for_auto_apply: float = 0.85
     max_severity_for_auto_apply: str = "medium"
     max_priority_for_auto_apply: str | None = None
+    priority_order: dict[str, int] = Field(
+        default_factory=lambda: {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    )
     protected_patterns: list[ProtectedPatternConfig] = Field(default_factory=list)
     auto_apply_requires_unique_match: bool = True
     auto_apply_sensitive_text: bool = False

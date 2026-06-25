@@ -185,6 +185,72 @@ def test_multiple_locator_edits_apply_from_original_offsets() -> None:
         assert apply_corrections_to_text(document.text, prepared) == "A beta G."
 
 
+def test_comment_action_requiring_human_decision_is_not_downgraded() -> None:
+    document = _document("This clause is unusual.")
+    profile = _auto_apply_profile()
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1",
+        comment="Escalate this clause to a human reviewer.",
+        requires_human_decision=True,
+    )
+
+    prepared = prepare_actions(document, profile, [action])
+
+    assert prepared[0].status == ActionStatus.NEEDS_HUMAN_DECISION
+
+
+def test_comment_action_without_human_decision_stays_advisory() -> None:
+    document = _document("This clause is unusual.")
+    profile = _auto_apply_profile()
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1",
+        comment="A minor stylistic note.",
+        requires_human_decision=False,
+    )
+
+    prepared = prepare_actions(document, profile, [action])
+
+    assert prepared[0].status == ActionStatus.NOT_APPLIED
+
+
+def test_priority_vocabulary_is_caller_defined_not_hardcoded() -> None:
+    document = _document("The cat sat.")
+    profile = ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        action_policy=ActionPolicyConfig(
+            apply_policy={"safe_edit": "apply"},
+            require_llm_apply_hint=True,
+            min_confidence_for_auto_apply=0.0,
+            max_priority_for_auto_apply="routine",
+            priority_order={"routine": 0, "urgent": 1},
+        ),
+    )
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="cat",
+        replacement_text="dog",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        priority="urgent",
+        locator=ReviewLocator(node_id="p1", char_start=4, char_end=7, original_text="cat"),
+    )
+
+    prepared = prepare_actions(document, profile, [action])
+
+    assert prepared[0].status == ActionStatus.NEEDS_HUMAN_DECISION
+    assert "priority" in (prepared[0].policy_reason or "")
+
+
 def _document(text: str) -> ReviewDocument:
     return ReviewDocument(
         sections=[
