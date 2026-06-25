@@ -38,6 +38,15 @@ class ActionPolicyConfig(BaseModel):
     min_confidence_for_auto_apply: float = 0.0
     max_severity_for_auto_apply: str = "critical"
     max_priority_for_auto_apply: str | None = None
+    priority_order: dict[str, int] = Field(
+        default_factory=lambda: {
+            "low": 0,
+            "medium": 1,
+            "high": 2,
+            "critical": 3,
+        },
+        description="Priority label ranking used when max_priority_for_auto_apply is set.",
+    )
     protected_patterns: list[ProtectedPatternConfig] = Field(default_factory=list)
 
     def merged(self, override: "ActionPolicyConfig | None") -> "ActionPolicyConfig":

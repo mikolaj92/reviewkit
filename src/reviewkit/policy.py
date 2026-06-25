@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
@@ -22,18 +23,6 @@ _SEVERITY_ORDER = {
     "high": 3,
     "critical": 4,
 }
-
-_PRIORITY_ORDER = {
-    "niski": 0,
-    "low": 0,
-    "średni": 1,
-    "sredni": 1,
-    "medium": 1,
-    "wysoki": 2,
-    "high": 2,
-    "critical": 3,
-}
-
 
 @dataclass(frozen=True)
 class ActionPolicyDecision:
@@ -112,8 +101,8 @@ class ActionPolicy:
         if (
             action.priority is not None
             and self.config.max_priority_for_auto_apply is not None
-            and _priority_rank(action.priority)
-            > _priority_rank(self.config.max_priority_for_auto_apply)
+            and _priority_rank(action.priority, self.config.priority_order)
+            > _priority_rank(self.config.max_priority_for_auto_apply, self.config.priority_order)
         ):
             return ActionPolicyDecision(
                 status=ActionStatus.NEEDS_HUMAN_DECISION,
@@ -193,8 +182,9 @@ def _severity_rank(value: str) -> int:
     return _SEVERITY_ORDER.get(value.strip().lower(), _SEVERITY_ORDER["medium"])
 
 
-def _priority_rank(value: str) -> int:
-    return _PRIORITY_ORDER.get(value.strip().lower(), _PRIORITY_ORDER["medium"])
+def _priority_rank(value: str, priority_order: Mapping[str, int]) -> int:
+    normalized_order = {label.strip().lower(): rank for label, rank in priority_order.items()}
+    return normalized_order.get(value.strip().lower(), normalized_order.get("medium", 1))
 
 
 def _apply_action_to_text(text: str, action: ReviewAction) -> str:
