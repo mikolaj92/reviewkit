@@ -23,8 +23,8 @@ _SegmentKind = Literal["text", "ins", "del"]
 class _ReviewerIdentity:
     """Author identity stamped onto tracked-change revisions and Word comments."""
 
-    author: str = "ReviewKit"
-    initials: str = "RK"
+    author: str = "Reviewer"
+    initials: str = "RV"
 
 
 @dataclass
@@ -43,8 +43,8 @@ def render_reviewed_docx(
     actions: list[ReviewAction],
     output_path: str | Path,
     *,
-    comment_author: str = "ReviewKit",
-    comment_initials: str = "RK",
+    comment_author: str = "Reviewer",
+    comment_initials: str = "RV",
 ) -> Path:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
