@@ -272,7 +272,7 @@ def test_context_provider_is_included_in_prompts(tmp_path: Path) -> None:
     )
 
     assert "external_review_context" in llm.calls[0].content
-    assert "Dike-style grounding" in llm.calls[0].content
+    assert "External grounding" in llm.calls[0].content
 
 
 def test_tracked_revision_inputs_are_reported_as_warning(tmp_path: Path, monkeypatch) -> None:
@@ -365,5 +365,5 @@ class _StaticContextProvider(ReviewContextProvider):
         return ReviewContext(
             scope=scope,
             node_id=node.id,
-            data={"grounding": "Dike-style grounding", "source": "test"},
+            data={"grounding": "External grounding", "source": "test"},
         )

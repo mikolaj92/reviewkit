@@ -93,15 +93,17 @@ Markdown files contain reviewer instructions that can be edited by teachers, law
 - `corrected.docx` applies deterministic text-edit actions into a clean document.
 - Conflicts and hard safety-guard violations are not applied to `corrected.docx`.
 
-## Dike-Inspired Extension Points
+## Consumer Extension Points
 
-ReviewKit keeps domain logic outside the core, but supports Dike-style integrations through:
+ReviewKit keeps domain logic outside the core. Consumers that have domain-specific
+reports should map those reports to `ReviewAction` in their own code.
+
+The generic package supports integrations through:
 
 - per-document-type `action_policy` / `action_policies` in profile YAML,
 - policy reasons, source-system tags, evidence refs and references on `ReviewAction`,
 - protected-pattern guards for corrected output safety,
-- `ReviewContextProvider` for grounding, classifier results or external evidence,
-- structural Dike adapters under `reviewkit.adapters.dike`.
+- `ReviewContextProvider` for grounding, classifier results or external evidence.
 
 ## Contributors
 
