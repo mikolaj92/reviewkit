@@ -96,6 +96,38 @@ def test_reviewed_docx_patches_table_header_and_footer_paragraphs(tmp_path: Path
     assert _revision_texts(footer_xml, "ins", "t") == ["błąd"]
 
 
+def test_reviewed_docx_uses_configurable_comment_identity(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Plain target text")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    reviewed_path = render_reviewed_docx(
+        document,
+        [
+            ReviewAction(
+                scope=ReviewScope.PARAGRAPH,
+                action_type=ReviewActionType.REPLACE,
+                node_id="p1",
+                original_text="target",
+                replacement_text="replacement",
+                reason="Use clearer wording.",
+                status=ActionStatus.NOT_APPLIED,
+            )
+        ],
+        tmp_path / "reviewed.docx",
+        comment_author="Acme Reviewer",
+        comment_initials="AR",
+    )
+
+    document_xml = _part_xml(reviewed_path, "word/document.xml")
+    comments_xml = _part_xml(reviewed_path, "word/comments.xml")
+    assert _revision_authors(document_xml, "del") == ["Acme Reviewer"]
+    assert _revision_authors(document_xml, "ins") == ["Acme Reviewer"]
+    assert _comment_authors(comments_xml) == [("Acme Reviewer", "AR")]
+
+
 def _part_xml(path: Path, member: str) -> str:
     with ZipFile(path) as archive:
         return archive.read(member).decode()
@@ -107,4 +139,20 @@ def _revision_texts(xml: str, revision_tag: str, text_tag: str) -> list[str]:
         "".join(element.itertext())
         for element in root.findall(f".//{_W}{revision_tag}")
         if element.find(f".//{_W}{text_tag}") is not None
+    ]
+
+
+def _revision_authors(xml: str, revision_tag: str) -> list[str]:
+    root = ElementTree.fromstring(xml)
+    return [
+        element.attrib[f"{_W}author"]
+        for element in root.findall(f".//{_W}{revision_tag}")
+    ]
+
+
+def _comment_authors(xml: str) -> list[tuple[str, str | None]]:
+    root = ElementTree.fromstring(xml)
+    return [
+        (element.attrib[f"{_W}author"], element.attrib.get(f"{_W}initials"))
+        for element in root.findall(f".//{_W}comment")
     ]
