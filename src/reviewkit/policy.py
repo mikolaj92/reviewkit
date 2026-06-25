@@ -147,6 +147,9 @@ class ActionPolicy:
         if policy in {"suggest", "comment"}:
             return ActionStatus.NOT_APPLIED
 
+        if action.requires_human_decision and self.config.block_when_requires_human_decision:
+            return ActionStatus.NEEDS_HUMAN_DECISION
+
         if action.action_type in {ReviewActionType.RISK, ReviewActionType.QUESTION}:
             return ActionStatus.NEEDS_HUMAN_DECISION
         if action.action_type in {
