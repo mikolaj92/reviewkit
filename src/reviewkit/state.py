@@ -4,10 +4,17 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from reviewkit.models import ActionStatus, ReviewActionType, ReviewResponse, ReviewScope
+from reviewkit.models import (
+    ActionStatus,
+    ReviewActionType,
+    ReviewFinding,
+    ReviewResponse,
+    ReviewScope,
+)
 
 
 class ReviewState(BaseModel):
+    findings: list[ReviewFinding] = Field(default_factory=list)
     repeated_issues: list[str] = Field(default_factory=list)
     style_observations: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
@@ -30,6 +37,7 @@ class ReviewState(BaseModel):
         _extend_unique(self.questions, response.questions)
         _extend_unique(self.missing_elements, response.missing_elements)
         _extend_unique(self.human_decisions, response.human_decisions)
+        self.findings.extend(response.findings)
 
         if response.summary:
             if scope == ReviewScope.PARAGRAPH:

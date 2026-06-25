@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+from collections import Counter
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class ReviewScope(StrEnum):
@@ -18,11 +21,17 @@ class ReviewScope(StrEnum):
 
 
 class ReviewActionType(StrEnum):
+    COMMENT = "comment"
+    REPLACE_TEXT = "replace_text"
+    INSERT_TEXT = "insert_text"
+    DELETE_TEXT = "delete_text"
+    FLAG = "flag"
+    NOOP = "noop"
+
     REPLACE = "replace"
     DELETE = "delete"
     INSERT_BEFORE = "insert_before"
     INSERT_AFTER = "insert_after"
-    COMMENT = "comment"
     QUESTION = "question"
     RISK = "risk"
     SUGGESTION = "suggestion"
@@ -53,14 +62,63 @@ class ReviewReference(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class ReviewDimension(BaseModel):
+    id: str
+    label: str | None = None
+    description: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReviewLocator(BaseModel):
+    node_id: str | None = None
+    paragraph_index: int | None = None
+    sentence_index: int | None = None
+    char_start: int | None = Field(default=None, ge=0)
+    char_end: int | None = Field(default=None, ge=0)
+    original_text: str | None = None
+    context_before: str | None = None
+    context_after: str | None = None
+    text_hash: str | None = None
+    node_hash: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @staticmethod
+    def hash_text(text: str) -> str:
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class ReviewFinding(BaseModel):
+    finding_id: str = Field(default_factory=lambda: f"finding-{uuid4().hex}")
+    node_id: str
+    title: str
+    description: str
+    dimension: str | ReviewDimension | None = None
+    severity: str = "medium"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    evidence: list[str | EvidenceRef] = Field(default_factory=list)
+    rationale: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ReviewAction(BaseModel):
-    id: str = Field(default_factory=lambda: f"action-{uuid4().hex}")
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str = Field(
+        default_factory=lambda: f"action-{uuid4().hex}",
+        validation_alias=AliasChoices("id", "action_id"),
+        serialization_alias="action_id",
+    )
+    finding_id: str | None = None
     scope: ReviewScope
     action_type: ReviewActionType
     node_id: str
     original_text: str | None = None
     replacement_text: str | None = None
-    comment: str | None = None
+    comment: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("comment", "comment_text"),
+        serialization_alias="comment_text",
+    )
     reason: str | None = None
     severity: str = "medium"
     status: ActionStatus = ActionStatus.NOT_APPLIED
@@ -68,7 +126,9 @@ class ReviewAction(BaseModel):
     category: str | None = None
     priority: str | None = None
     requires_human_decision: bool = False
+    apply_hint: bool | None = None
     apply_to_corrected: bool | None = None
+    locator: ReviewLocator | None = None
     policy_reason: str | None = None
     source_system: str | None = None
     tags: list[str] = Field(default_factory=list)
@@ -76,8 +136,17 @@ class ReviewAction(BaseModel):
     references: list[ReviewReference] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @property
+    def action_id(self) -> str:
+        return self.id
+
+    @property
+    def comment_text(self) -> str | None:
+        return self.comment
+
 
 class ReviewResponse(BaseModel):
+    findings: list[ReviewFinding] = Field(default_factory=list)
     actions: list[ReviewAction] = Field(default_factory=list)
     summary: str | None = None
     repeated_issues: list[str] = Field(default_factory=list)
@@ -127,9 +196,65 @@ class ReviewStats(BaseModel):
 
 
 class ReviewResult(BaseModel):
-    actions: list[ReviewAction]
-    reviewed_docx: Path | None
-    corrected_docx: Path | None
-    document_summary: str | None
-    stats: ReviewStats
+    document: Any | None = None
+    findings: list[ReviewFinding] = Field(default_factory=list)
+    actions: list[ReviewAction] = Field(default_factory=list)
+    reviewed_docx: Path | None = None
+    corrected_docx: Path | None = None
+    document_summary: str | None = None
+    stats: ReviewStats = Field(default_factory=ReviewStats)
     warnings: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    artifacts: dict[str, str] = Field(default_factory=dict)
+
+    @property
+    def applied_actions(self) -> list[ReviewAction]:
+        return [action for action in self.actions if action.status == ActionStatus.APPLIED]
+
+    @property
+    def skipped_actions(self) -> list[ReviewAction]:
+        return [action for action in self.actions if action.status == ActionStatus.NOT_APPLIED]
+
+    @property
+    def conflicts(self) -> list[ReviewAction]:
+        return [action for action in self.actions if action.status == ActionStatus.CONFLICT]
+
+    def to_report_dict(self) -> dict[str, Any]:
+        payload = self.model_dump(mode="json", by_alias=True, exclude={"document"})
+        payload["applied_actions"] = [
+            action.model_dump(mode="json", by_alias=True) for action in self.applied_actions
+        ]
+        payload["skipped_actions"] = [
+            action.model_dump(mode="json", by_alias=True) for action in self.skipped_actions
+        ]
+        payload["conflicts"] = [
+            action.model_dump(mode="json", by_alias=True) for action in self.conflicts
+        ]
+        payload["findings_by_dimension"] = dict(
+            Counter(_dimension_key(finding.dimension) for finding in self.findings)
+        )
+        payload["findings_by_severity"] = dict(
+            Counter(finding.severity for finding in self.findings)
+        )
+        payload["actions_by_type"] = dict(
+            Counter(action.action_type.value for action in self.actions)
+        )
+        payload["actions_by_status"] = dict(Counter(action.status.value for action in self.actions))
+        return payload
+
+    def save_json(self, path: str | Path) -> Path:
+        output_path = Path(path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _ = output_path.write_text(
+            json.dumps(self.to_report_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return output_path
+
+
+def _dimension_key(dimension: str | ReviewDimension | None) -> str:
+    if dimension is None:
+        return "uncategorized"
+    if isinstance(dimension, ReviewDimension):
+        return dimension.id
+    return dimension

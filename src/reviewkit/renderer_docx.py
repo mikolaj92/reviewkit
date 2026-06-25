@@ -19,6 +19,14 @@ from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 _SegmentKind = Literal["text", "ins", "del"]
 
 
+@dataclass(frozen=True)
+class _ReviewerIdentity:
+    """Author identity stamped onto tracked-change revisions and Word comments."""
+
+    author: str = "ReviewKit"
+    initials: str = "RK"
+
+
 @dataclass
 class _Segment:
     kind: _SegmentKind
@@ -34,10 +42,14 @@ def render_reviewed_docx(
     document: ReviewDocument,
     actions: list[ReviewAction],
     output_path: str | Path,
+    *,
+    comment_author: str = "ReviewKit",
+    comment_initials: str = "RK",
 ) -> Path:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     docx = DocxDocument(str(document.source_path)) if document.source_path else DocxDocument()
+    reviewer = _ReviewerIdentity(author=comment_author, initials=comment_initials)
     revision_id = 1
 
     for section in document.sections:
@@ -51,6 +63,7 @@ def render_reviewed_docx(
                 docx_paragraph,
                 paragraph_actions,
                 revision_id,
+                reviewer,
             )
 
         section_comments = [
@@ -66,7 +79,7 @@ def render_reviewed_docx(
                 section_paragraph = _paragraph_for_locator(docx, target)
                 if section_paragraph is None:
                     section_paragraph = docx.add_paragraph(section.title or section.id)
-                if not _add_comment(docx, section_paragraph, comment):
+                if not _add_comment(docx, section_paragraph, comment, reviewer):
                     docx.add_paragraph(comment)
 
     document_comments = [
@@ -84,7 +97,7 @@ def render_reviewed_docx(
                 )
                 if document_paragraph is None:
                     document_paragraph = docx.add_paragraph("Document-level review")
-                if not _add_comment(docx, document_paragraph, comment):
+                if not _add_comment(docx, document_paragraph, comment, reviewer):
                     docx.add_paragraph(comment)
 
     docx.save(str(path))
@@ -140,6 +153,9 @@ def _is_trackable_edit(action: ReviewAction) -> bool:
     if action.metadata.get("blocked_from_corrected") is True:
         return False
     return action.action_type in {
+        ReviewActionType.REPLACE_TEXT,
+        ReviewActionType.DELETE_TEXT,
+        ReviewActionType.INSERT_TEXT,
         ReviewActionType.REPLACE,
         ReviewActionType.DELETE,
         ReviewActionType.INSERT_BEFORE,
@@ -152,26 +168,44 @@ def _add_reviewed_runs(
     paragraph: Any,
     actions: list[ReviewAction],
     revision_id: int,
+    reviewer: _ReviewerIdentity,
 ) -> int:
     if not actions:
         return revision_id
 
     segments = _paragraph_segments(paragraph)
-    for action in actions:
-        if _is_trackable_edit(action):
-            segments, revision_id = _track_action(segments, action, revision_id)
+    for action in _trackable_actions_in_application_order(actions):
+        segments, revision_id = _track_action(segments, action, revision_id)
 
     for action in actions:
         if not _comment_text(action):
             continue
-        if _is_trackable_edit(action) and _mark_action_segments(docx, segments, action):
+        if _is_trackable_edit(action) and _mark_action_segments(docx, segments, action, reviewer):
             continue
-        if action.original_text and _mark_text_comment(docx, segments, action.original_text, action):
+        if action.original_text and _mark_text_comment(
+            docx, segments, action.original_text, action, reviewer
+        ):
             continue
-        _mark_whole_paragraph_comment(docx, segments, action)
+        _mark_whole_paragraph_comment(docx, segments, action, reviewer)
 
-    _replace_paragraph_children(paragraph, segments)
+    _replace_paragraph_children(paragraph, segments, reviewer)
     return revision_id
+
+
+def _trackable_actions_in_application_order(actions: list[ReviewAction]) -> list[ReviewAction]:
+    locator_actions: list[tuple[int, int, int, ReviewAction]] = []
+    other_actions: list[ReviewAction] = []
+    for index, action in enumerate(actions):
+        if not _is_trackable_edit(action):
+            continue
+        action_range = _locator_action_range(action)
+        if action_range is None:
+            other_actions.append(action)
+            continue
+        start, end = action_range
+        locator_actions.append((start, end, index, action))
+    locator_actions.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    return [item[3] for item in locator_actions] + other_actions
 
 
 def _track_action(
@@ -179,24 +213,36 @@ def _track_action(
     action: ReviewAction,
     revision_id: int,
 ) -> tuple[list[_Segment], int]:
-    if action.action_type in {ReviewActionType.REPLACE, ReviewActionType.DELETE}:
-        if not action.original_text:
+    if action.action_type in {
+        ReviewActionType.REPLACE_TEXT,
+        ReviewActionType.DELETE_TEXT,
+        ReviewActionType.REPLACE,
+        ReviewActionType.DELETE,
+    }:
+        action_range = _action_range(segments, action)
+        if action_range is None:
             return segments, revision_id
-        start = _visible_text(segments).find(action.original_text)
-        if start < 0:
-            return segments, revision_id
-        end = start + len(action.original_text)
+        start, end = action_range
         deleted = _visible_slice(segments, start, end, "del", action.id)
         replacement: list[_Segment] = deleted
-        if action.action_type == ReviewActionType.REPLACE and action.replacement_text:
+        if action.action_type in {
+            ReviewActionType.REPLACE_TEXT,
+            ReviewActionType.REPLACE,
+        } and action.replacement_text:
             replacement.append(
                 _Segment("ins", action.replacement_text, _rpr_at(segments, start), action.id)
             )
         revision_id = _assign_revision_ids(replacement, revision_id)
         return _replace_visible_range(segments, start, end, replacement), revision_id
 
-    if action.action_type in {ReviewActionType.INSERT_BEFORE, ReviewActionType.INSERT_AFTER}:
-        if action.original_text:
+    if action.action_type in {
+        ReviewActionType.INSERT_TEXT,
+        ReviewActionType.INSERT_BEFORE,
+        ReviewActionType.INSERT_AFTER,
+    }:
+        if action.action_type == ReviewActionType.INSERT_TEXT and action.locator:
+            offset = action.locator.char_start or 0
+        elif action.original_text:
             start = _visible_text(segments).find(action.original_text)
             if start < 0:
                 return segments, revision_id
@@ -326,6 +372,26 @@ def _visible_text(segments: list[_Segment]) -> str:
     return "".join(segment.text for segment in segments if segment.kind == "text")
 
 
+def _action_range(segments: list[_Segment], action: ReviewAction) -> tuple[int, int] | None:
+    locator_range = _locator_action_range(action)
+    if locator_range is not None:
+        return locator_range
+    if not action.original_text:
+        return None
+    start = _visible_text(segments).find(action.original_text)
+    if start < 0:
+        return None
+    return start, start + len(action.original_text)
+
+
+def _locator_action_range(action: ReviewAction) -> tuple[int, int] | None:
+    if not action.locator:
+        return None
+    if action.locator.char_start is None or action.locator.char_end is None:
+        return None
+    return action.locator.char_start, action.locator.char_end
+
+
 def _visible_len(segments: list[_Segment]) -> int:
     return len(_visible_text(segments))
 
@@ -356,7 +422,9 @@ def _copy_segment(segment: _Segment, text: str) -> _Segment:
     )
 
 
-def _replace_paragraph_children(paragraph: Any, segments: list[_Segment]) -> None:
+def _replace_paragraph_children(
+    paragraph: Any, segments: list[_Segment], reviewer: _ReviewerIdentity
+) -> None:
     parent = paragraph._p
     for child in list(parent):
         if child.tag != qn("w:pPr"):
@@ -370,7 +438,9 @@ def _replace_paragraph_children(paragraph: Any, segments: list[_Segment]) -> Non
         if segment.kind == "text":
             _append_text_run(parent, segment.text, segment.rpr)
         else:
-            _append_revision(parent, segment.kind, segment.text, segment.rpr, segment.revision_id)
+            _append_revision(
+                parent, segment.kind, segment.text, reviewer, segment.rpr, segment.revision_id
+            )
         for comment_id in reversed(segment.end_comments):
             parent.append(_comment_range("w:commentRangeEnd", comment_id))
             parent.append(_comment_reference_run(comment_id))
@@ -390,12 +460,13 @@ def _append_revision(
     parent: Any,
     kind: Literal["ins", "del"],
     text: str,
+    reviewer: _ReviewerIdentity,
     rpr: Any | None = None,
     revision_id: int | None = None,
 ) -> None:
     revision = OxmlElement(f"w:{kind}")
     revision.set(qn("w:id"), str(revision_id or 0))
-    revision.set(qn("w:author"), "ReviewKit")
+    revision.set(qn("w:author"), reviewer.author)
     revision.set(qn("w:date"), datetime.now(UTC).replace(microsecond=0).isoformat())
 
     run = OxmlElement("w:r")
@@ -414,9 +485,11 @@ def _set_text(element: Any, text: str) -> None:
     element.text = text
 
 
-def _mark_action_segments(docx: Any, segments: list[_Segment], action: ReviewAction) -> bool:
+def _mark_action_segments(
+    docx: Any, segments: list[_Segment], action: ReviewAction, reviewer: _ReviewerIdentity
+) -> bool:
     indexes = [index for index, segment in enumerate(segments) if segment.action_id == action.id]
-    return _mark_comment_indexes(docx, segments, indexes, action)
+    return _mark_comment_indexes(docx, segments, indexes, action, reviewer)
 
 
 def _mark_text_comment(
@@ -424,6 +497,7 @@ def _mark_text_comment(
     segments: list[_Segment],
     original_text: str,
     action: ReviewAction,
+    reviewer: _ReviewerIdentity,
 ) -> bool:
     start = _visible_text(segments).find(original_text)
     if start < 0:
@@ -437,12 +511,14 @@ def _mark_text_comment(
         if segment.kind == "text" and start <= offset and next_offset <= end:
             indexes.append(index)
         offset = next_offset
-    return _mark_comment_indexes(docx, segments, indexes, action)
+    return _mark_comment_indexes(docx, segments, indexes, action, reviewer)
 
 
-def _mark_whole_paragraph_comment(docx: Any, segments: list[_Segment], action: ReviewAction) -> bool:
+def _mark_whole_paragraph_comment(
+    docx: Any, segments: list[_Segment], action: ReviewAction, reviewer: _ReviewerIdentity
+) -> bool:
     indexes = [index for index, segment in enumerate(segments) if segment.text]
-    return _mark_comment_indexes(docx, segments, indexes, action)
+    return _mark_comment_indexes(docx, segments, indexes, action, reviewer)
 
 
 def _mark_comment_indexes(
@@ -450,18 +526,21 @@ def _mark_comment_indexes(
     segments: list[_Segment],
     indexes: list[int],
     action: ReviewAction,
+    reviewer: _ReviewerIdentity,
 ) -> bool:
     comment = _comment_text(action)
     if comment is None or not indexes:
         return False
-    comment_id = _create_comment(docx, comment)
+    comment_id = _create_comment(docx, comment, reviewer)
     segments[indexes[0]].start_comments.append(comment_id)
     segments[indexes[-1]].end_comments.append(comment_id)
     return True
 
 
-def _create_comment(docx: Any, text: str) -> int:
-    comment = docx.comments.add_comment(text=text, author="ReviewKit", initials="RK")
+def _create_comment(docx: Any, text: str, reviewer: _ReviewerIdentity) -> int:
+    comment = docx.comments.add_comment(
+        text=text, author=reviewer.author, initials=reviewer.initials
+    )
     return int(comment.comment_id)
 
 
@@ -505,6 +584,9 @@ def _comment_text(action: ReviewAction) -> str | None:
 
 def _comment_label(action: ReviewAction) -> str:
     if action.action_type in {
+        ReviewActionType.REPLACE_TEXT,
+        ReviewActionType.DELETE_TEXT,
+        ReviewActionType.INSERT_TEXT,
         ReviewActionType.REPLACE,
         ReviewActionType.DELETE,
         ReviewActionType.INSERT_BEFORE,
@@ -530,13 +612,17 @@ def _comment_label(action: ReviewAction) -> str:
     return "COMMENT"
 
 
-def _add_comment(docx: Any, paragraph: Any, text: str) -> bool:
+def _add_comment(
+    docx: Any, paragraph: Any, text: str, reviewer: _ReviewerIdentity
+) -> bool:
     try:
         runs = getattr(paragraph, "runs")
         if not runs:
             paragraph.add_run("")
             runs = getattr(paragraph, "runs")
-        comment = docx.comments.add_comment(text=text, author="ReviewKit", initials="RK")
+        comment = docx.comments.add_comment(
+            text=text, author=reviewer.author, initials=reviewer.initials
+        )
         runs[0].mark_comment_range(runs[-1], comment.comment_id)
     except AttributeError:
         return False

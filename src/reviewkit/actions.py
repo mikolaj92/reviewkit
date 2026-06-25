@@ -10,6 +10,9 @@ from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
 
 WRITING_ACTIONS = {
+    ReviewActionType.REPLACE_TEXT,
+    ReviewActionType.DELETE_TEXT,
+    ReviewActionType.INSERT_TEXT,
     ReviewActionType.REPLACE,
     ReviewActionType.DELETE,
     ReviewActionType.INSERT_BEFORE,
@@ -37,18 +40,16 @@ def prepare_actions(
 
 def apply_actions_to_text(text: str, actions: Iterable[ReviewAction]) -> str:
     result = text
-    for action in actions:
-        if action.status != ActionStatus.APPLIED:
-            continue
+    applicable = [action for action in actions if action.status == ActionStatus.APPLIED]
+    for action in _actions_in_text_application_order(applicable):
         result = apply_action_to_text(result, action)
     return result
 
 
 def apply_corrections_to_text(text: str, actions: Iterable[ReviewAction]) -> str:
     result = text
-    for action in actions:
-        if not should_apply_to_corrected(action):
-            continue
+    applicable = [action for action in actions if should_apply_to_corrected(action)]
+    for action in _actions_in_text_application_order(applicable):
         result = apply_action_to_text(result, action)
     return result
 
@@ -65,6 +66,24 @@ def apply_action_to_text(text: str, action: ReviewAction) -> str:
     original = action.original_text or ""
     replacement = action.replacement_text or ""
 
+    if action.locator and action.locator.char_start is not None and action.locator.char_end is not None:
+        start = action.locator.char_start
+        end = action.locator.char_end
+        if action.action_type == ReviewActionType.REPLACE_TEXT:
+            return f"{text[:start]}{replacement}{text[end:]}"
+        if action.action_type == ReviewActionType.DELETE_TEXT:
+            return f"{text[:start]}{text[end:]}"
+        if action.action_type == ReviewActionType.INSERT_TEXT:
+            return f"{text[:start]}{replacement}{text[start:]}"
+
+    if action.action_type == ReviewActionType.REPLACE_TEXT and original:
+        return text.replace(original, replacement, 1)
+    if action.action_type == ReviewActionType.DELETE_TEXT and original:
+        return text.replace(original, "", 1)
+    if action.action_type == ReviewActionType.INSERT_TEXT:
+        if original:
+            return text.replace(original, f"{original}{replacement}", 1)
+        return f"{text}{replacement}"
     if action.action_type == ReviewActionType.REPLACE and original:
         return text.replace(original, replacement, 1)
     if action.action_type == ReviewActionType.DELETE and original:
@@ -78,6 +97,30 @@ def apply_action_to_text(text: str, action: ReviewAction) -> str:
             return text.replace(original, f"{original}{replacement}", 1)
         return f"{text}{replacement}"
     return text
+
+
+def _actions_in_text_application_order(actions: list[ReviewAction]) -> list[ReviewAction]:
+    locator_actions: list[tuple[int, int, int, ReviewAction]] = []
+    other_actions: list[ReviewAction] = []
+    for index, action in enumerate(actions):
+        action_range = _locator_range(action)
+        if action_range is None:
+            other_actions.append(action)
+            continue
+        start, end = action_range
+        locator_actions.append((start, end, index, action))
+    locator_actions.sort(key=lambda item: (-item[0], -item[1], item[2]))
+    return [item[3] for item in locator_actions] + other_actions
+
+
+def _locator_range(action: ReviewAction) -> tuple[int, int] | None:
+    if not action.locator:
+        return None
+    if action.locator.char_start is None or action.locator.char_end is None:
+        return None
+    if action.action_type not in WRITING_ACTIONS:
+        return None
+    return action.locator.char_start, action.locator.char_end
 
 
 def actions_for_paragraph(
@@ -143,18 +186,35 @@ def _conflict_reason(document: ReviewDocument, action: ReviewAction) -> str | No
     if node_text is None:
         return f"node_id does not exist: {action.node_id}"
 
-    if action.action_type in {ReviewActionType.REPLACE, ReviewActionType.DELETE}:
+    locator_reason = _locator_conflict_reason(node_text, action)
+    if locator_reason:
+        return locator_reason
+
+    if action.action_type in {
+        ReviewActionType.REPLACE_TEXT,
+        ReviewActionType.DELETE_TEXT,
+        ReviewActionType.REPLACE,
+        ReviewActionType.DELETE,
+    }:
         if not action.original_text:
             return "original_text is required for replace/delete actions"
 
     if action.action_type in {
+        ReviewActionType.REPLACE_TEXT,
+        ReviewActionType.INSERT_TEXT,
         ReviewActionType.REPLACE,
         ReviewActionType.INSERT_BEFORE,
         ReviewActionType.INSERT_AFTER,
     }:
-        if action.action_type != ReviewActionType.INSERT_BEFORE and not action.replacement_text:
+        if action.action_type not in {
+            ReviewActionType.INSERT_TEXT,
+            ReviewActionType.INSERT_BEFORE,
+        } and not action.replacement_text:
             return "replacement_text is required for this action"
-        if action.action_type == ReviewActionType.INSERT_BEFORE and action.replacement_text is None:
+        if action.action_type in {
+            ReviewActionType.INSERT_TEXT,
+            ReviewActionType.INSERT_BEFORE,
+        } and action.replacement_text is None:
             return "replacement_text is required for this action"
 
     if action.original_text:
@@ -165,6 +225,32 @@ def _conflict_reason(document: ReviewDocument, action: ReviewAction) -> str | No
                 f"{action.node_id}; found {matches} matches"
             )
 
+    return None
+
+
+def _locator_conflict_reason(node_text: str, action: ReviewAction) -> str | None:
+    locator = action.locator
+    if locator is None:
+        return None
+    if locator.node_id is not None and locator.node_id != action.node_id:
+        return "locator node_id does not match action node_id"
+    if locator.node_hash is not None and locator.node_hash != locator.hash_text(node_text):
+        return "locator node_hash does not match current node text"
+    if locator.char_start is None and locator.char_end is None:
+        return None
+    if locator.char_start is None or locator.char_end is None:
+        return "locator char_start and char_end must be provided together"
+    if locator.char_end < locator.char_start:
+        return "locator char_end must be greater than or equal to char_start"
+    if locator.char_end > len(node_text):
+        return "locator range is outside the current node text"
+
+    located_text = node_text[locator.char_start : locator.char_end]
+    expected_text = locator.original_text or action.original_text
+    if expected_text is not None and located_text != expected_text:
+        return "locator text does not match current node text"
+    if locator.text_hash is not None and locator.text_hash != locator.hash_text(located_text):
+        return "locator text_hash does not match current node text"
     return None
 
 

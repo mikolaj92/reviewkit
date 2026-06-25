@@ -96,6 +96,43 @@ def test_reviewed_docx_patches_table_header_and_footer_paragraphs(tmp_path: Path
     assert _revision_texts(footer_xml, "ins", "t") == ["błąd"]
 
 
+def test_reviewed_docx_stamps_caller_supplied_reviewer_identity(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Plain target text")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    reviewed_path = render_reviewed_docx(
+        document,
+        [
+            ReviewAction(
+                scope=ReviewScope.PARAGRAPH,
+                action_type=ReviewActionType.REPLACE,
+                node_id="p1",
+                original_text="target",
+                replacement_text="replacement",
+                reason="Use clearer wording.",
+                status=ActionStatus.NOT_APPLIED,
+            )
+        ],
+        tmp_path / "reviewed.docx",
+        comment_author="Dike",
+        comment_initials="DK",
+    )
+
+    document_xml = _part_xml(reviewed_path, "word/document.xml")
+    revision = ElementTree.fromstring(document_xml).find(f".//{_W}ins")
+    assert revision is not None
+    assert revision.get(f"{_W}author") == "Dike"
+
+    comments_xml = _part_xml(reviewed_path, "word/comments.xml")
+    comment = ElementTree.fromstring(comments_xml).find(f".//{_W}comment")
+    assert comment is not None
+    assert comment.get(f"{_W}author") == "Dike"
+    assert comment.get(f"{_W}initials") == "DK"
+
+
 def _part_xml(path: Path, member: str) -> str:
     with ZipFile(path) as archive:
         return archive.read(member).decode()

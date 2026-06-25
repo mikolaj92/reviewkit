@@ -25,7 +25,7 @@ def review_document(
     profile = load_profile(profile_path)
     document = load_docx(input_path)
     reviewer = HierarchicalReviewer(profile=profile, llm=llm, context_provider=context_provider)
-    actions, state = reviewer.review(document)
+    findings, actions, state = reviewer.review(document)
 
     reviewed_path: Path | None = None
     corrected_path: Path | None = None
@@ -36,12 +36,15 @@ def review_document(
         corrected_path = render_corrected_docx(document, actions, out_corrected)
 
     return ReviewResult(
+        document=document,
+        findings=findings,
         actions=actions,
         reviewed_docx=reviewed_path,
         corrected_docx=corrected_path,
         document_summary=state.document_summary,
         stats=ReviewStats.from_actions(actions),
         warnings=_document_warnings(document),
+        artifacts=_artifacts(reviewed_path=reviewed_path, corrected_path=corrected_path),
     )
 
 
@@ -49,3 +52,12 @@ def _document_warnings(document: ReviewDocument) -> list[str]:
     if document.metadata.get("tracked_revisions_detected") == "true":
         return ["Input DOCX contains tracked revisions."]
     return []
+
+
+def _artifacts(*, reviewed_path: Path | None, corrected_path: Path | None) -> dict[str, str]:
+    artifacts: dict[str, str] = {}
+    if reviewed_path is not None:
+        artifacts["reviewed_docx"] = str(reviewed_path)
+    if corrected_path is not None:
+        artifacts["corrected_docx"] = str(corrected_path)
+    return artifacts

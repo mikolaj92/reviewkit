@@ -103,13 +103,15 @@ def document_review_prompt(
 
 
 def _messages(profile: ReviewProfile, payload: dict[str, Any]) -> list[dict[str, str]]:
+    payload = {"review_profile": _profile_payload(profile), **payload}
     system = (
         f"You are acting as: {profile.reviewer_role}.\n"
         f"Document type: {profile.document_type}.\n"
         f"Language: {profile.language}.\n\n"
         "Review the document like a human reviewer. Do not rewrite the whole document. "
-        "Return review actions targeting node_id values and original_text snippets. "
-        "Never invent character offsets.\n\n"
+        "Return findings separately from actions. Target actions with node_id values and "
+        "original_text snippets. Include locators only when exact current text coordinates "
+        "are known.\n\n"
         f"Profile instructions:\n{profile.instructions_text}"
     )
     user = (
@@ -125,7 +127,28 @@ def _model_payload(model: BaseModel) -> dict[str, Any]:
 
 
 def _actions_payload(actions: list[ReviewAction]) -> list[dict[str, Any]]:
-    return [action.model_dump(mode="json") for action in actions]
+    return [action.model_dump(mode="json", by_alias=True) for action in actions]
+
+
+def _profile_payload(profile: ReviewProfile) -> dict[str, Any]:
+    return {
+        "profile_id": profile.profile_id,
+        "display_name": profile.display_name,
+        "description": profile.description,
+        "language": profile.language,
+        "document_type": profile.document_type,
+        "reviewer_role": profile.reviewer_role,
+        "review_dimensions": [
+            _dimension_payload(dimension) for dimension in profile.review_dimensions
+        ],
+        "action_policy": profile.resolved_action_policy().model_dump(mode="json"),
+    }
+
+
+def _dimension_payload(dimension: str | BaseModel) -> dict[str, Any]:
+    if isinstance(dimension, BaseModel):
+        return dimension.model_dump(mode="json")
+    return {"id": dimension, "label": dimension}
 
 
 def _context_payload(context: ReviewContext | None) -> dict[str, Any]:
