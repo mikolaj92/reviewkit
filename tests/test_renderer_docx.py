@@ -126,6 +126,43 @@ def test_reviewed_docx_surfaces_unapplied_edits_as_labelled_comments(
     )
 
 
+def test_reviewed_docx_surfaces_scope_level_conflict_as_a_comment(tmp_path: Path) -> None:
+    # A section/document-scoped edit that ends up CONFLICT must still be surfaced. It used to
+    # vanish (anchor returned None, and the scope-comment loops skip original_text actions),
+    # losing the escalation for exactly the ambiguous, higher-scope case that needs a human.
+    from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
+
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[
+                    ParagraphNode(id="p1", text="The quick brown fox jumps.", section_id="s1"),
+                    ParagraphNode(id="p2", text="Another line entirely.", section_id="s1"),
+                ],
+            )
+        ]
+    )
+    action = ReviewAction(
+        scope=ReviewScope.SECTION,
+        action_type=ReviewActionType.REPLACE,
+        node_id="s1",
+        original_text="fox",
+        replacement_text="cat",
+        reason="Ambiguous at section scope.",
+        status=ActionStatus.CONFLICT,
+    )
+
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    root = ElementTree.fromstring(_part_xml(reviewed_path, "word/document.xml"))
+
+    # Surfaced as a labelled comment, never a silent tracked change.
+    assert root.find(f".//{_W}ins") is None
+    assert root.find(f".//{_W}del") is None
+    comments = _comment_texts(reviewed_path)
+    assert any(text.startswith("CONFLICT:") for text in comments), comments
+
+
 def test_reviewed_docx_patches_original_and_preserves_run_formatting(tmp_path: Path) -> None:
     input_path = tmp_path / "input.docx"
     docx = DocxDocument()

@@ -171,10 +171,12 @@ def _scope_comment_anchor_id(
     matched uniquely (dropped). Instead pick one well-defined anchor: the first
     paragraph in scope whose text contains the quote; if none does, fall back to the
     scope's first paragraph so the comment is surfaced rather than silently dropped.
-    Conflicting actions are not anchored, honoring action status.
+
+    CONFLICT actions are anchored too: the reviewed renderer only turns an APPLIED
+    edit into a tracked change, so a scoped conflict lands as a CONFLICT-labelled
+    comment. Returning None here previously dropped scope-level conflicts entirely,
+    silencing the very ambiguity that most needs human attention.
     """
-    if action.status == ActionStatus.CONFLICT:
-        return None
     paragraphs = _scope_paragraphs(document, action)
     if not paragraphs:
         return None
