@@ -148,6 +148,67 @@ def test_subset_pipeline_rolls_lower_actions_up_to_the_next_enabled_scope() -> N
     assert "a-sentence" in document_prompt
 
 
+def test_malformed_action_does_not_discard_valid_findings_summary_and_actions() -> None:
+    # A real LLM emits one out-of-spec action among good items. Only the bad action must
+    # be dropped; the valid action, the finding, and the summary must all survive.
+    class _RawDictLLM:
+        def complete_json(self, messages: list[dict[str, str]], schema: type[Any]) -> Any:
+            return {
+                "actions": [
+                    {
+                        "id": "good",
+                        "scope": "paragraph",
+                        "action_type": "comment",
+                        "node_id": "p1",
+                        "comment": "Valid action.",
+                        "confidence": 0.9,
+                    },
+                    {
+                        "id": "bad",
+                        "scope": "paragraph",
+                        "action_type": "not_a_real_action_type",
+                        "node_id": "p1",
+                        "confidence": 0.9,
+                    },
+                ],
+                "findings": [
+                    {
+                        "finding_id": "f1",
+                        "node_id": "p1",
+                        "title": "Observation",
+                        "description": "Salvaged despite the bad action.",
+                        "dimension": "clarity",
+                        "severity": "low",
+                    }
+                ],
+                "summary": "Paragraph checked.",
+            }
+
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[ParagraphNode(id="p1", text="The cat sat.", section_id="s1")],
+            )
+        ]
+    )
+    profile = ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        review_pipeline=[ReviewScope.PARAGRAPH],
+    )
+
+    reviewer = HierarchicalReviewer(profile=profile, llm=_RawDictLLM())
+    findings, actions, state = reviewer.review(document)
+
+    assert [action.id for action in actions] == ["good"]
+    assert [finding.finding_id for finding in findings] == ["f1"]
+    assert state.paragraph_summaries.get("p1") == "Paragraph checked."
+    assert any("action 1" in warning for warning in state.warnings)
+
+
 def test_sentence_review_adds_action(tmp_path: Path) -> None:
     result = _run_with_single_sentence_action(
         tmp_path,

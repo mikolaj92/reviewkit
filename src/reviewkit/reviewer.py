@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel
 
 from reviewkit.actions import prepare_actions
@@ -173,17 +175,17 @@ class HierarchicalReviewer:
     ) -> T:
         try:
             raw = self.llm.complete_json(messages=messages, schema=schema)
-            if isinstance(raw, BaseModel):
-                return schema.model_validate(raw.model_dump(mode="json"))
-            return schema.model_validate(raw)
         except Exception as error:
-            # Resilience: a single failing node (client error or malformed/invalid
-            # response) must not abort the whole review. Skip this node with an empty
-            # response and surface the failure as a warning so callers can react.
+            # Resilience: a failing client call (network/API error) must not abort the
+            # whole review. Skip this node with an empty response and surface the failure
+            # as a warning so callers can react.
             state.warnings.append(
                 f"LLM review skipped for {label}: {type(error).__name__}: {error}"
             )
             return schema()
+
+        payload = raw.model_dump(mode="json") if isinstance(raw, BaseModel) else raw
+        return _validate_response_leniently(schema, payload, state=state, label=label)
 
     def _prepare_response[T: ReviewResponse](
         self,
@@ -192,3 +194,70 @@ class HierarchicalReviewer:
     ) -> T:
         actions = prepare_actions(document, self.profile, response.actions)
         return response.model_copy(update={"actions": actions})
+
+
+def _validate_response_leniently[T: ReviewResponse](
+    schema: type[T],
+    payload: Any,
+    *,
+    state: ReviewState,
+    label: str,
+) -> T:
+    """Validate a review response, salvaging partial content on per-item failures.
+
+    Real LLMs routinely emit one out-of-spec item among many good ones. Validating
+    the whole response atomically would drop every valid finding, the summary, and
+    every other valid action over a single bad field -- the opposite of the
+    resilience intent. So validate ``actions`` and ``findings`` item by item and
+    drop only the individually invalid ones (each surfaced as a warning), while the
+    surrounding fields (summary, risks, ...) validate independently.
+    """
+    if not isinstance(payload, dict):
+        try:
+            return schema.model_validate(payload)
+        except Exception as error:
+            state.warnings.append(
+                f"LLM review response invalid for {label}: {type(error).__name__}: {error}"
+            )
+            return schema()
+
+    body = dict(payload)
+    raw_actions = body.pop("actions", None)
+    raw_findings = body.pop("findings", None)
+    try:
+        response = schema.model_validate(body)
+    except Exception as error:
+        state.warnings.append(
+            f"LLM review response fields invalid for {label}: {type(error).__name__}: {error}"
+        )
+        response = schema()
+
+    return response.model_copy(
+        update={
+            "actions": _validate_items(ReviewAction, raw_actions, state, label, "action"),
+            "findings": _validate_items(ReviewFinding, raw_findings, state, label, "finding"),
+        }
+    )
+
+
+def _validate_items[M: BaseModel](
+    model: type[M],
+    items: Any,
+    state: ReviewState,
+    label: str,
+    kind: str,
+) -> list[M]:
+    if items is None:
+        return []
+    if not isinstance(items, list):
+        state.warnings.append(f"Dropped malformed {kind} list for {label}: expected a list")
+        return []
+    valid: list[M] = []
+    for index, item in enumerate(items):
+        try:
+            valid.append(model.model_validate(item))
+        except Exception as error:
+            state.warnings.append(
+                f"Dropped malformed {kind} {index} for {label}: {type(error).__name__}: {error}"
+            )
+    return valid
