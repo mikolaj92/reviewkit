@@ -36,7 +36,8 @@ def prepare_actions(
     actions: Iterable[ReviewAction],
 ) -> list[ReviewAction]:
     policy = ActionPolicy.from_profile(profile)
-    return [_prepare_action(document, policy, action) for action in actions]
+    prepared = [_prepare_action(document, policy, action) for action in actions]
+    return _demote_overlapping_actions(document, prepared)
 
 
 def apply_actions_to_text(text: str, actions: Iterable[ReviewAction]) -> str:
@@ -280,6 +281,72 @@ def _prepare_action(
             "metadata": metadata,
         }
     )
+
+
+def _demote_overlapping_actions(
+    document: ReviewDocument, actions: list[ReviewAction]
+) -> list[ReviewAction]:
+    """Escalate APPLIED writing edits whose char ranges overlap on the same node.
+
+    Each action is validated against the original node text in isolation, so two
+    edits that individually pass can still target overlapping spans of one node.
+    The text-application sweep would then overwrite one edit with the other,
+    silently losing it. Overlapping edits are ambiguous, so demote every action
+    in an overlapping cluster to CONFLICT rather than guessing which one wins.
+    """
+    ranges_by_node: dict[str, list[tuple[int, int, int]]] = {}
+    for index, action in enumerate(actions):
+        if action.status != ActionStatus.APPLIED or action.action_type not in WRITING_ACTIONS:
+            continue
+        node_text = document.get_node_text(action.node_id)
+        if node_text is None:
+            continue
+        span = _applied_char_range(node_text, action)
+        if span is None:
+            continue
+        ranges_by_node.setdefault(action.node_id, []).append((span[0], span[1], index))
+
+    overlapping: set[int] = set()
+    for spans in ranges_by_node.values():
+        spans.sort()
+        cluster: list[int] = []
+        cluster_end = 0
+        for start, end, index in spans:
+            if cluster and start < cluster_end:
+                overlapping.update(cluster)
+                overlapping.add(index)
+                cluster.append(index)
+                cluster_end = max(cluster_end, end)
+            else:
+                cluster = [index]
+                cluster_end = end
+    if not overlapping:
+        return actions
+
+    reason = "overlapping edit range conflicts with another edit on the same node"
+    result = list(actions)
+    for index in overlapping:
+        action = result[index]
+        result[index] = action.model_copy(
+            update={
+                "status": ActionStatus.CONFLICT,
+                "reason": _append_reason(action.reason, reason),
+                "policy_reason": reason,
+            }
+        )
+    return result
+
+
+def _applied_char_range(node_text: str, action: ReviewAction) -> tuple[int, int] | None:
+    """Span of ``node_text`` an APPLIED writing action mutates, if determinable."""
+    locator = action.locator
+    if locator and locator.char_start is not None and locator.char_end is not None:
+        return locator.char_start, locator.char_end
+    original = action.original_text
+    if original and node_text.count(original) == 1:
+        start = node_text.find(original)
+        return start, start + len(original)
+    return None
 
 
 def _conflict_reason(document: ReviewDocument, action: ReviewAction) -> str | None:
