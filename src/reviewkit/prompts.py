@@ -111,7 +111,10 @@ def _messages(profile: ReviewProfile, payload: dict[str, Any]) -> list[dict[str,
         "Review the document like a human reviewer. Do not rewrite the whole document. "
         "Return findings separately from actions. Target actions with node_id values and "
         "original_text snippets. Include locators only when exact current text coordinates "
-        "are known.\n\n"
+        "are known.\n"
+        "Always emit an explicit finding_id on every finding, and when an action responds "
+        "to a finding, set that action's finding_id to the same value so the response can be "
+        "traced back to what motivated it.\n\n"
         f"Profile instructions:\n{profile.instructions_text}"
     )
     user = (
