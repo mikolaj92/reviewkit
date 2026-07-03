@@ -9,7 +9,14 @@ from reviewkit import ReviewResult, parser_docx, review_document
 from reviewkit.context import ReviewContext, ReviewContextProvider
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.llm import MockLLMClient
-from reviewkit.models import ActionStatus, ReviewActionType, ReviewScope
+from reviewkit.models import (
+    ActionStatus,
+    ReviewAction,
+    ReviewActionType,
+    ReviewFinding,
+    ReviewScope,
+)
+from reviewkit.pipeline import _unresolved_finding_id_warnings
 from reviewkit.profile import ReviewProfile
 from reviewkit.reviewer import HierarchicalReviewer
 from reviewkit.state import ReviewState
@@ -468,6 +475,29 @@ def test_action_referencing_unknown_finding_id_is_reported_as_warning(tmp_path: 
     assert result.warnings == [
         "Action a-dangling references unknown finding_id 'finding-ghost'."
     ]
+
+
+def test_action_referencing_a_merged_away_finding_id_is_not_flagged() -> None:
+    # When a duplicate finding is merged away, its finding_id is preserved on the survivor as
+    # an alias, so an action that referenced the merged-away copy still resolves and must not
+    # be reported as a dangling reference.
+    survivor = ReviewFinding(
+        finding_id="finding-a",
+        node_id="p1",
+        title="T",
+        description="D",
+        metadata={"merged_finding_ids": ["finding-b"]},
+    )
+    action = ReviewAction(
+        id="a-1",
+        scope=ReviewScope.SENTENCE,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1",
+        finding_id="finding-b",
+        comment="Responds to the merged-away finding.",
+    )
+
+    assert _unresolved_finding_id_warnings([survivor], [action]) == []
 
 
 def test_core_system_prompt_requests_finding_id_linkage(tmp_path: Path) -> None:

@@ -28,6 +28,7 @@ from reviewkit.profile import (
     ProtectedPatternConfig,
     ReviewProfile,
 )
+from reviewkit.state import ReviewState
 
 
 def test_extension_points_and_reference_mock_are_exported_from_package_root() -> None:
@@ -848,6 +849,51 @@ def test_omitted_ids_are_derived_deterministically_from_content() -> None:
     assert (
         ReviewFinding(finding_id="fx", node_id="p1", title="T", description="D").finding_id == "fx"
     )
+
+
+def test_richer_resurfacing_of_a_finding_is_merged_not_dropped() -> None:
+    # Hierarchical review enriches lower-level observations at higher levels; a later, richer
+    # re-surfacing (added rationale/evidence, higher confidence) must not be discarded in
+    # favour of the earlier bare copy just because their content key matches.
+    state = ReviewState()
+    bare = ReviewFinding(node_id="p1", title="T", description="D", confidence=0.4)
+    richer = ReviewFinding(
+        node_id="p1",
+        title="T",
+        description="D",
+        confidence=0.9,
+        rationale="because X",
+        evidence=["a telling quote"],
+    )
+
+    state._add_findings([bare])
+    state._add_findings([richer])
+
+    assert len(state.findings) == 1
+    merged = state.findings[0]
+    assert merged.confidence == 0.9
+    assert merged.rationale == "because X"
+    assert merged.evidence == ["a telling quote"]
+
+
+def test_merged_finding_records_alias_id_so_action_reference_survives() -> None:
+    # When two findings share content but carry distinct explicit ids, merging must not
+    # silently drop the merged-away id: an action may reference it, so it is preserved as an
+    # alias while the richer content still wins.
+    state = ReviewState()
+    first = ReviewFinding(finding_id="finding-a", node_id="p1", title="T", description="D")
+    second = ReviewFinding(
+        finding_id="finding-b", node_id="p1", title="T", description="D", confidence=0.9
+    )
+
+    state._add_findings([first])
+    state._add_findings([second])
+
+    assert len(state.findings) == 1
+    survivor = state.findings[0]
+    assert survivor.finding_id == "finding-a"
+    assert survivor.metadata["merged_finding_ids"] == ["finding-b"]
+    assert survivor.confidence == 0.9
 
 
 def _document(text: str) -> ReviewDocument:
