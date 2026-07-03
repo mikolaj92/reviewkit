@@ -25,6 +25,47 @@ def test_document_is_split_into_sections_paragraphs_and_sentences(tmp_path: Path
     assert [sentence.text for sentence in paragraph.sentences] == ["Ala ma kota.", "Kot ma dom."]
 
 
+def test_english_styled_heading_starts_a_new_section(tmp_path: Path) -> None:
+    input_path = tmp_path / "headings.docx"
+    docx = DocxDocument()
+    docx.add_heading("Introduction", level=1)
+    docx.add_paragraph("First body paragraph.")
+    docx.add_heading("Conclusion", level=2)
+    docx.add_paragraph("Second body paragraph.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+
+    assert [section.title for section in document.sections] == ["Introduction", "Conclusion"]
+    assert [len(section.paragraphs) for section in document.sections] == [1, 1]
+
+
+def test_core_source_contains_no_polish_or_domain_vocabulary() -> None:
+    src_root = Path(__file__).resolve().parent.parent / "src" / "reviewkit"
+    forbidden = [
+        "naglowek",
+        "nagłówek",
+        "niski",
+        "średni",
+        "sredni",
+        "wysoki",
+        "opowiadanie",
+        "nauczyciel",
+        "uczeń",
+        "ucznia",
+        "literówk",
+    ]
+    offenders: list[str] = []
+    for path in sorted(src_root.rglob("*.py")):
+        text = path.read_text(encoding="utf-8").lower()
+        for token in forbidden:
+            if token in text:
+                offenders.append(f"{path.relative_to(src_root)}: {token!r}")
+    assert not offenders, "domain/language vocabulary must not appear in core src: " + ", ".join(
+        offenders
+    )
+
+
 def test_docx_parser_reads_table_paragraphs_with_locators(tmp_path: Path) -> None:
     input_path = tmp_path / "table.docx"
     docx = DocxDocument()

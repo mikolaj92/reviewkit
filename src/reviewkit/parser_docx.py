@@ -118,8 +118,18 @@ def split_sentences_with_spans(text: str) -> list[tuple[str, int, int]]:
 
 def _is_heading(docx_paragraph: object) -> bool:
     style = getattr(docx_paragraph, "style", None)
-    style_name = str(getattr(style, "name", "")).lower()
-    return style_name.startswith("heading") or style_name.startswith("naglowek")
+    if style is None:
+        return False
+    # ``style_id`` is the language-independent internal identifier Word assigns to
+    # built-in styles ("Heading1", "Heading2", "Title", ...), so heading detection
+    # stays domain- and language-agnostic regardless of the document's UI language.
+    style_id = str(getattr(style, "style_id", "") or "")
+    if style_id.startswith("Heading") or style_id == "Title":
+        return True
+    # python-docx exposes built-in style names in canonical English ("heading 1"),
+    # so a name-based fallback remains language-neutral for built-in styles.
+    style_name = str(getattr(style, "name", "") or "").lower()
+    return style_name.startswith("heading") or style_name.startswith("title")
 
 
 def _iter_paragraph_sources(docx: object) -> Iterator[tuple[object, str, str]]:
