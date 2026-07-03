@@ -43,7 +43,7 @@ def review_document(
         corrected_docx=corrected_path,
         document_summary=state.document_summary,
         stats=ReviewStats.from_actions(actions),
-        warnings=_document_warnings(document),
+        warnings=_document_warnings(document) + state.warnings,
         artifacts=_artifacts(reviewed_path=reviewed_path, corrected_path=corrected_path),
     )
 
