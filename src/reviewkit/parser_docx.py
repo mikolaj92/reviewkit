@@ -11,7 +11,8 @@ from docx import Document as DocxDocument
 
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 
-_SENTENCE_RE = re.compile(r"[^.!?]+[.!?]*", re.UNICODE)
+_SENTENCE_PUNCT_RE = re.compile(r"[.!?]+", re.UNICODE)
+_TRAILING_WORD_RE = re.compile(r"(\w+)$", re.UNICODE)
 _REVISION_TAG_RE = re.compile(rb"<w:(ins|del)(?=[\s>/])")
 
 
@@ -100,13 +101,13 @@ def split_sentences_with_spans(text: str) -> list[tuple[str, int, int]]:
     """
 
     spans: list[tuple[str, int, int]] = []
-    for match in _SENTENCE_RE.finditer(text):
-        raw = match.group(0)
-        stripped = raw.strip()
-        if not stripped:
+    segment_start = 0
+    for match in _SENTENCE_PUNCT_RE.finditer(text):
+        if not _is_sentence_boundary(text, match.start(), match.end()):
             continue
-        start = match.start() + (len(raw) - len(raw.lstrip()))
-        spans.append((stripped, start, start + len(stripped)))
+        _append_span(spans, text, segment_start, match.end())
+        segment_start = match.end()
+    _append_span(spans, text, segment_start, len(text))
     if spans:
         return spans
     stripped = text.strip()
@@ -114,6 +115,48 @@ def split_sentences_with_spans(text: str) -> list[tuple[str, int, int]]:
         return []
     start = text.find(stripped)
     return [(stripped, start, start + len(stripped))]
+
+
+def _append_span(
+    spans: list[tuple[str, int, int]], text: str, start: int, end: int
+) -> None:
+    segment = text[start:end]
+    stripped = segment.strip()
+    if not stripped:
+        return
+    lead = len(segment) - len(segment.lstrip())
+    span_start = start + lead
+    spans.append((stripped, span_start, span_start + len(stripped)))
+
+
+def _is_sentence_boundary(text: str, punct_start: int, punct_end: int) -> bool:
+    """Decide whether the punctuation run at ``[punct_start:punct_end]`` ends a sentence.
+
+    Language- and domain-neutral heuristics avoid the classic over-splits:
+    - a boundary must be followed by whitespace or end-of-text, so ``3.14`` and the
+      inner dots of ``o.o.`` are never boundaries;
+    - a period preceded by a single-letter token is treated as an initial/abbreviation
+      (``J. R. R.``, the trailing ``o.``);
+    - a period followed by a lowercase word is treated as an abbreviation (``Sp. z``).
+    ``!`` and ``?`` are always strong boundaries when followed by whitespace/end.
+    """
+    if punct_end < len(text) and not text[punct_end].isspace():
+        return False
+    if "!" in text[punct_start:punct_end] or "?" in text[punct_start:punct_end]:
+        return True
+    trailing = _TRAILING_WORD_RE.search(text[:punct_start])
+    if trailing is not None and len(trailing.group(1)) == 1 and trailing.group(1).isalpha():
+        return False
+    following = _next_non_space_char(text, punct_end)
+    if following and following.islower():
+        return False
+    return True
+
+
+def _next_non_space_char(text: str, index: int) -> str:
+    while index < len(text) and text[index].isspace():
+        index += 1
+    return text[index] if index < len(text) else ""
 
 
 def _is_heading(docx_paragraph: object) -> bool:

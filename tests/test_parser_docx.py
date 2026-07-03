@@ -2,7 +2,7 @@ from pathlib import Path
 
 from docx import Document as DocxDocument
 
-from reviewkit.parser_docx import load_docx
+from reviewkit.parser_docx import load_docx, split_sentences
 
 
 def test_document_is_split_into_sections_paragraphs_and_sentences(tmp_path: Path) -> None:
@@ -23,6 +23,19 @@ def test_document_is_split_into_sections_paragraphs_and_sentences(tmp_path: Path
     assert paragraph.locator == "body:p:1"
     assert document.metadata["tracked_revisions_detected"] == "false"
     assert [sentence.text for sentence in paragraph.sentences] == ["Ala ma kota.", "Kot ma dom."]
+
+
+def test_decimal_numbers_do_not_split_a_sentence() -> None:
+    assert split_sentences("Pi is 3.14 today.") == ["Pi is 3.14 today."]
+
+
+def test_abbreviations_do_not_over_split() -> None:
+    assert split_sentences("Sp. z o.o.") == ["Sp. z o.o."]
+    assert split_sentences("See J. R. R. Tolkien.") == ["See J. R. R. Tolkien."]
+
+
+def test_genuine_sentence_boundaries_still_split() -> None:
+    assert split_sentences("First one. Second one!") == ["First one.", "Second one!"]
 
 
 def test_english_styled_heading_starts_a_new_section(tmp_path: Path) -> None:
