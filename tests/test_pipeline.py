@@ -294,6 +294,86 @@ def test_tracked_revision_inputs_are_reported_as_warning(tmp_path: Path, monkeyp
     assert result.warnings == ["Input DOCX contains tracked revisions."]
 
 
+def test_sentence_offset_edit_targets_the_correct_sentence(tmp_path: Path) -> None:
+    input_path = _make_docx(tmp_path, "First sentence. Second sentence.")
+    llm = MockLLMClient(
+        responses=[
+            {"actions": [], "summary": "s1."},
+            {
+                "actions": [
+                    {
+                        "id": "a1",
+                        "scope": "sentence",
+                        "action_type": "replace",
+                        "node_id": "p1.s2",
+                        "original_text": "Second",
+                        "replacement_text": "Next",
+                        "category": "typo",
+                        "confidence": 1.0,
+                        "locator": {"char_start": 0, "char_end": 6},
+                    }
+                ],
+                "summary": "s2.",
+            },
+            {"actions": [], "summary": "Akapit sprawdzony."},
+            {"actions": [], "summary": "Sekcja sprawdzona."},
+            {"actions": [], "summary": "Dokument sprawdzony."},
+        ]
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+    )
+
+    corrected_text = _docx_text(result.corrected_docx)
+    assert result.actions[0].status == ActionStatus.APPLIED
+    assert corrected_text == "First sentence. Next sentence."
+    assert "Nextsentence" not in corrected_text
+
+
+def test_sentence_string_edit_targets_the_matching_sentence(tmp_path: Path) -> None:
+    input_path = _make_docx(tmp_path, "The cat sat. The cat ran.")
+    llm = MockLLMClient(
+        responses=[
+            {"actions": [], "summary": "s1."},
+            {
+                "actions": [
+                    {
+                        "id": "a1",
+                        "scope": "sentence",
+                        "action_type": "replace",
+                        "node_id": "p1.s2",
+                        "original_text": "cat",
+                        "replacement_text": "dog",
+                        "category": "typo",
+                        "confidence": 1.0,
+                    }
+                ],
+                "summary": "s2.",
+            },
+            {"actions": [], "summary": "Akapit sprawdzony."},
+            {"actions": [], "summary": "Sekcja sprawdzona."},
+            {"actions": [], "summary": "Dokument sprawdzony."},
+        ]
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+    )
+
+    corrected_text = _docx_text(result.corrected_docx)
+    assert result.actions[0].status == ActionStatus.APPLIED
+    assert corrected_text == "The cat sat. The dog ran."
+
+
 def _run_with_single_sentence_action(
     tmp_path: Path,
     action: dict[str, Any],

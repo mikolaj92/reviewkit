@@ -55,10 +55,14 @@ def load_docx(path: str | Path) -> ReviewDocument:
                 id=f"{paragraph_id}.s{index}",
                 text=sentence,
                 paragraph_id=paragraph_id,
+                char_start=start,
+                char_end=end,
                 locator=f"{locator}:s:{index - 1}",
                 metadata={"source": source},
             )
-            for index, sentence in enumerate(split_sentences(text), start=1)
+            for index, (sentence, start, end) in enumerate(
+                split_sentences_with_spans(text), start=1
+            )
         ]
         current.paragraphs.append(
             ParagraphNode(
@@ -84,10 +88,32 @@ def load_docx(path: str | Path) -> ReviewDocument:
 
 
 def split_sentences(text: str) -> list[str]:
-    sentences = [match.group(0).strip() for match in _SENTENCE_RE.finditer(text)]
-    return [sentence for sentence in sentences if sentence] or (
-        [text.strip()] if text.strip() else []
-    )
+    return [sentence for sentence, _start, _end in split_sentences_with_spans(text)]
+
+
+def split_sentences_with_spans(text: str) -> list[tuple[str, int, int]]:
+    """Split ``text`` into sentences, keeping each sentence's char span within ``text``.
+
+    The returned offsets refer to the stripped sentence as it appears inside
+    ``text`` so callers can rebase sentence-relative locators into paragraph
+    coordinates.
+    """
+
+    spans: list[tuple[str, int, int]] = []
+    for match in _SENTENCE_RE.finditer(text):
+        raw = match.group(0)
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        start = match.start() + (len(raw) - len(raw.lstrip()))
+        spans.append((stripped, start, start + len(stripped)))
+    if spans:
+        return spans
+    stripped = text.strip()
+    if not stripped:
+        return []
+    start = text.find(stripped)
+    return [(stripped, start, start + len(stripped))]
 
 
 def _is_heading(docx_paragraph: object) -> bool:
