@@ -214,12 +214,15 @@ def _comment_count(docx: object) -> int:
 
 
 def _contains_tracked_revisions(path: Path) -> bool:
+    # Scan every content part under ``word/`` (document, comments, footnotes/endnotes,
+    # AND headers/footers), not a fixed allowlist: a tracked change living only in a
+    # header or footer must still surface so the pipeline can warn the human. ``w:ins``/
+    # ``w:del`` only appear in revised content, so this cannot false-positive on the
+    # ``w:trackChanges`` *setting* in settings.xml.
     try:
         with ZipFile(path) as archive:
             for member in archive.namelist():
                 if not member.startswith("word/") or not member.endswith(".xml"):
-                    continue
-                if Path(member).name not in {"document.xml", "comments.xml", "footnotes.xml"}:
                     continue
                 if _REVISION_TAG_RE.search(archive.read(member)):
                     return True

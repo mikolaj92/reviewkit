@@ -1,4 +1,5 @@
 from pathlib import Path
+from zipfile import ZipFile
 
 from docx import Document as DocxDocument
 
@@ -91,6 +92,28 @@ def test_docx_parser_reads_table_paragraphs_with_locators(tmp_path: Path) -> Non
     paragraph = document.sections[0].paragraphs[0]
     assert paragraph.text == "Treść w tabeli."
     assert paragraph.locator == "table:0:row:0:cell:0:p:0"
+
+
+def test_tracked_revision_only_in_a_header_is_detected(tmp_path: Path) -> None:
+    # A tracked change living only in a header part must still be surfaced so the pipeline
+    # can warn the human; scanning a fixed allowlist of parts missed headers/footers.
+    input_path = tmp_path / "header_revision.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Body paragraph with no revisions.")
+    docx.save(input_path)
+
+    header_xml = (
+        b"<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+        b"<w:hdr xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main'>"
+        b"<w:p><w:ins w:id='1' w:author='reviewer'><w:r><w:t>added</w:t></w:r></w:ins></w:p>"
+        b"</w:hdr>"
+    )
+    with ZipFile(input_path, "a") as archive:
+        archive.writestr("word/header1.xml", header_xml)
+
+    document = load_docx(input_path)
+
+    assert document.metadata["tracked_revisions_detected"] == "true"
 
 
 def test_merged_table_cells_are_walked_exactly_once(tmp_path: Path) -> None:
