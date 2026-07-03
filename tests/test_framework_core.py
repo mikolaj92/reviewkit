@@ -424,6 +424,79 @@ def test_scoped_comment_without_a_match_is_surfaced_not_dropped() -> None:
     assert comment in p1_actions
 
 
+def test_overlapping_edits_on_the_same_node_both_become_conflict() -> None:
+    # Two edits validate fine in isolation but their char ranges overlap on "Alpha beta":
+    # applying both would clobber one silently, so both must escalate to CONFLICT.
+    document = _document("Alpha beta gamma.")
+    profile = _auto_apply_profile()
+    left = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="Alpha beta",
+        replacement_text="X",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=0, char_end=10, original_text="Alpha beta"),
+    )
+    right = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="beta gamma",
+        replacement_text="Y",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=6, char_end=16, original_text="beta gamma"),
+    )
+
+    prepared = prepare_actions(document, profile, [left, right])
+
+    assert [action.status for action in prepared] == [
+        ActionStatus.CONFLICT,
+        ActionStatus.CONFLICT,
+    ]
+    assert all("overlapping edit range" in (action.policy_reason or "") for action in prepared)
+    # Nothing overlapping leaks into the clean copy.
+    assert apply_corrections_to_text(document.text, prepared) == document.text
+
+
+def test_adjacent_non_overlapping_edits_still_both_apply() -> None:
+    # Touching-but-not-overlapping ranges ([0,5] then [5,16]) are unambiguous; the
+    # overlap guard must not demote them.
+    document = _document("Alpha beta gamma.")
+    profile = _auto_apply_profile()
+    alpha = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="Alpha",
+        replacement_text="A",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=0, char_end=5, original_text="Alpha"),
+    )
+    rest = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text=" beta gamma",
+        replacement_text=" B",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=5, char_end=16, original_text=" beta gamma"),
+    )
+
+    prepared = prepare_actions(document, profile, [alpha, rest])
+
+    assert [action.status for action in prepared] == [ActionStatus.APPLIED, ActionStatus.APPLIED]
+    assert apply_corrections_to_text(document.text, prepared) == "A B."
+
+
 def _document(text: str) -> ReviewDocument:
     return ReviewDocument(
         sections=[
