@@ -235,6 +235,71 @@ def test_reviewed_docx_accepts_an_explicit_revision_timestamp(tmp_path: Path) ->
     assert revision.get(f"{_W}date") == "2026-07-03T09:30:00+00:00"
 
 
+def test_reviewed_docx_comment_dates_are_deterministic_by_default(tmp_path: Path) -> None:
+    # python-docx stamps comment w:date with wall-clock time; without the override the
+    # comments.xml part differs on every run. Two renders of identical inputs must match.
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Plain target text")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id="p1",
+        original_text="target",
+        replacement_text="replacement",
+        reason="Use clearer wording.",
+        status=ActionStatus.NOT_APPLIED,
+    )
+
+    first = render_reviewed_docx(document, [action], tmp_path / "first.docx")
+    second = render_reviewed_docx(document, [action], tmp_path / "second.docx")
+
+    first_comments = _part_xml(first, "word/comments.xml")
+    second_comments = _part_xml(second, "word/comments.xml")
+    assert first_comments == second_comments
+
+    comment = ElementTree.fromstring(first_comments).find(f".//{_W}comment")
+    assert comment is not None
+    assert comment.get(f"{_W}date") == "1970-01-01T00:00:00+00:00"
+
+
+def test_reviewed_docx_comment_uses_explicit_revision_timestamp(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Plain target text")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    stamp = datetime(2026, 7, 3, 9, 30, tzinfo=UTC)
+    reviewed_path = render_reviewed_docx(
+        document,
+        [
+            ReviewAction(
+                scope=ReviewScope.PARAGRAPH,
+                action_type=ReviewActionType.REPLACE,
+                node_id="p1",
+                original_text="target",
+                replacement_text="replacement",
+                reason="Use clearer wording.",
+                status=ActionStatus.NOT_APPLIED,
+            )
+        ],
+        tmp_path / "reviewed.docx",
+        revision_timestamp=stamp,
+    )
+
+    comment = ElementTree.fromstring(_part_xml(reviewed_path, "word/comments.xml")).find(
+        f".//{_W}comment"
+    )
+    assert comment is not None
+    assert comment.get(f"{_W}date") == "2026-07-03T09:30:00+00:00"
+
+
 def test_corrected_docx_preserves_original_structure_and_formatting(tmp_path: Path) -> None:
     input_path = tmp_path / "input.docx"
     docx = DocxDocument()
