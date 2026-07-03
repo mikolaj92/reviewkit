@@ -282,6 +282,47 @@ def test_multiple_locator_edits_apply_from_original_offsets() -> None:
         assert apply_corrections_to_text(document.text, prepared) == "A beta G."
 
 
+def test_insert_after_orders_by_char_end_not_char_start() -> None:
+    # INSERT_AFTER edits at char_end (a zero-width insertion), so the right-to-left sweep
+    # must order it by char_end. Combined with a length-changing edit whose start sits
+    # inside the insert's anchor span, ordering by char_start applied the edits out of
+    # order (stale offset -> mislanded insertion) and also falsely demoted both as
+    # "overlapping". Both orderings must now apply cleanly to the same result.
+    document = _document("Alpha beta gamma.")
+    profile = _auto_apply_profile()
+    insert_after = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
+        node_id="p1",
+        replacement_text=" X",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        # Anchor spans [1,10]; the insertion itself happens at char_end=10 (after "beta").
+        locator=ReviewLocator(node_id="p1", char_start=1, char_end=10),
+    )
+    replace = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="bet",
+        replacement_text="BETX",  # length-changing; its start (6) sits inside [1,10)
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=6, char_end=9, original_text="bet"),
+    )
+
+    for ordered_actions in ([insert_after, replace], [replace, insert_after]):
+        prepared = prepare_actions(document, profile, ordered_actions)
+
+        assert [action.status for action in prepared] == [
+            ActionStatus.APPLIED,
+            ActionStatus.APPLIED,
+        ]
+        assert apply_corrections_to_text(document.text, prepared) == "Alpha BETXa X gamma."
+
+
 def test_comment_action_requiring_human_decision_is_not_downgraded() -> None:
     document = _document("This clause is unusual.")
     profile = _auto_apply_profile()
