@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from reviewkit.actions import (
     actions_for_paragraph,
     apply_corrections_to_text,
@@ -18,7 +21,12 @@ from reviewkit.models import (
     ReviewScope,
     ReviewStats,
 )
-from reviewkit.profile import ActionPolicyConfig, ProtectedPatternConfig, ReviewProfile
+from reviewkit.profile import (
+    ActionPolicyConfig,
+    OutputConfig,
+    ProtectedPatternConfig,
+    ReviewProfile,
+)
 
 
 def test_extension_points_and_reference_mock_are_exported_from_package_root() -> None:
@@ -76,6 +84,33 @@ def test_profile_accepts_arbitrary_dimensions_and_conservative_defaults() -> Non
     assert policy.auto_apply_requires_unique_match is True
     assert policy.auto_apply_sensitive_text is False
     assert policy.ambiguous_edit_behavior == "conflict"
+
+
+def test_profile_rejects_unknown_keys_instead_of_silently_dropping_them() -> None:
+    # Profiles are the only home for domain/safety rules, so a typo'd guard key must
+    # surface loudly rather than silently keep the fail-closed default.
+    base = {
+        "name": "custom-review",
+        "language": "en",
+        "document_type": "caller-defined document",
+        "reviewer_role": "caller-defined reviewer",
+    }
+
+    with pytest.raises(ValidationError, match="reviewer_roel"):
+        ReviewProfile.model_validate({**base, "reviewer_roel": "typo"})
+
+    with pytest.raises(ValidationError, match="require_llm_apply_hnt"):
+        ReviewProfile.model_validate(
+            {**base, "action_policy": {"require_llm_apply_hnt": True}}
+        )
+
+    with pytest.raises(ValidationError, match="preserv"):
+        ProtectedPatternConfig.model_validate(
+            {"name": "ref", "pattern": r"\[REF_\d+\]", "preserv": True}
+        )
+
+    with pytest.raises(ValidationError, match="corrected_docs"):
+        OutputConfig.model_validate({"corrected_docs": False})
 
 
 def test_findings_actions_and_result_json_are_separate(tmp_path: Path) -> None:

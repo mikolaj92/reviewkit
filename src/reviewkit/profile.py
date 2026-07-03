@@ -12,17 +12,23 @@ from reviewkit.models import ReviewActionType, ReviewDimension, ReviewScope
 
 
 class OutputConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     reviewed_docx: bool = True
     corrected_docx: bool = True
 
 
 class ProtectedPatternConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     pattern: str
     preserve: bool = True
 
 
 class ActionPolicyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     apply_policy: dict[str, str] = Field(default_factory=dict)
     allowed_action_types_for_auto_apply: list[ReviewActionType] = Field(
         default_factory=lambda: [
@@ -65,7 +71,7 @@ class ActionPolicyConfig(BaseModel):
 
 
 class ReviewProfile(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     profile_id: str | None = None
     name: str
