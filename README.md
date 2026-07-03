@@ -142,7 +142,8 @@ deletion, flag or domain-specific advisory action. Actions may reference finding
 
 - `findings` and `actions` as separate arrays;
 - `actions_by_type`, `actions_by_status`, `findings_by_dimension` and `findings_by_severity`;
-- `applied_actions`, `skipped_actions` and `conflicts`;
+- `applied_actions`, `skipped_actions`, `conflicts` and `needs_human_decision`
+  (the fail-closed escalation queue of actions handed to a human);
 - generated artifact paths and warnings.
 
 ## DOCX Rendering

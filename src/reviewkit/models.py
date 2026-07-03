@@ -243,6 +243,18 @@ class ReviewResult(BaseModel):
     def conflicts(self) -> list[ReviewAction]:
         return [action for action in self.actions if action.status == ActionStatus.CONFLICT]
 
+    @property
+    def needs_human_decision(self) -> list[ReviewAction]:
+        # The fail-closed escalation queue: actions the engine refused to auto-apply and
+        # deliberately handed to a human. This is the archetype's central output, so it is
+        # materialized as a first-class report array rather than left for consumers to
+        # hand-filter out of the raw actions list.
+        return [
+            action
+            for action in self.actions
+            if action.status == ActionStatus.NEEDS_HUMAN_DECISION
+        ]
+
     def to_report_dict(self) -> dict[str, Any]:
         payload = self.model_dump(mode="json", by_alias=True, exclude={"document"})
         payload["applied_actions"] = [
@@ -253,6 +265,9 @@ class ReviewResult(BaseModel):
         ]
         payload["conflicts"] = [
             action.model_dump(mode="json", by_alias=True) for action in self.conflicts
+        ]
+        payload["needs_human_decision"] = [
+            action.model_dump(mode="json", by_alias=True) for action in self.needs_human_decision
         ]
         payload["findings_by_dimension"] = dict(
             Counter(_dimension_key(finding.dimension) for finding in self.findings)
