@@ -301,6 +301,28 @@ def test_action_type_keyed_policy_applies_when_category_has_no_rule() -> None:
     assert apply_corrections_to_text(document.text, prepared) == "The dog sat."
 
 
+def test_unknown_severity_fails_closed_past_the_max_severity_gate() -> None:
+    document = _document("The cat sat.")
+    profile = _auto_apply_profile()
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="cat",
+        replacement_text="dog",
+        category="safe_edit",
+        severity="showstopper",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=4, char_end=7, original_text="cat"),
+    )
+
+    prepared = prepare_actions(document, profile, [action])
+
+    assert prepared[0].status == ActionStatus.NEEDS_HUMAN_DECISION
+    assert "severity" in (prepared[0].policy_reason or "")
+
+
 def _document(text: str) -> ReviewDocument:
     return ReviewDocument(
         sections=[

@@ -195,11 +195,15 @@ class ActionPolicy:
 
 
 def _severity_rank(value: str) -> int:
-    return _SEVERITY_ORDER.get(value.strip().lower(), _SEVERITY_ORDER["medium"])
+    # Fail closed: an unknown / free-form severity ranks above every known level so it
+    # exceeds any max_severity gate and is escalated to a human instead of auto-applied.
+    return _SEVERITY_ORDER.get(value.strip().lower(), max(_SEVERITY_ORDER.values()) + 1)
 
 
 def _priority_rank(value: str, order: dict[str, int]) -> int:
-    return order.get(value.strip().lower(), order.get("medium", 0))
+    # Fail closed: an unknown priority ranks above every configured priority so it exceeds
+    # any max_priority gate and is escalated rather than auto-applied.
+    return order.get(value.strip().lower(), max(order.values(), default=0) + 1)
 
 
 def _apply_action_to_text(text: str, action: ReviewAction) -> str:
