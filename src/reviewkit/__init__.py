@@ -1,5 +1,12 @@
 """Public API for ReviewKit."""
 
+from reviewkit.context import (
+    EmptyReviewContextProvider,
+    ReviewContext,
+    ReviewContextProvider,
+)
+from reviewkit.document import ReviewDocument
+from reviewkit.llm import LLMClient, MockLLMClient
 from reviewkit.models import (
     ActionStatus,
     ReviewAction,
@@ -16,8 +23,14 @@ from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 __all__ = [
     "ActionPolicyConfig",
     "ActionStatus",
+    "EmptyReviewContextProvider",
+    "LLMClient",
+    "MockLLMClient",
     "ReviewAction",
     "ReviewActionType",
+    "ReviewContext",
+    "ReviewContextProvider",
+    "ReviewDocument",
     "ReviewFinding",
     "ReviewLocator",
     "ReviewProfile",
