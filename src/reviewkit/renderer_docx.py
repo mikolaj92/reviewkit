@@ -12,7 +12,11 @@ from docx import Document as DocxDocument
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
-from reviewkit.actions import actions_for_paragraph, apply_corrections_to_text
+from reviewkit.actions import (
+    actions_for_paragraph,
+    apply_corrections_to_text,
+    should_apply_to_corrected,
+)
 from reviewkit.document import ReviewDocument
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 
@@ -111,18 +115,49 @@ def render_corrected_docx(
 ) -> Path:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    docx = DocxDocument()
+    # Apply the accepted edits onto a copy of the ORIGINAL document so tables,
+    # headers/footers, images, styles and section structure are preserved. Only
+    # fall back to a blank document when there is no source to copy from.
+    docx = DocxDocument(str(document.source_path)) if document.source_path else DocxDocument()
+    has_source = document.source_path is not None
 
     for section in document.sections:
-        if section.title:
+        if not has_source and section.title:
             docx.add_heading(section.title, level=1)
         for paragraph in section.paragraphs:
-            paragraph_actions = actions_for_paragraph(document, paragraph, actions)
-            corrected = apply_corrections_to_text(paragraph.text, paragraph_actions)
-            docx.add_paragraph(corrected)
+            paragraph_actions = [
+                action
+                for action in actions_for_paragraph(document, paragraph, actions)
+                if should_apply_to_corrected(action)
+            ]
+            docx_paragraph = _paragraph_for_locator(docx, paragraph.locator) if has_source else None
+            if docx_paragraph is None:
+                corrected = apply_corrections_to_text(paragraph.text, paragraph_actions)
+                docx.add_paragraph(corrected)
+                continue
+            _apply_clean_corrections(docx_paragraph, paragraph_actions)
 
     docx.save(str(path))
     return path
+
+
+def _apply_clean_corrections(paragraph: Any, actions: list[ReviewAction]) -> None:
+    """Rewrite ``paragraph``'s runs with the accepted edits applied, no tracked changes."""
+    if not actions:
+        return
+    segments = _paragraph_segments(paragraph)
+    revision_id = 1
+    for action in _trackable_actions_in_application_order(actions):
+        segments, revision_id = _track_action(segments, action, revision_id)
+
+    parent = paragraph._p
+    for child in list(parent):
+        if child.tag != qn("w:pPr"):
+            parent.remove(child)
+    for segment in segments:
+        if segment.kind == "del" or not segment.text:
+            continue
+        _append_text_run(parent, segment.text, segment.rpr)
 
 
 def _paragraph_for_locator(docx: Any, locator: str | None) -> Any | None:
