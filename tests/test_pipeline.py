@@ -424,6 +424,38 @@ def test_one_failing_node_does_not_abort_the_review(tmp_path: Path) -> None:
     assert _docx_text(result.corrected_docx) == "To jest błąd."
 
 
+def test_identical_finding_surfaced_at_two_levels_appears_once(tmp_path: Path) -> None:
+    input_path = _make_docx(tmp_path, "Ala ma kota.")
+    sentence_finding = {
+        "finding_id": "dup-1",
+        "node_id": "p1.s1",
+        "title": "Repeated observation",
+        "description": "The same issue seen at two levels.",
+        "dimension": "clarity",
+        "severity": "low",
+    }
+    # The paragraph level re-surfaces the same finding (same finding_id) at its own node.
+    paragraph_finding = {**sentence_finding, "node_id": "p1"}
+    llm = MockLLMClient(
+        responses=[
+            {"findings": [sentence_finding], "summary": "Zdanie sprawdzone."},
+            {"findings": [paragraph_finding], "summary": "Akapit sprawdzony."},
+            {"summary": "Sekcja sprawdzona."},
+            {"summary": "Dokument sprawdzony."},
+        ]
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+    )
+
+    assert [finding.finding_id for finding in result.findings] == ["dup-1"]
+
+
 def _run_with_single_sentence_action(
     tmp_path: Path,
     action: dict[str, Any],
