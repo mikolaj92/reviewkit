@@ -263,23 +263,49 @@ def test_multiple_locator_edits_apply_from_original_offsets() -> None:
         apply_hint=True,
         locator=ReviewLocator(node_id="p1", char_start=0, char_end=5, original_text="Alpha"),
     )
-    gamma = ReviewAction(
+    delete_beta = ReviewAction(
         scope=ReviewScope.PARAGRAPH,
-        action_type=ReviewActionType.REPLACE_TEXT,
+        action_type=ReviewActionType.DELETE_TEXT,
+        node_id="p1",
+        original_text="beta",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=6, char_end=10, original_text="beta"),
+    )
+    before_beta = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_BEFORE,
+        node_id="p1",
+        original_text="beta",
+        replacement_text="small ",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=6, char_end=10, original_text="beta"),
+    )
+    after_gamma = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
         node_id="p1",
         original_text="gamma",
-        replacement_text="G",
+        replacement_text="!",
         category="safe_edit",
         confidence=1.0,
         apply_hint=True,
         locator=ReviewLocator(node_id="p1", char_start=11, char_end=16, original_text="gamma"),
     )
 
-    for ordered_actions in ([alpha, gamma], [gamma, alpha]):
-        prepared = prepare_actions(document, profile, ordered_actions)
+    cases = [
+        ([alpha, delete_beta, after_gamma], "A  gamma!."),
+        ([alpha, before_beta, after_gamma], "A small beta gamma!."),
+    ]
+    for actions, expected in cases:
+        for ordered_actions in (actions, list(reversed(actions))):
+            prepared = prepare_actions(document, profile, ordered_actions)
 
-        assert [action.status for action in prepared] == [ActionStatus.APPLIED, ActionStatus.APPLIED]
-        assert apply_corrections_to_text(document.text, prepared) == "A beta G."
+            assert [action.status for action in prepared] == [ActionStatus.APPLIED] * len(actions)
+            assert apply_corrections_to_text(document.text, prepared) == expected
 
 
 def test_insert_after_orders_by_char_end_not_char_start() -> None:

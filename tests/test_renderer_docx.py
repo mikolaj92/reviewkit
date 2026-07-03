@@ -163,6 +163,43 @@ def test_reviewed_docx_surfaces_scope_level_conflict_as_a_comment(tmp_path: Path
     assert any(text.startswith("CONFLICT:") for text in comments), comments
 
 
+def test_reviewed_docx_renders_delete_and_insert_text_revisions(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Alpha beta gamma.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    paragraph = document.sections[0].paragraphs[0]
+    actions = [
+        ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.DELETE_TEXT,
+            node_id=paragraph.id,
+            original_text="beta",
+            locator=ReviewLocator(node_id=paragraph.id, char_start=6, char_end=10),
+            reason="Remove redundant word.",
+            status=ActionStatus.NOT_APPLIED,
+        ),
+        ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.INSERT_AFTER,
+            node_id=paragraph.id,
+            original_text="gamma",
+            replacement_text="!",
+            locator=ReviewLocator(node_id=paragraph.id, char_start=11, char_end=16),
+            reason="Add emphasis.",
+            status=ActionStatus.NOT_APPLIED,
+        ),
+    ]
+
+    reviewed_path = render_reviewed_docx(document, actions, tmp_path / "reviewed.docx")
+    document_xml = _part_xml(reviewed_path, "word/document.xml")
+
+    assert _revision_texts(document_xml, "del", "delText") == ["beta"]
+    assert _revision_texts(document_xml, "ins", "t") == ["!"]
+
+
 def test_reviewed_docx_patches_original_and_preserves_run_formatting(tmp_path: Path) -> None:
     input_path = tmp_path / "input.docx"
     docx = DocxDocument()
