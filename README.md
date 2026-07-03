@@ -34,11 +34,18 @@ uv sync
 uv run reviewkit input.docx \
   --profile examples/profiles/story.teacher \
   --out-reviewed reviewed.docx \
-  --out-corrected corrected.docx
+  --out-corrected corrected.docx \
+  --out-report review-report.json \
+  --llm my_package.clients:make_client
 ```
 
-The CLI currently uses `MockLLMClient`, because ReviewKit does not assume a provider.
-Production integrations should pass their own implementation of `LLMClient`.
+`--out-report PATH` writes the JSON report (the third first-class output). Omit it to skip
+the report.
+
+`--llm module:factory` names a zero-argument callable (dotted `module:factory` path) that
+returns an `LLMClient`; ReviewKit imports it and calls it to build the client. When omitted,
+the CLI falls back to the built-in `MockLLMClient`, because ReviewKit does not assume a
+provider. Production integrations pass their own `LLMClient` factory this way.
 
 ## Python API
 
