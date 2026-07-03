@@ -136,7 +136,14 @@ def load_profile(profile_path: str | Path) -> ReviewProfile:
         msg = f"Review profile is missing profile.yaml: {yaml_path}"
         raise FileNotFoundError(msg)
 
-    raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    try:
+        raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as error:
+        # Profiles are hand-edited by domain experts; surface a syntax error with the same
+        # path-carrying ValueError style as the missing-file/non-mapping cases instead of
+        # leaking a bare yaml.YAMLError with no profile context.
+        msg = f"profile.yaml is not valid YAML: {yaml_path}: {error}"
+        raise ValueError(msg) from error
     if not isinstance(raw, dict):
         msg = f"profile.yaml must contain a mapping: {yaml_path}"
         raise ValueError(msg)

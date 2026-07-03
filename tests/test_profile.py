@@ -1,6 +1,20 @@
 from pathlib import Path
 
+import pytest
+
 from reviewkit.profile import load_profile
+
+
+def test_malformed_yaml_raises_value_error_with_path(tmp_path: Path) -> None:
+    # A YAML syntax error must surface with the same path-carrying ValueError style as the
+    # other load_profile failures, not leak a bare yaml.YAMLError with no profile context.
+    (tmp_path / "profile.yaml").write_text("name: broken\n  bad: [unclosed\n", encoding="utf-8")
+
+    with pytest.raises(ValueError) as excinfo:
+        load_profile(tmp_path)
+
+    assert "profile.yaml is not valid YAML" in str(excinfo.value)
+    assert str(tmp_path / "profile.yaml") in str(excinfo.value)
 
 
 def test_profile_loads_from_folder() -> None:
