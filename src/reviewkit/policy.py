@@ -20,14 +20,6 @@ WRITING_ACTIONS = {
 
 _SENSITIVE_TEXT_PATTERN = re.compile(r"\d|https?://|[\w.+-]+@[\w.-]+|[€$£¥]|\{\{[^}]+\}\}")
 
-_SEVERITY_ORDER = {
-    "info": 0,
-    "low": 1,
-    "medium": 2,
-    "high": 3,
-    "critical": 4,
-}
-
 
 @dataclass(frozen=True)
 class ActionPolicyDecision:
@@ -93,8 +85,8 @@ class ActionPolicy:
                 ),
             )
 
-        if _severity_rank(action.severity) > _severity_rank(
-            self.config.max_severity_for_auto_apply
+        if _severity_rank(action.severity, self.config.severity_order) > _severity_rank(
+            self.config.max_severity_for_auto_apply, self.config.severity_order
         ):
             return ActionPolicyDecision(
                 status=ActionStatus.NEEDS_HUMAN_DECISION,
@@ -199,10 +191,10 @@ class ActionPolicy:
         return "Action status was resolved by policy."
 
 
-def _severity_rank(value: str) -> int:
-    # Fail closed: an unknown / free-form severity ranks above every known level so it
+def _severity_rank(value: str, order: dict[str, int]) -> int:
+    # Fail closed: an unknown / free-form severity ranks above every configured level so it
     # exceeds any max_severity gate and is escalated to a human instead of auto-applied.
-    return _SEVERITY_ORDER.get(value.strip().lower(), max(_SEVERITY_ORDER.values()) + 1)
+    return order.get(value.strip().lower(), max(order.values(), default=0) + 1)
 
 
 def _priority_rank(value: str, order: dict[str, int]) -> int:
