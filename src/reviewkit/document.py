@@ -12,6 +12,8 @@ class SentenceNode(BaseModel):
     id: str
     text: str
     paragraph_id: str
+    char_start: int | None = None
+    char_end: int | None = None
     locator: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
 
