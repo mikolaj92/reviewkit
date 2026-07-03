@@ -1,7 +1,11 @@
 import json
 from pathlib import Path
 
-from reviewkit.actions import apply_corrections_to_text, prepare_actions
+from reviewkit.actions import (
+    actions_for_paragraph,
+    apply_corrections_to_text,
+    prepare_actions,
+)
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
 from reviewkit.models import (
     ActionStatus,
@@ -321,6 +325,64 @@ def test_unknown_severity_fails_closed_past_the_max_severity_gate() -> None:
 
     assert prepared[0].status == ActionStatus.NEEDS_HUMAN_DECISION
     assert "severity" in (prepared[0].policy_reason or "")
+
+
+def test_section_scoped_comment_attaches_to_a_single_paragraph() -> None:
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[
+                    ParagraphNode(id="p1", text="The cat sat here.", section_id="s1"),
+                    ParagraphNode(id="p2", text="The cat ran there.", section_id="s1"),
+                ],
+            )
+        ]
+    )
+    comment = ReviewAction(
+        scope=ReviewScope.SECTION,
+        action_type=ReviewActionType.COMMENT,
+        node_id="s1",
+        original_text="cat",
+        comment="Recurring subject worth a section note.",
+    )
+
+    p1_actions = actions_for_paragraph(document, document.sections[0].paragraphs[0], [comment])
+    p2_actions = actions_for_paragraph(document, document.sections[0].paragraphs[1], [comment])
+
+    attachments = [a for a in (*p1_actions, *p2_actions) if a.node_id == "s1"]
+    assert len(attachments) == 1
+    # Anchored to the first paragraph in the section that contains the quote.
+    assert comment in p1_actions
+    assert comment not in p2_actions
+
+
+def test_scoped_comment_without_a_match_is_surfaced_not_dropped() -> None:
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[
+                    ParagraphNode(id="p1", text="Alpha.", section_id="s1"),
+                    ParagraphNode(id="p2", text="Beta.", section_id="s1"),
+                ],
+            )
+        ]
+    )
+    comment = ReviewAction(
+        scope=ReviewScope.SECTION,
+        action_type=ReviewActionType.COMMENT,
+        node_id="s1",
+        original_text="gamma",
+        comment="Note that never quotes matching text.",
+    )
+
+    p1_actions = actions_for_paragraph(document, document.sections[0].paragraphs[0], [comment])
+    p2_actions = actions_for_paragraph(document, document.sections[0].paragraphs[1], [comment])
+
+    attachments = [a for a in (*p1_actions, *p2_actions) if a.node_id == "s1"]
+    assert len(attachments) == 1
+    assert comment in p1_actions
 
 
 def _document(text: str) -> ReviewDocument:
