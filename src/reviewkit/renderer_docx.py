@@ -146,6 +146,7 @@ def _apply_clean_corrections(paragraph: Any, actions: list[ReviewAction]) -> Non
     if not actions:
         return
     segments = _paragraph_segments(paragraph)
+    actions = _align_locators_to_visible_text(segments, actions)
     revision_id = 1
     for action in _trackable_actions_in_application_order(actions):
         segments, revision_id = _track_action(segments, action, revision_id)
@@ -209,6 +210,7 @@ def _add_reviewed_runs(
         return revision_id
 
     segments = _paragraph_segments(paragraph)
+    actions = _align_locators_to_visible_text(segments, actions)
     for action in _trackable_actions_in_application_order(actions):
         segments, revision_id = _track_action(segments, action, revision_id)
 
@@ -298,6 +300,41 @@ def _track_action(
         return _insert_visible(segments, offset, insert), revision_id + 1
 
     return segments, revision_id
+
+
+def _align_locators_to_visible_text(
+    segments: list[_Segment], actions: list[ReviewAction]
+) -> list[ReviewAction]:
+    """Shift char offsets to the renderer's raw-run coordinate system.
+
+    The parser strips paragraph text, so validated char offsets are relative to
+    the stripped text, while the renderer rebuilds visible text from the raw
+    (unstripped) runs. Any leading whitespace therefore skews every offset; shift
+    locator ranges by that amount so edits land on the intended characters.
+    """
+    visible = _visible_text(segments)
+    leading = len(visible) - len(visible.lstrip())
+    if leading == 0:
+        return actions
+    aligned: list[ReviewAction] = []
+    for action in actions:
+        locator = action.locator
+        if locator is not None and locator.char_start is not None and locator.char_end is not None:
+            aligned.append(
+                action.model_copy(
+                    update={
+                        "locator": locator.model_copy(
+                            update={
+                                "char_start": locator.char_start + leading,
+                                "char_end": locator.char_end + leading,
+                            }
+                        )
+                    }
+                )
+            )
+        else:
+            aligned.append(action)
+    return aligned
 
 
 def _paragraph_segments(paragraph: Any) -> list[_Segment]:

@@ -4,7 +4,13 @@ from zipfile import ZipFile
 
 from docx import Document as DocxDocument
 
-from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType, ReviewScope
+from reviewkit.models import (
+    ActionStatus,
+    ReviewAction,
+    ReviewActionType,
+    ReviewLocator,
+    ReviewScope,
+)
 from reviewkit.parser_docx import load_docx
 from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 
@@ -213,6 +219,36 @@ def test_corrected_docx_preserves_original_structure_and_formatting(tmp_path: Pa
     # Run-level formatting on the untouched bold run is retained.
     root = ElementTree.fromstring(document_xml)
     assert root.find(f".//{_W}r/{_W}rPr/{_W}b") is not None
+
+
+def test_locator_edit_aligns_offsets_past_leading_whitespace(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph()
+    paragraph.add_run("   ")  # leading whitespace preserved in the source run
+    paragraph.add_run("Hello world.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    paragraph_node = document.sections[0].paragraphs[0]
+    assert paragraph_node.text == "Hello world."
+    # Offsets are relative to the stripped node text: "world" is [6, 11).
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id=paragraph_node.id,
+        original_text="world",
+        replacement_text="planet",
+        locator=ReviewLocator(node_id=paragraph_node.id, char_start=6, char_end=11),
+        reason="Clarify.",
+        status=ActionStatus.APPLIED,
+    )
+
+    corrected_path = render_corrected_docx(document, [action], tmp_path / "corrected.docx")
+    corrected = DocxDocument(corrected_path)
+    corrected_text = corrected.paragraphs[0].text
+    # The edit lands on "world" despite the 3-char leading whitespace offset skew.
+    assert corrected_text.strip() == "Hello planet."
 
 
 def _part_xml(path: Path, member: str) -> str:
