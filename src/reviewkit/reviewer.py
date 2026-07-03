@@ -44,11 +44,16 @@ class HierarchicalReviewer:
     ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
         state = ReviewState()
         actions: list[ReviewAction] = []
-        section_level_actions: list[ReviewAction] = []
+        # Lower-level actions roll up to the next ENABLED scope, not merely the adjacent
+        # one, so a subset pipeline (e.g. sentence + document) still lets each higher
+        # level see the results below it. ``document_input_actions`` is what document
+        # review will see; ``section_input_actions`` (reset per section) is what section
+        # review will see.
+        document_input_actions: list[ReviewAction] = []
         pipeline = set(self.profile.review_pipeline)
 
         for section in document.sections:
-            paragraph_level_actions: list[ReviewAction] = []
+            section_input_actions: list[ReviewAction] = []
 
             for paragraph in section.paragraphs:
                 sentence_level_actions: list[ReviewAction] = []
@@ -95,8 +100,12 @@ class HierarchicalReviewer:
                     )
                     paragraph_response = self._prepare_response(document, paragraph_response)
                     state.absorb_response(ReviewScope.PARAGRAPH, paragraph.id, paragraph_response)
-                    paragraph_level_actions.extend(paragraph_response.actions)
+                    section_input_actions.extend(paragraph_response.actions)
                     actions.extend(paragraph_response.actions)
+                else:
+                    # Paragraph scope skipped: hand this paragraph's sentence results up
+                    # to the next enabled scope rather than dropping them.
+                    section_input_actions.extend(sentence_level_actions)
 
             if ReviewScope.SECTION in pipeline:
                 context = self.context_provider.context_for(
@@ -111,7 +120,7 @@ class HierarchicalReviewer:
                         self.profile,
                         state,
                         section,
-                        paragraph_level_actions,
+                        section_input_actions,
                         context,
                     ),
                     SectionReviewResponse,
@@ -120,8 +129,12 @@ class HierarchicalReviewer:
                 )
                 section_response = self._prepare_response(document, section_response)
                 state.absorb_response(ReviewScope.SECTION, section.id, section_response)
-                section_level_actions.extend(section_response.actions)
+                document_input_actions.extend(section_response.actions)
                 actions.extend(section_response.actions)
+            else:
+                # Section scope skipped: roll this section's lower-level results up to
+                # the document review.
+                document_input_actions.extend(section_input_actions)
 
         if ReviewScope.DOCUMENT in pipeline:
             context = self.context_provider.context_for(
@@ -136,7 +149,7 @@ class HierarchicalReviewer:
                     self.profile,
                     state,
                     document,
-                    section_level_actions,
+                    document_input_actions,
                     context,
                 ),
                 DocumentReviewResponse,
