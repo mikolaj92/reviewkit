@@ -9,7 +9,9 @@ from reviewkit.models import (
     ActionStatus,
     ReviewAction,
     ReviewActionType,
+    ReviewFinding,
     ReviewLocator,
+    ReviewResult,
     ReviewScope,
 )
 from reviewkit.parser_docx import load_docx
@@ -620,6 +622,60 @@ def test_edited_paragraph_preserves_images_hyperlinks_tabs_and_breaks(tmp_path: 
     assert "<w:hyperlink" in reviewed_xml
     assert _revision_texts(reviewed_xml, "del", "delText") == ["kota"]
     assert _revision_texts(reviewed_xml, "ins", "t") == ["pies"]
+
+
+def test_reviewed_and_corrected_artifacts_are_byte_reproducible(tmp_path: Path) -> None:
+    # Determinism is a core contract: identical document + actions must yield byte-identical
+    # artifacts so downstream diffing/caching stays stable. A nondeterministic comment id,
+    # revision id, dict ordering or timestamp would break this with no other failing test.
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("The quick brown fox jumps.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    actions = [
+        ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.REPLACE_TEXT,
+            node_id="p1",
+            original_text="fox",
+            replacement_text="cat",
+            comment="Prefer cat.",
+            apply_hint=True,
+        ),
+        ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.COMMENT,
+            node_id="p1",
+            comment="Advisory note.",
+        ),
+    ]
+
+    def reviewed_parts(suffix: str) -> tuple[bytes, bytes]:
+        path = render_reviewed_docx(document, actions, tmp_path / f"reviewed-{suffix}.docx")
+        with ZipFile(path) as archive:
+            return archive.read("word/document.xml"), archive.read("word/comments.xml")
+
+    first_document, first_comments = reviewed_parts("a")
+    second_document, second_comments = reviewed_parts("b")
+    assert first_document == second_document
+    assert first_comments == second_comments
+
+    def corrected_document(suffix: str) -> bytes:
+        path = render_corrected_docx(document, actions, tmp_path / f"corrected-{suffix}.docx")
+        with ZipFile(path) as archive:
+            return archive.read("word/document.xml")
+
+    assert corrected_document("a") == corrected_document("b")
+
+    result = ReviewResult(
+        findings=[ReviewFinding(node_id="p1", title="Word choice", description="fox -> cat")],
+        actions=actions,
+    )
+    first_json = result.save_json(tmp_path / "report-a.json").read_bytes()
+    second_json = result.save_json(tmp_path / "report-b.json").read_bytes()
+    assert first_json == second_json
 
 
 def _part_xml(path: Path, member: str) -> str:
