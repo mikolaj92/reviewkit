@@ -278,6 +278,20 @@ def _prepare_action(
             }
         )
 
+    # A section/document-scoped edit has no deterministic paragraph anchor unless it carries
+    # original_text (both renderers apply writing actions at paragraph granularity). Without
+    # one the corrected renderer silently drops it while should_apply_to_corrected/applied_count
+    # still claim it, so the report over-claims and the artifacts diverge. Escalate instead.
+    scope_conflict = _unanchorable_scope_edit_reason(document, action)
+    if scope_conflict:
+        return action.model_copy(
+            update={
+                "status": ActionStatus.CONFLICT,
+                "reason": _append_reason(action.reason, scope_conflict),
+                "policy_reason": scope_conflict,
+            }
+        )
+
     # Honor the profile's ambiguity config (previously declared but never consulted): only
     # gate on a non-unique match when ``auto_apply_requires_unique_match`` is set, and pick
     # the escalation status via ``ambiguous_edit_behavior`` (default CONFLICT).
@@ -414,6 +428,31 @@ def _conflict_reason(document: ReviewDocument, action: ReviewAction) -> str | No
             return "replacement_text is required for this action"
 
     return None
+
+
+def _is_scope_level_node(document: ReviewDocument, node_id: str) -> bool:
+    """True when ``node_id`` names the whole document or a section (not a paragraph/sentence)."""
+    if node_id == document.id:
+        return True
+    return any(section.id == node_id for section in document.sections)
+
+
+def _unanchorable_scope_edit_reason(
+    document: ReviewDocument, action: ReviewAction
+) -> str | None:
+    """Reason a section/document-scoped writing action cannot be applied deterministically.
+
+    A scope-level writing action carrying ``original_text`` is routed to the paragraph
+    where the quote lives (see ``actions_for_paragraph``); one WITHOUT it has no anchor,
+    so the corrected renderer drops it while the stats still claim it. Escalate.
+    """
+    if action.action_type not in WRITING_ACTIONS:
+        return None
+    if action.original_text:
+        return None
+    if not _is_scope_level_node(document, action.node_id):
+        return None
+    return "section/document-scoped edits require original_text to anchor to a paragraph"
 
 
 def _ambiguous_match_reason(node_text: str, action: ReviewAction) -> str | None:

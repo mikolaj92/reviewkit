@@ -8,6 +8,7 @@ from reviewkit.actions import (
     actions_for_paragraph,
     apply_corrections_to_text,
     prepare_actions,
+    should_apply_to_corrected,
 )
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
 from reviewkit.models import (
@@ -586,6 +587,55 @@ def test_scoped_comment_without_a_match_is_surfaced_not_dropped() -> None:
     attachments = [a for a in (*p1_actions, *p2_actions) if a.node_id == "s1"]
     assert len(attachments) == 1
     assert comment in p1_actions
+
+
+def test_scope_level_edit_without_original_text_is_conflicted_not_falsely_applied() -> None:
+    # A section/document-scoped writing action lacking original_text has no deterministic
+    # paragraph anchor, so the corrected renderer would drop it while the stats claim it.
+    # It must escalate to CONFLICT so should_apply_to_corrected and applied_count stay honest.
+    document = _document("The cat sat here.")
+    profile = _auto_apply_profile()
+    scope_insert = ReviewAction(
+        scope=ReviewScope.SECTION,
+        action_type=ReviewActionType.INSERT_TEXT,
+        node_id="s1",
+        replacement_text=" A closing note.",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+    )
+
+    prepared = prepare_actions(document, profile, [scope_insert])
+
+    assert prepared[0].status == ActionStatus.CONFLICT
+    assert "original_text" in (prepared[0].policy_reason or "")
+    assert should_apply_to_corrected(prepared[0]) is False
+    # And nothing routes it into a paragraph, so corrected.docx matches the (empty) set.
+    paragraph = document.sections[0].paragraphs[0]
+    assert actions_for_paragraph(document, paragraph, prepared) == []
+
+
+def test_paragraph_level_insert_without_original_text_still_applies() -> None:
+    # The scope-anchor guard is narrow: a paragraph-scoped insert (no original_text needed)
+    # is directly applicable, so it must remain APPLIED and in the corrected set.
+    document = _document("The cat sat here.")
+    profile = _auto_apply_profile()
+    paragraph_insert = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_TEXT,
+        node_id="p1",
+        replacement_text=" A closing note.",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+    )
+
+    prepared = prepare_actions(document, profile, [paragraph_insert])
+
+    assert prepared[0].status == ActionStatus.APPLIED
+    assert should_apply_to_corrected(prepared[0]) is True
+    corrected = apply_corrections_to_text(document.get_node_text("p1") or "", prepared)
+    assert corrected == "The cat sat here. A closing note."
 
 
 def test_custom_severity_vocabulary_gates_auto_apply() -> None:
