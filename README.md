@@ -164,7 +164,11 @@ Existing extension points include:
 - per-document-type `action_policy` / `action_policies` in profile YAML,
 - policy reasons, source-system tags, evidence refs and references on `ReviewAction`,
 - protected-pattern guards for corrected output safety,
-- `ReviewContextProvider` for grounding, classifier results or external evidence.
+- `ReviewContextProvider` for grounding, classifier results or external evidence,
+- an injectable `ActionPolicy` (peer of `ReviewContextProvider`) passed to
+  `review_document(..., action_policy=...)` or `HierarchicalReviewer`, carrying programmatic
+  `PolicyGuard` callables — `(action, node_text) -> reason | None` — for fail-closed rules that
+  regex config cannot express.
 
 ## Limitations
 

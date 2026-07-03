@@ -34,9 +34,10 @@ def prepare_actions(
     document: ReviewDocument,
     profile: ReviewProfile,
     actions: Iterable[ReviewAction],
+    policy: ActionPolicy | None = None,
 ) -> list[ReviewAction]:
-    policy = ActionPolicy.from_profile(profile)
-    prepared = [_prepare_action(document, policy, action) for action in actions]
+    resolved_policy = policy if policy is not None else ActionPolicy.from_profile(profile)
+    prepared = [_prepare_action(document, resolved_policy, action) for action in actions]
     return _demote_overlapping_actions(document, prepared)
 
 

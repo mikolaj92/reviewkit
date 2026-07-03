@@ -575,6 +575,58 @@ def test_identical_finding_surfaced_at_two_levels_appears_once(tmp_path: Path) -
     assert [finding.finding_id for finding in result.findings] == ["dup-1"]
 
 
+def test_review_document_threads_an_injected_action_policy(tmp_path: Path) -> None:
+    # An edit that auto-applies with the profile's config-only policy must escalate once a
+    # caller injects an ActionPolicy carrying a fail-closed guard -- proving review_document
+    # threads the policy hook through to prepare_actions.
+    from reviewkit.policy import ActionPolicy
+    from reviewkit.profile import load_profile
+
+    input_path = _make_docx(tmp_path, "To jest bład.")
+    profile = load_profile("examples/profiles/story.teacher")
+
+    def _block_all_writes(action, node_text):  # type: ignore[no-untyped-def]
+        return "guard: no automatic writes in this run"
+
+    policy = ActionPolicy.from_profile(profile, guards=[_block_all_writes])
+    llm = MockLLMClient(
+        responses=[
+            {
+                "actions": [
+                    {
+                        "id": "a1",
+                        "scope": "sentence",
+                        "action_type": "replace",
+                        "node_id": "p1.s1",
+                        "original_text": "bład",
+                        "replacement_text": "błąd",
+                        "category": "typo",
+                        "confidence": 1.0,
+                    }
+                ],
+                "summary": "Zdanie sprawdzone.",
+            },
+            {"actions": [], "summary": "Akapit sprawdzony."},
+            {"actions": [], "summary": "Sekcja sprawdzona."},
+            {"actions": [], "summary": "Dokument sprawdzony."},
+        ]
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+        action_policy=policy,
+    )
+
+    assert result.actions[0].status == ActionStatus.NEEDS_HUMAN_DECISION
+    assert "guard" in (result.actions[0].policy_reason or "")
+    # Escalated edits never reach the clean copy.
+    assert "bład" in _docx_text(result.corrected_docx)
+
+
 def _run_with_single_sentence_action(
     tmp_path: Path,
     action: dict[str, Any],

@@ -9,6 +9,7 @@ from reviewkit.document import ReviewDocument
 from reviewkit.llm import LLMClient
 from reviewkit.models import ReviewResult, ReviewStats
 from reviewkit.parser_docx import load_docx
+from reviewkit.policy import ActionPolicy
 from reviewkit.profile import load_profile
 from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 from reviewkit.reviewer import HierarchicalReviewer
@@ -21,10 +22,16 @@ def review_document(
     out_reviewed: str | Path = "reviewed.docx",
     out_corrected: str | Path = "corrected.docx",
     context_provider: ReviewContextProvider | None = None,
+    action_policy: ActionPolicy | None = None,
 ) -> ReviewResult:
     profile = load_profile(profile_path)
     document = load_docx(input_path)
-    reviewer = HierarchicalReviewer(profile=profile, llm=llm, context_provider=context_provider)
+    reviewer = HierarchicalReviewer(
+        profile=profile,
+        llm=llm,
+        context_provider=context_provider,
+        action_policy=action_policy,
+    )
     findings, actions, state = reviewer.review(document)
 
     reviewed_path: Path | None = None

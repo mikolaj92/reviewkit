@@ -18,13 +18,16 @@ from reviewkit.models import (
     ReviewStats,
 )
 from reviewkit.pipeline import review_document
+from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 
 __all__ = [
+    "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
     "EmptyReviewContextProvider",
     "LLMClient",
+    "PolicyGuard",
     "MockLLMClient",
     "ReviewAction",
     "ReviewActionType",
