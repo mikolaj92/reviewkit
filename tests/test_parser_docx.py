@@ -102,6 +102,56 @@ def test_docx_parser_reads_table_paragraphs_with_locators(tmp_path: Path) -> Non
     assert paragraph.locator == "table:0:row:0:cell:0:p:0"
 
 
+def test_table_lands_under_its_authoring_section(tmp_path: Path) -> None:
+    # Body content is walked in true document order, so a table interleaved between two
+    # headings must land under the heading that authored it (the first), not be appended
+    # to whatever section is open when body iteration ends (previously the last).
+    input_path = tmp_path / "interleaved.docx"
+    docx = DocxDocument()
+    docx.add_heading("First section", level=1)
+    docx.add_paragraph("Intro paragraph.")
+    table = docx.add_table(rows=1, cols=1)
+    table.cell(0, 0).text = "Cell content."
+    docx.add_heading("Second section", level=1)
+    docx.add_paragraph("Later paragraph.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+
+    by_title = {section.title: section for section in document.sections}
+    first_locators = [p.locator for p in by_title["First section"].paragraphs]
+    second_locators = [p.locator for p in by_title["Second section"].paragraphs]
+
+    assert "table:0:row:0:cell:0:p:0" in first_locators
+    assert "body:p:1" in first_locators  # "Intro paragraph." keeps its true body index
+    assert first_locators == ["body:p:1", "table:0:row:0:cell:0:p:0"]
+    assert second_locators == ["body:p:3"]  # heading at p:2 consumes an index
+
+
+def test_header_and_footer_get_dedicated_sections(tmp_path: Path) -> None:
+    # Header/footer lines must not be misread as body prose appended to the trailing body
+    # section: they belong in synthetic sections keyed by source, with locators unchanged.
+    input_path = tmp_path / "with_header_footer.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Body prose.")
+    section = docx.sections[0]
+    section.header.paragraphs[0].text = "Header line."
+    section.footer.paragraphs[0].text = "Footer line."
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+
+    header = next(s for s in document.sections if s.metadata.get("source") == "header")
+    footer = next(s for s in document.sections if s.metadata.get("source") == "footer")
+    assert [p.text for p in header.paragraphs] == ["Header line."]
+    assert [p.text for p in footer.paragraphs] == ["Footer line."]
+    assert header.paragraphs[0].locator == "header:0:p:0"
+    assert footer.paragraphs[0].locator == "footer:0:p:0"
+    # The body section must hold only the body prose, not the header/footer lines.
+    body = next(s for s in document.sections if s.id == "s1")
+    assert [p.text for p in body.paragraphs] == ["Body prose."]
+
+
 def test_tracked_revision_only_in_a_header_is_detected(tmp_path: Path) -> None:
     # A tracked change living only in a header part must still be surfaced so the pipeline
     # can warn the human; scanning a fixed allowlist of parts missed headers/footers.
