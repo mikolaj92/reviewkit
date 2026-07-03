@@ -33,3 +33,12 @@ def test_profile_resolves_document_type_action_policy() -> None:
 
     assert policy.apply_policy["typo"] == "apply"
     assert policy.max_severity_for_auto_apply == "medium"
+
+
+def test_example_profile_embodies_fail_closed_auto_apply_defaults() -> None:
+    # The canonical example is copied by users, so it must model the fail-closed contract:
+    # never auto-apply an edit on unhinted or zero-confidence model output.
+    policy = load_profile(Path("examples/profiles/story.teacher")).resolved_action_policy()
+
+    assert policy.require_llm_apply_hint is True
+    assert policy.min_confidence_for_auto_apply > 0.0
