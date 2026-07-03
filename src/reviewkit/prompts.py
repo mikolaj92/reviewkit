@@ -30,7 +30,7 @@ def sentence_review_prompt(
         "review_level": "sentence",
         "current_fragment": {"node_id": sentence.id, "text": sentence.text},
         "external_review_context": _context_payload(context),
-        "current_review_state": _model_payload(state),
+        "current_review_state": _state_payload(state),
         "schema": SentenceReviewResponse.model_json_schema(),
     }
     return _messages(profile, payload)
@@ -48,7 +48,7 @@ def paragraph_review_prompt(
         "current_fragment": {"node_id": paragraph.id, "text": paragraph.text},
         "sentence_review_results": _actions_payload(sentence_actions),
         "external_review_context": _context_payload(context),
-        "current_review_state": _model_payload(state),
+        "current_review_state": _state_payload(state),
         "schema": ParagraphReviewResponse.model_json_schema(),
     }
     return _messages(profile, payload)
@@ -70,7 +70,7 @@ def section_review_prompt(
         },
         "paragraph_review_results": _actions_payload(paragraph_actions),
         "external_review_context": _context_payload(context),
-        "current_review_state": _model_payload(state),
+        "current_review_state": _state_payload(state),
         "schema": SectionReviewResponse.model_json_schema(),
     }
     return _messages(profile, payload)
@@ -96,7 +96,7 @@ def document_review_prompt(
         "repeated_issues": state.repeated_issues,
         "section_review_results": _actions_payload(section_actions),
         "external_review_context": _context_payload(context),
-        "current_review_state": _model_payload(state),
+        "current_review_state": _state_payload(state),
         "schema": DocumentReviewResponse.model_json_schema(),
     }
     return _messages(profile, payload)
@@ -125,8 +125,12 @@ def _messages(profile: ReviewProfile, payload: dict[str, Any]) -> list[dict[str,
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def _model_payload(model: BaseModel) -> dict[str, Any]:
-    return model.model_dump(mode="json")
+def _state_payload(state: ReviewState) -> dict[str, Any]:
+    # ``warnings`` are engine-internal diagnostics (malformed model output that was
+    # dropped, action-processing errors); they are not review substance. Feeding
+    # them back into the next level's prompt only adds noise and risks the model
+    # reacting to our own bookkeeping, so exclude them from the state it sees.
+    return state.model_dump(mode="json", exclude={"warnings"})
 
 
 def _actions_payload(actions: list[ReviewAction]) -> list[dict[str, Any]]:
