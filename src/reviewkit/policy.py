@@ -165,7 +165,12 @@ class ActionPolicy:
         return ActionStatus.NOT_APPLIED
 
     def _guard_reason(self, action: ReviewAction, *, node_text: str) -> str | None:
-        changed_text = _apply_action_to_text(node_text, action)
+        # Score the guards against the text that will ACTUALLY be produced. Import
+        # locally because ``actions`` imports this module (avoids a circular import),
+        # and reuse the single canonical applier so the guard never drifts from it.
+        from reviewkit.actions import apply_action_to_text
+
+        changed_text = apply_action_to_text(node_text, action)
         for protected in self.config.protected_patterns:
             if not protected.preserve:
                 continue
@@ -204,43 +209,6 @@ def _priority_rank(value: str, order: dict[str, int]) -> int:
     # Fail closed: an unknown priority ranks above every configured priority so it exceeds
     # any max_priority gate and is escalated rather than auto-applied.
     return order.get(value.strip().lower(), max(order.values(), default=0) + 1)
-
-
-def _apply_action_to_text(text: str, action: ReviewAction) -> str:
-    original = action.original_text or ""
-    replacement = action.replacement_text or ""
-
-    if action.locator and action.locator.char_start is not None and action.locator.char_end is not None:
-        start = action.locator.char_start
-        end = action.locator.char_end
-        if action.action_type == ReviewActionType.REPLACE_TEXT:
-            return f"{text[:start]}{replacement}{text[end:]}"
-        if action.action_type == ReviewActionType.DELETE_TEXT:
-            return f"{text[:start]}{text[end:]}"
-        if action.action_type == ReviewActionType.INSERT_TEXT:
-            return f"{text[:start]}{replacement}{text[start:]}"
-
-    if action.action_type == ReviewActionType.REPLACE_TEXT and original:
-        return text.replace(original, replacement, 1)
-    if action.action_type == ReviewActionType.DELETE_TEXT and original:
-        return text.replace(original, "", 1)
-    if action.action_type == ReviewActionType.INSERT_TEXT:
-        if original:
-            return text.replace(original, f"{original}{replacement}", 1)
-        return f"{text}{replacement}"
-    if action.action_type == ReviewActionType.REPLACE and original:
-        return text.replace(original, replacement, 1)
-    if action.action_type == ReviewActionType.DELETE and original:
-        return text.replace(original, "", 1)
-    if action.action_type == ReviewActionType.INSERT_BEFORE:
-        if original:
-            return text.replace(original, f"{replacement}{original}", 1)
-        return f"{replacement}{text}"
-    if action.action_type == ReviewActionType.INSERT_AFTER:
-        if original:
-            return text.replace(original, f"{original}{replacement}", 1)
-        return f"{text}{replacement}"
-    return text
 
 
 def _sensitive_text_changed(

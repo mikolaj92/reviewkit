@@ -18,7 +18,7 @@ from reviewkit.models import (
     ReviewScope,
     ReviewStats,
 )
-from reviewkit.profile import ActionPolicyConfig, ReviewProfile
+from reviewkit.profile import ActionPolicyConfig, ProtectedPatternConfig, ReviewProfile
 
 
 def test_extension_points_and_reference_mock_are_exported_from_package_root() -> None:
@@ -173,6 +173,45 @@ def test_sensitive_text_edit_requires_human_decision_by_default() -> None:
     assert prepared[0].status == ActionStatus.NEEDS_HUMAN_DECISION
     assert prepared[0].metadata["blocked_from_corrected"] is True
     assert "sensitive text" in (prepared[0].policy_reason or "")
+
+
+def test_guard_uses_the_real_locator_position_for_insert_after() -> None:
+    # An INSERT_AFTER whose locator lands INSIDE a protected pattern breaks it. The guard
+    # must score the text the canonical applier actually produces (insertion at char_end),
+    # not a hand-rolled duplicate that appended at end-of-text and never saw the breakage.
+    document = _document("See clause [REF_1] today.")
+    profile = ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        action_policy=ActionPolicyConfig(
+            apply_policy={"safe_edit": "apply"},
+            require_llm_apply_hint=True,
+            min_confidence_for_auto_apply=0.85,
+            max_severity_for_auto_apply="medium",
+            protected_patterns=[
+                ProtectedPatternConfig(name="ref_marker", pattern=r"\[REF_\d+\]", preserve=True)
+            ],
+        ),
+    )
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
+        node_id="p1",
+        replacement_text=" NOTE",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        # char_end 15 sits between "[REF" and "_1]" — inserting here shatters the marker.
+        locator=ReviewLocator(node_id="p1", char_start=11, char_end=15, original_text="[REF"),
+    )
+
+    prepared = prepare_actions(document, profile, [action])
+
+    assert prepared[0].status == ActionStatus.NEEDS_HUMAN_DECISION
+    assert prepared[0].metadata["blocked_from_corrected"] is True
+    assert "Protected pattern" in (prepared[0].policy_reason or "")
 
 
 def test_multiple_locator_edits_apply_from_original_offsets() -> None:
