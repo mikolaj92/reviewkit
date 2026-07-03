@@ -20,15 +20,6 @@ WRITING_ACTIONS = {
     ReviewActionType.INSERT_AFTER,
 }
 
-COMMENT_ACTIONS = {
-    ReviewActionType.COMMENT,
-    ReviewActionType.QUESTION,
-    ReviewActionType.RISK,
-    ReviewActionType.SUGGESTION,
-    ReviewActionType.PRAISE,
-    ReviewActionType.SUMMARY,
-}
-
 
 def prepare_actions(
     document: ReviewDocument,
