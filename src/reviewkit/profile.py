@@ -46,6 +46,9 @@ class ActionPolicyConfig(BaseModel):
     blocked_categories: list[str] = Field(default_factory=list)
     min_confidence_for_auto_apply: float = 0.85
     max_severity_for_auto_apply: str = "medium"
+    severity_order: dict[str, int] = Field(
+        default_factory=lambda: {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+    )
     max_priority_for_auto_apply: str | None = None
     priority_order: dict[str, int] = Field(
         default_factory=lambda: {"low": 0, "medium": 1, "high": 2, "critical": 3}

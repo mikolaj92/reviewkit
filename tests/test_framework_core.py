@@ -459,6 +459,45 @@ def test_scoped_comment_without_a_match_is_surfaced_not_dropped() -> None:
     assert comment in p1_actions
 
 
+def test_custom_severity_vocabulary_gates_auto_apply() -> None:
+    # A non-standard severity scale must gate auto-apply when configured, instead of the
+    # hardcoded English scale ranking every unknown severity above the threshold.
+    document = _document("The cat sat here.")
+    profile = ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        action_policy=ActionPolicyConfig(
+            apply_policy={"safe_edit": "apply"},
+            require_llm_apply_hint=True,
+            min_confidence_for_auto_apply=0.85,
+            severity_order={"trivial": 0, "notable": 1, "blocker": 2},
+            max_severity_for_auto_apply="notable",
+        ),
+    )
+    low = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="cat",
+        replacement_text="dog",
+        category="safe_edit",
+        severity="trivial",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=4, char_end=7, original_text="cat"),
+    )
+    high = low.model_copy(update={"severity": "blocker"})
+
+    prepared_low = prepare_actions(document, profile, [low])
+    prepared_high = prepare_actions(document, profile, [high])
+
+    assert prepared_low[0].status == ActionStatus.APPLIED
+    assert prepared_high[0].status == ActionStatus.NEEDS_HUMAN_DECISION
+    assert "severity" in (prepared_high[0].policy_reason or "")
+
+
 def test_overlapping_edits_on_the_same_node_both_become_conflict() -> None:
     # Two edits validate fine in isolation but their char ranges overlap on "Alpha beta":
     # applying both would clobber one silently, so both must escalate to CONFLICT.
