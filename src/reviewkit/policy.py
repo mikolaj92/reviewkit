@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile
+
+# A programmatic, fail-closed guard: given an action and its current node text, return
+# a human-readable reason to escalate the edit to a human (NEEDS_HUMAN_DECISION), or
+# None to allow it. This is the pluggable peer of the regex ``protected_patterns`` and
+# lets callers inject rules that regex config cannot express.
+PolicyGuard = Callable[[ReviewAction, str], str | None]
 
 WRITING_ACTIONS = {
     ReviewActionType.REPLACE_TEXT,
@@ -29,12 +36,21 @@ class ActionPolicyDecision:
 
 
 class ActionPolicy:
-    def __init__(self, config: ActionPolicyConfig) -> None:
+    def __init__(
+        self,
+        config: ActionPolicyConfig,
+        guards: Sequence[PolicyGuard] | None = None,
+    ) -> None:
         self.config = config
+        self.guards = list(guards or [])
 
     @classmethod
-    def from_profile(cls, profile: ReviewProfile) -> "ActionPolicy":
-        return cls(profile.resolved_action_policy())
+    def from_profile(
+        cls,
+        profile: ReviewProfile,
+        guards: Sequence[PolicyGuard] | None = None,
+    ) -> "ActionPolicy":
+        return cls(profile.resolved_action_policy(), guards=guards)
 
     def decide(self, action: ReviewAction, *, node_text: str) -> ActionPolicyDecision:
         policy_status = self._status_from_category_policy(action)
@@ -180,6 +196,12 @@ class ActionPolicy:
             action, node_text=node_text, changed_text=changed_text
         ):
             return "sensitive text changed during auto-apply; human decision is required."
+        # Injected programmatic guards run last: built-in safety fires first, then any
+        # caller-supplied fail-closed rule can still escalate an otherwise-safe edit.
+        for guard in self.guards:
+            reason = guard(action, node_text)
+            if reason:
+                return reason
         return None
 
     @staticmethod

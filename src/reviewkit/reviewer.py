@@ -20,6 +20,7 @@ from reviewkit.models import (
     SectionReviewResponse,
     SentenceReviewResponse,
 )
+from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
 from reviewkit.prompts import (
     document_review_prompt,
@@ -36,10 +37,15 @@ class HierarchicalReviewer:
         profile: ReviewProfile,
         llm: LLMClient,
         context_provider: ReviewContextProvider | None = None,
+        action_policy: ActionPolicy | None = None,
     ) -> None:
         self.profile = profile
         self.llm = llm
         self.context_provider = context_provider or EmptyReviewContextProvider()
+        # An injected policy is the peer of ``context_provider``: callers can supply
+        # programmatic fail-closed guards, not just regex config. None => build the
+        # config-only policy from the profile per node.
+        self.action_policy = action_policy
 
     def review(
         self, document: ReviewDocument
@@ -192,7 +198,9 @@ class HierarchicalReviewer:
         document: ReviewDocument,
         response: T,
     ) -> T:
-        actions = prepare_actions(document, self.profile, response.actions)
+        actions = prepare_actions(
+            document, self.profile, response.actions, policy=self.action_policy
+        )
         return response.model_copy(update={"actions": actions})
 
 

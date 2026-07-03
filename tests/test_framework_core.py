@@ -571,6 +571,67 @@ def test_adjacent_non_overlapping_edits_still_both_apply() -> None:
     assert apply_corrections_to_text(document.text, prepared) == "A B."
 
 
+def test_injected_action_policy_guard_escalates_an_otherwise_applied_edit() -> None:
+    # A programmatic guard is the pluggable peer of regex protected_patterns: an edit
+    # that clears every config gate must still escalate to a human when a caller-supplied
+    # fail-closed guard objects, and must not leak into the clean copy.
+    from reviewkit.policy import ActionPolicy
+
+    document = _document("The cat sat here.")
+    profile = _auto_apply_profile()
+    calls: list[str] = []
+
+    def _no_edits_touching_cat(action: ReviewAction, node_text: str) -> str | None:
+        calls.append(action.node_id)
+        if "cat" in (action.original_text or ""):
+            return "guard: edits touching 'cat' need a human"
+        return None
+
+    policy = ActionPolicy.from_profile(profile, guards=[_no_edits_touching_cat])
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="cat",
+        replacement_text="dog",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=4, char_end=7, original_text="cat"),
+    )
+
+    prepared = prepare_actions(document, profile, [action], policy=policy)
+
+    assert calls == ["p1"]
+    assert prepared[0].status == ActionStatus.NEEDS_HUMAN_DECISION
+    assert "guard" in (prepared[0].policy_reason or "")
+    assert apply_corrections_to_text(document.text, prepared) == document.text
+
+
+def test_action_policy_without_guards_still_auto_applies() -> None:
+    # Injecting a policy with no guards must behave exactly like the config-only default.
+    from reviewkit.policy import ActionPolicy
+
+    document = _document("The cat sat here.")
+    profile = _auto_apply_profile()
+    policy = ActionPolicy.from_profile(profile)
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="cat",
+        replacement_text="dog",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=4, char_end=7, original_text="cat"),
+    )
+
+    prepared = prepare_actions(document, profile, [action], policy=policy)
+
+    assert prepared[0].status == ActionStatus.APPLIED
+
+
 def _document(text: str) -> ReviewDocument:
     return ReviewDocument(
         sections=[
