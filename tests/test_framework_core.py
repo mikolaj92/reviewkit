@@ -17,6 +17,25 @@ from reviewkit.models import (
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile
 
 
+def test_extension_points_and_reference_mock_are_exported_from_package_root() -> None:
+    import reviewkit
+    from reviewkit import (
+        LLMClient,
+        MockLLMClient,
+        ReviewContextProvider,
+        ReviewDocument,
+    )
+
+    for name in ("LLMClient", "ReviewContextProvider", "MockLLMClient", "ReviewDocument"):
+        assert name in reviewkit.__all__
+    # MockLLMClient is the reference implementation of the LLMClient extension point.
+    mock = MockLLMClient()
+    assert hasattr(mock, "complete_json")
+    assert LLMClient is not None
+    assert ReviewContextProvider is not None
+    assert ReviewDocument is not None
+
+
 def test_profile_accepts_arbitrary_dimensions_and_conservative_defaults() -> None:
     profile = ReviewProfile.model_validate(
         {
