@@ -125,6 +125,12 @@ def _locator_range(action: ReviewAction) -> tuple[int, int] | None:
         return None
     if action.action_type not in WRITING_ACTIONS:
         return None
+    if action.action_type == ReviewActionType.INSERT_AFTER:
+        # INSERT_AFTER is a zero-width insertion at char_end (see apply_action_to_text),
+        # not an edit spanning [char_start, char_end]. Order the right-to-left sweep by
+        # that effective position, else a length-changing edit before char_end leaves a
+        # stale offset and the insertion lands in the wrong place.
+        return action.locator.char_end, action.locator.char_end
     return action.locator.char_start, action.locator.char_end
 
 
@@ -342,10 +348,17 @@ def _applied_char_range(node_text: str, action: ReviewAction) -> tuple[int, int]
     """Span of ``node_text`` an APPLIED writing action mutates, if determinable."""
     locator = action.locator
     if locator and locator.char_start is not None and locator.char_end is not None:
+        if action.action_type == ReviewActionType.INSERT_AFTER:
+            # A zero-width insertion at char_end touches no existing character, so it only
+            # conflicts with an edit spanning that exact point - not with edits that merely
+            # sit inside its anchor span, which are compatible and must not be false-demoted.
+            return locator.char_end, locator.char_end
         return locator.char_start, locator.char_end
     original = action.original_text
     if original and node_text.count(original) == 1:
         start = node_text.find(original)
+        if action.action_type == ReviewActionType.INSERT_AFTER:
+            return start + len(original), start + len(original)
         return start, start + len(original)
     return None
 
