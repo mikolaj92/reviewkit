@@ -144,9 +144,45 @@ def actions_for_paragraph(
             selected.append(_rebase_sentence_action(paragraph, sentence, action))
             continue
         if action.node_id in section_or_document_ids and action.original_text:
-            if paragraph.text.count(action.original_text) == 1:
+            if _scope_comment_anchor_id(document, action) == paragraph.id:
                 selected.append(_clear_locator_offsets(action))
     return selected
+
+
+def _scope_paragraphs(
+    document: ReviewDocument, action: ReviewAction
+) -> list[ParagraphNode]:
+    """Ordered paragraphs that a section/document-scoped action ranges over."""
+    if action.node_id == document.id:
+        return list(document.iter_paragraphs())
+    for section in document.sections:
+        if section.id == action.node_id:
+            return list(section.paragraphs)
+    return []
+
+
+def _scope_comment_anchor_id(
+    document: ReviewDocument, action: ReviewAction
+) -> str | None:
+    """Single paragraph a scoped comment attaches to.
+
+    A section/document-scoped comment carrying ``original_text`` used to attach to
+    every paragraph where the text matched once (duplicated) or vanish when it never
+    matched uniquely (dropped). Instead pick one well-defined anchor: the first
+    paragraph in scope whose text contains the quote; if none does, fall back to the
+    scope's first paragraph so the comment is surfaced rather than silently dropped.
+    Conflicting actions are not anchored, honoring action status.
+    """
+    if action.status == ActionStatus.CONFLICT:
+        return None
+    paragraphs = _scope_paragraphs(document, action)
+    if not paragraphs:
+        return None
+    quote = action.original_text or ""
+    for paragraph in paragraphs:
+        if quote and quote in paragraph.text:
+            return paragraph.id
+    return paragraphs[0].id
 
 
 def _sentence_base_offset(paragraph: ParagraphNode, sentence: SentenceNode) -> int | None:
