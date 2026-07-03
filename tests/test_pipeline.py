@@ -42,6 +42,7 @@ def test_hierarchical_review_passes_lower_level_results(tmp_path: Path) -> None:
                         "reason": "Zmiana testowa.",
                         "category": "typo",
                         "confidence": 0.9,
+                        "apply_hint": True,
                     }
                 ],
                 "summary": "Zdanie sprawdzone.",
@@ -249,6 +250,7 @@ def test_applied_actions_are_written_to_corrected_docx(tmp_path: Path) -> None:
             "replacement_text": "błąd",
             "category": "typo",
             "confidence": 1.0,
+            "apply_hint": True,
         },
         text="To jest bład.",
     )
@@ -323,6 +325,7 @@ def test_document_type_action_policy_can_change_review_status(tmp_path: Path) ->
             "category": "typo",
             "severity": "high",
             "confidence": 1.0,
+            "apply_hint": True,
         },
         text="To jest bład.",
     )
@@ -542,6 +545,7 @@ def test_sentence_offset_edit_targets_the_correct_sentence(tmp_path: Path) -> No
                         "replacement_text": "Next",
                         "category": "typo",
                         "confidence": 1.0,
+                        "apply_hint": True,
                         "locator": {"char_start": 0, "char_end": 6},
                     }
                 ],
@@ -583,6 +587,7 @@ def test_sentence_string_edit_targets_the_matching_sentence(tmp_path: Path) -> N
                         "replacement_text": "dog",
                         "category": "typo",
                         "confidence": 1.0,
+                        "apply_hint": True,
                     }
                 ],
                 "summary": "s2.",
@@ -628,6 +633,7 @@ def test_one_failing_node_does_not_abort_the_review(tmp_path: Path) -> None:
                                 "replacement_text": "błąd",
                                 "category": "typo",
                                 "confidence": 1.0,
+                                "apply_hint": True,
                             }
                         ],
                         "summary": "ok",
@@ -715,6 +721,7 @@ def test_review_document_threads_an_injected_action_policy(tmp_path: Path) -> No
                         "replacement_text": "błąd",
                         "category": "typo",
                         "confidence": 1.0,
+                        "apply_hint": True,
                     }
                 ],
                 "summary": "Zdanie sprawdzone.",
