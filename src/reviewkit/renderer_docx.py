@@ -718,7 +718,16 @@ def _create_comment(docx: Any, text: str, reviewer: _ReviewerIdentity) -> int:
     comment = docx.comments.add_comment(
         text=text, author=reviewer.author, initials=reviewer.initials
     )
+    _stamp_comment_date(comment, reviewer)
     return int(comment.comment_id)
+
+
+def _stamp_comment_date(comment: Any, reviewer: _ReviewerIdentity) -> None:
+    # python-docx stamps ``w:date`` with wall-clock ``datetime.now(utc)`` inside
+    # ``add_comment``, which alone makes reviewed.docx non-reproducible. Overwrite it
+    # with the same deterministic revision date used for tracked changes so identical
+    # inputs yield a byte-identical comments.xml (and comments share the ins/del date).
+    comment._comment_elm.set(qn("w:date"), reviewer.revision_date)
 
 
 def _comment_range(tag: str, comment_id: int) -> Any:
@@ -800,6 +809,7 @@ def _add_comment(
         comment = docx.comments.add_comment(
             text=text, author=reviewer.author, initials=reviewer.initials
         )
+        _stamp_comment_date(comment, reviewer)
         runs[0].mark_comment_range(runs[-1], comment.comment_id)
     except AttributeError:
         return False
