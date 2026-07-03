@@ -277,6 +277,20 @@ def _prepare_action(
                 "policy_reason": f"node_id does not exist: {action.node_id}",
             }
         )
+
+    # Honor the profile's ambiguity config (previously declared but never consulted): only
+    # gate on a non-unique match when ``auto_apply_requires_unique_match`` is set, and pick
+    # the escalation status via ``ambiguous_edit_behavior`` (default CONFLICT).
+    ambiguity = _ambiguous_match_reason(node_text, action)
+    if ambiguity and policy.config.auto_apply_requires_unique_match:
+        return action.model_copy(
+            update={
+                "status": _ambiguous_status(policy.config.ambiguous_edit_behavior),
+                "reason": _append_reason(action.reason, ambiguity),
+                "policy_reason": ambiguity,
+            }
+        )
+
     decision = policy.decide(action, node_text=node_text)
     metadata = dict(action.metadata)
     if decision.blocks_corrected:
@@ -399,15 +413,31 @@ def _conflict_reason(document: ReviewDocument, action: ReviewAction) -> str | No
         } and action.replacement_text is None:
             return "replacement_text is required for this action"
 
-    if action.original_text:
-        matches = node_text.count(action.original_text)
-        if matches != 1:
-            return (
-                "original_text must match exactly once in node "
-                f"{action.node_id}; found {matches} matches"
-            )
-
     return None
+
+
+def _ambiguous_match_reason(node_text: str, action: ReviewAction) -> str | None:
+    """Reason an edit is ambiguous because its ``original_text`` is not a unique anchor.
+
+    A non-unique match means the applier cannot know which occurrence to edit. Returned
+    as a distinct signal (not a hard structural conflict) so the caller can honor the
+    profile's ``auto_apply_requires_unique_match`` / ``ambiguous_edit_behavior`` config.
+    """
+    if not action.original_text:
+        return None
+    matches = node_text.count(action.original_text)
+    if matches == 1:
+        return None
+    return (
+        f"original_text must match exactly once in node {action.node_id}; found {matches} matches"
+    )
+
+
+def _ambiguous_status(behavior: str) -> ActionStatus:
+    # Fail closed: only an explicit human-decision opt-in downgrades the default CONFLICT.
+    if behavior.strip().lower() in {"needs_human_decision", "human_decision"}:
+        return ActionStatus.NEEDS_HUMAN_DECISION
+    return ActionStatus.CONFLICT
 
 
 def _locator_conflict_reason(node_text: str, action: ReviewAction) -> str | None:
