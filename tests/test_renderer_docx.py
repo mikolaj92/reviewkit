@@ -2,6 +2,7 @@ from pathlib import Path
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
+import pytest
 from docx import Document as DocxDocument
 
 from reviewkit.models import (
@@ -15,6 +16,114 @@ from reviewkit.parser_docx import load_docx
 from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+# The core contract: reviewed.docx must mark EVERY review action. Trackable edits land as
+# w:ins/w:del tracked changes; advisory actions land as labelled Word comments. This table
+# enumerates the expected marker for every ReviewActionType so a regression that silently
+# stopped emitting one is caught. (tracked tags expected in document.xml, comment label)
+_EVERY_ACTION_MARKER = [
+    (ReviewActionType.REPLACE_TEXT, {"ins", "del"}, "SUGGESTION"),
+    (ReviewActionType.REPLACE, {"ins", "del"}, "SUGGESTION"),
+    (ReviewActionType.DELETE_TEXT, {"del"}, "SUGGESTION"),
+    (ReviewActionType.DELETE, {"del"}, "SUGGESTION"),
+    (ReviewActionType.INSERT_TEXT, {"ins"}, "SUGGESTION"),
+    (ReviewActionType.INSERT_BEFORE, {"ins"}, "SUGGESTION"),
+    (ReviewActionType.INSERT_AFTER, {"ins"}, "SUGGESTION"),
+    (ReviewActionType.COMMENT, set(), "COMMENT"),
+    (ReviewActionType.QUESTION, set(), "QUESTION"),
+    (ReviewActionType.RISK, set(), "RISK"),
+    (ReviewActionType.SUGGESTION, set(), "SUGGESTION"),
+    (ReviewActionType.PRAISE, set(), "PRAISE"),
+    (ReviewActionType.SUMMARY, set(), "SUMMARY"),
+    (ReviewActionType.FLAG, set(), "COMMENT"),
+]
+
+
+@pytest.mark.parametrize(
+    ("action_type", "tracked_tags", "label"),
+    _EVERY_ACTION_MARKER,
+    ids=[case[0].value for case in _EVERY_ACTION_MARKER],
+)
+def test_reviewed_docx_marks_every_action_type(
+    tmp_path: Path,
+    action_type: ReviewActionType,
+    tracked_tags: set[str],
+    label: str,
+) -> None:
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("The quick brown fox jumps.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=action_type,
+        node_id="p1",
+        original_text="fox",
+        replacement_text="cat",
+        comment="Reviewer note.",
+    )
+
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    document_xml = _part_xml(reviewed_path, "word/document.xml")
+    root = ElementTree.fromstring(document_xml)
+
+    # Trackable edits produce the expected tracked-change markup; advisory actions must not.
+    for tag in ("ins", "del"):
+        found = root.find(f".//{_W}{tag}") is not None
+        assert found is (tag in tracked_tags), f"{action_type.value}: unexpected w:{tag}={found}"
+
+    # Every action - trackable or advisory - carries a labelled comment marker.
+    comments = _comment_texts(reviewed_path)
+    assert any(text.startswith(f"{label}:") for text in comments), (
+        f"{action_type.value}: no comment labelled {label!r}; got {comments}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("status", "metadata", "label"),
+    [
+        (ActionStatus.CONFLICT, {}, "CONFLICT"),
+        (ActionStatus.NEEDS_HUMAN_DECISION, {"blocked_from_corrected": True}, "HUMAN_DECISION"),
+    ],
+    ids=["conflict", "blocked_human_decision"],
+)
+def test_reviewed_docx_surfaces_unapplied_edits_as_labelled_comments(
+    tmp_path: Path,
+    status: ActionStatus,
+    metadata: dict[str, object],
+    label: str,
+) -> None:
+    # A writing edit that cannot be auto-applied (CONFLICT, or blocked from corrected) must
+    # NOT become a silent tracked change - it surfaces as a labelled comment for a human.
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("The quick brown fox jumps.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id="p1",
+        original_text="fox",
+        replacement_text="cat",
+        reason="Contested wording.",
+        status=status,
+        metadata=metadata,
+    )
+
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    root = ElementTree.fromstring(_part_xml(reviewed_path, "word/document.xml"))
+
+    assert root.find(f".//{_W}ins") is None
+    assert root.find(f".//{_W}del") is None
+    comments = _comment_texts(reviewed_path)
+    assert any(text.startswith(f"{label}:") for text in comments), (
+        f"expected a comment labelled {label!r}; got {comments}"
+    )
 
 
 def test_reviewed_docx_patches_original_and_preserves_run_formatting(tmp_path: Path) -> None:
@@ -442,6 +551,11 @@ def test_edited_paragraph_preserves_images_hyperlinks_tabs_and_breaks(tmp_path: 
 def _part_xml(path: Path, member: str) -> str:
     with ZipFile(path) as archive:
         return archive.read(member).decode()
+
+
+def _comment_texts(path: Path) -> list[str]:
+    root = ElementTree.fromstring(_part_xml(path, "word/comments.xml"))
+    return ["".join(comment.itertext()) for comment in root.findall(f".//{_W}comment")]
 
 
 def _revision_texts(xml: str, revision_tag: str, text_tag: str) -> list[str]:
