@@ -349,6 +349,38 @@ def test_insert_after_orders_by_char_end_not_char_start() -> None:
         assert apply_corrections_to_text(document.text, prepared) == "Alpha BETXa X gamma."
 
 
+def test_non_unique_match_defaults_to_conflict() -> None:
+    # auto_apply_requires_unique_match=True + ambiguous_edit_behavior="conflict" (defaults):
+    # an ambiguous anchor is a CONFLICT, as before the flags were consulted.
+    document = _document("kot i kot.")
+    prepared = prepare_actions(document, _ambiguity_profile(), [_safe_replace("kot", "pies")])
+
+    assert prepared[0].status == ActionStatus.CONFLICT
+    assert "match exactly once" in (prepared[0].policy_reason or "")
+
+
+def test_auto_apply_requires_unique_match_false_applies_first_occurrence() -> None:
+    # With the guard disabled, a non-unique anchor no longer blocks auto-apply; the edit
+    # lands on the first occurrence. Proves the flag is now honored (was dead config).
+    document = _document("kot i kot.")
+    profile = _ambiguity_profile(auto_apply_requires_unique_match=False)
+    prepared = prepare_actions(document, profile, [_safe_replace("kot", "pies")])
+
+    assert prepared[0].status == ActionStatus.APPLIED
+    assert apply_corrections_to_text(document.text, prepared) == "pies i kot."
+
+
+def test_ambiguous_edit_behavior_can_escalate_to_human_instead_of_conflict() -> None:
+    # ambiguous_edit_behavior="needs_human_decision" routes an ambiguous edit to a human
+    # rather than marking it a CONFLICT. Proves the field is now honored.
+    document = _document("kot i kot.")
+    profile = _ambiguity_profile(ambiguous_edit_behavior="needs_human_decision")
+    prepared = prepare_actions(document, profile, [_safe_replace("kot", "pies")])
+
+    assert prepared[0].status == ActionStatus.NEEDS_HUMAN_DECISION
+    assert "match exactly once" in (prepared[0].policy_reason or "")
+
+
 def test_comment_action_requiring_human_decision_is_not_downgraded() -> None:
     document = _document("This clause is unusual.")
     profile = _auto_apply_profile()
@@ -761,4 +793,33 @@ def _auto_apply_profile() -> ReviewProfile:
             min_confidence_for_auto_apply=0.85,
             max_severity_for_auto_apply="medium",
         ),
+    )
+
+
+def _ambiguity_profile(**policy_overrides: object) -> ReviewProfile:
+    return ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        action_policy=ActionPolicyConfig(
+            apply_policy={"safe_edit": "apply"},
+            require_llm_apply_hint=True,
+            min_confidence_for_auto_apply=0.85,
+            max_severity_for_auto_apply="medium",
+            **policy_overrides,
+        ),
+    )
+
+
+def _safe_replace(original: str, replacement: str) -> ReviewAction:
+    return ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text=original,
+        replacement_text=replacement,
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
     )
