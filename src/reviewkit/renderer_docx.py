@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -22,6 +22,11 @@ from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 
 _SegmentKind = Literal["text", "ins", "del"]
 
+# Deterministic default stamped on tracked-change revisions so ``reviewed.docx`` is
+# reproducible byte-for-byte. Callers that want wall-clock revision dates opt in by
+# passing ``revision_timestamp=datetime.now(UTC)`` explicitly.
+_DEFAULT_REVISION_DATE = "1970-01-01T00:00:00+00:00"
+
 
 @dataclass(frozen=True)
 class _ReviewerIdentity:
@@ -29,6 +34,7 @@ class _ReviewerIdentity:
 
     author: str = "Reviewer"
     initials: str = "RV"
+    revision_date: str = _DEFAULT_REVISION_DATE
 
 
 @dataclass
@@ -49,11 +55,19 @@ def render_reviewed_docx(
     *,
     comment_author: str = "Reviewer",
     comment_initials: str = "RV",
+    revision_timestamp: datetime | None = None,
 ) -> Path:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     docx = DocxDocument(str(document.source_path)) if document.source_path else DocxDocument()
-    reviewer = _ReviewerIdentity(author=comment_author, initials=comment_initials)
+    revision_date = (
+        _DEFAULT_REVISION_DATE
+        if revision_timestamp is None
+        else revision_timestamp.replace(microsecond=0).isoformat()
+    )
+    reviewer = _ReviewerIdentity(
+        author=comment_author, initials=comment_initials, revision_date=revision_date
+    )
     revision_id = 1
 
     for section in document.sections:
@@ -539,7 +553,7 @@ def _append_revision(
     revision = OxmlElement(f"w:{kind}")
     revision.set(qn("w:id"), str(revision_id or 0))
     revision.set(qn("w:author"), reviewer.author)
-    revision.set(qn("w:date"), datetime.now(UTC).replace(microsecond=0).isoformat())
+    revision.set(qn("w:date"), reviewer.revision_date)
 
     run = OxmlElement("w:r")
     if rpr is not None:
