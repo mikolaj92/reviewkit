@@ -98,15 +98,15 @@ Ten runtime nie jest tylko edytorem dokumentów. To deterministyczny subsystem c
 
 | Obszar | Dike | ReviewKit dziś | Wniosek |
 | --- | --- | --- | --- |
-| DOCX input | Tak, legacy i shipped parsers | Tak, body/tabele/header/footer z locatorami | ReviewKit potrzebuje jeszcze bogatszego parsera |
+| DOCX input | Tak, legacy i shipped parsers | Tak, body/tabele/header/footer z locatorami + tracked revisions | Pokrycie legacy scope; bogatszy PDF/footnotes opcjonalnie |
 | Hierarchia review | Paragraph-first, sekcje/dokument agregowane | Sentence -> paragraph -> section -> document | ReviewKit ma lepszą docelową architekturę review |
 | LLM provider | OpenAI-compatible przez gateway | Generyczny `LLMClient` | ReviewKit jest bardziej wymienny |
 | Profile | YAML, ale mocno Dike-specific | Folder YAML/Markdown dla ludzi | ReviewKit pasuje do profili reviewerów |
-| Grounding prawny | Mnemozyna mandatory dla Dike legacy | Brak | Musi być adapter/context provider |
+| Grounding prawny | Mnemozyna mandatory dla Dike legacy | Hook `ReviewContextProvider` gotowy, dane zewnętrzne | Podpiąć Mnemozynę jako context provider |
 | Reguły prawne | Tak, config-driven | Brak | Nie przenosić do core ReviewKit |
-| Finding model | Bogaty legal/compliance model | Generyczny `ReviewAction` | Potrzebny mapper Finding -> ReviewAction |
-| Corrected policy | Rozbudowana, profile-driven | Prosta apply policy | Trzeba dodać policy hooks/guards |
-| Posejdon placeholders | Guard w Dike | Brak | Trzeba dodać guard przed auto-apply |
+| Finding model | Bogaty legal/compliance model | Generyczny `ReviewAction` + `references`/`metadata`/`evidence_refs` | Potrzebny mapper Finding -> ReviewAction |
+| Corrected policy | Rozbudowana, profile-driven | `ActionPolicy` z fail-closed gating | Gotowe w core |
+| Posejdon placeholders | Guard w Dike | `protected_patterns` + wstrzykiwalny guard hook | Gotowe w core |
 | Comments | Dike używa komentarzy `python-docx` | ReviewKit kotwiczy komentarze na fragmencie | Zostawić generycznie w core |
 | Track Changes | Brak pełnego OpenXML | Tak, in-place `w:ins` / `w:del` w `reviewed.docx` | ReviewKit może być lepszym rendererem review |
 | Reports JSON/MD | Tak | Nie taki cel | Nie zastępować przez ReviewKit |
@@ -114,41 +114,65 @@ Ten runtime nie jest tylko edytorem dokumentów. To deterministyczny subsystem c
 
 ## Co trzeba dodać do ReviewKit, żeby przejął legacy Dike DOCX review
 
-Minimalny plan:
+### Zrobione (już w core)
 
-1. Dodać `ReviewContextProvider` hook:
-   - dla sentence/paragraph/section/document,
-   - może wstrzyknąć grounding, profile metadata, classifier result, evidence refs.
+Poniższe punkty pierwotnego minimalnego planu są już zaimplementowane w ReviewKit:
 
-2. Dodać `ActionPolicy` hook zamiast samego `apply_policy`:
-   - status action zależy od category, severity, confidence, human-review flag,
-   - możliwość blokady auto-apply przez reguły typu Posejdon placeholder guard.
+1. `ReviewContextProvider` hook (`reviewkit.context`):
+   - działa dla sentence/paragraph/section/document,
+   - może wstrzyknąć grounding, profile metadata, classifier result, evidence refs
+     jako generyczny `ReviewContext`.
 
-3. Rozszerzyć `ReviewAction`:
+2. `ActionPolicy` zamiast samego `apply_policy` (`reviewkit.policy`,
+   `ActionPolicyConfig`):
+   - status akcji zależy od category, severity, confidence, priority i human-review flag,
+   - fail-closed gating: `require_llm_apply_hint`, `min_confidence_for_auto_apply`,
+     `allowed_action_types_for_auto_apply`, `blocked_categories`,
+   - blokada auto-apply przez guard typu Posejdon placeholder — generyczne
+     `protected_patterns` plus wstrzykiwalny guard hook.
+
+3. Rozszerzony `ReviewAction` (`reviewkit.models`):
    - `metadata: dict[str, Any]`,
-   - `legal_basis`,
    - `evidence_refs`,
    - `source_system`,
-   - `policy_reason`.
+   - `policy_reason`,
+   - `references` (generyczne odnośniki).
+   - `legal_basis` **celowo NIE zostało dodane** jako nazwane pole core. Nazwane
+     pole prawne złamałoby kontrakt domeno-/językowej ślepoty core (#2975); podstawa
+     prawna jest przenoszona przez generyczne `references`/`metadata`, które mapper
+     Dike wypełnia po swojej stronie.
 
-4. Dodać mapper Dike -> ReviewKit:
-   - `ParagraphAssessment` -> `ReviewAction`,
-   - `ComplianceReport/Finding` -> `ReviewAction`.
+5. Bogatszy parser DOCX (`reviewkit.parser_docx`):
+   - stable locator / segment id na body/tabelach/headerach/footerach,
+   - wykrywanie tracked revisions (ostrzeżenie w wyniku),
+   - tabele lądują pod swoją sekcją autorską, header/footer w dedykowanych sekcjach.
 
-5. Ulepszyć parser DOCX:
-   - comments, footnotes,
-   - stable locator / segment id,
-   - wykrywanie tracked revisions.
-
-6. Ulepszyć renderer:
+6. Renderer (`reviewkit.renderer_docx`):
    - reviewed output patchowany in-place dla body/tabel/headerów/footerów,
    - Word comments kotwiczone na fragmencie,
    - propozycje zmian jako `w:ins` / `w:del`,
-   - corrected output bez nagłówków raportowych, jako czysty skorygowany dokument tam, gdzie to możliwe.
+   - corrected output jako czysty skorygowany dokument (kopia oryginału, tylko
+     bezpieczne edycje), bez nagłówków raportowych.
 
-7. Dodać profil `dike.legal-review` albo adapter profilu Dike:
+### Genuine gaps (do zrobienia poza core)
+
+4. Mapper Dike -> ReviewKit (adapter, poza core, żeby nie wnosić domeny do rdzenia):
+   - `ParagraphAssessment` -> `ReviewAction`,
+   - `ComplianceReport/Finding` -> `ReviewAction`,
+   - wypełnia `references`/`metadata`/`evidence_refs`/`source_system`.
+
+7. Profil `dike.legal-review` albo adapter profilu Dike:
    - Dike YAML może zostać domenowy,
    - ReviewKit profile powinny pozostać human-editable.
+
+8. Pozostałe subsystemy zostają po stronie Dike/Fali (nie przenosić do core):
+   - Mnemozyna grounding jako context provider,
+   - legal rule engine, compliance reports, review packets,
+   - bogatszy parser PDF,
+   - batch/cache/audit/history/workflow surfaces.
+
+Rozszerzenie parsera DOCX o comments/footnotes jako źródło wejścia pozostaje
+opcjonalnym usprawnieniem, nie warunkiem przejęcia flow.
 
 ## Proponowana architektura Fala/Dike/ReviewKit
 
@@ -192,23 +216,33 @@ Fala powinna decydować:
 
 ## Decyzja readiness
 
-ReviewKit może teraz zastąpić około **40-50% legacy Dike DOCX review flow**:
+Po zaimplementowaniu context providera, policy hooks, rozszerzonego `ReviewAction`,
+bogatszego parsera i renderera (patrz sekcja "Zrobione"), ReviewKit pokrywa już
+**~80% legacy Dike DOCX review flow** samym rdzeniem:
 
-- strukturę przeglądu,
-- LLM abstraction,
-- statusy akcji,
-- corrected/reviewed output,
-- komentarze Worda i podstawowe Track Changes,
-- ogólny model profili.
+- hierarchiczną strukturę przeglądu (sentence -> paragraph -> section -> document),
+- LLM abstraction i wstrzykiwalny context provider,
+- statusy akcji z fail-closed ActionPolicy (category/severity/confidence/priority,
+  apply-hint, protected_patterns + guard hook),
+- corrected/reviewed output (in-place `w:ins`/`w:del`, kotwiczone komentarze Worda,
+  czysty corrected draft na kopii oryginału),
+- wykrywanie tracked revisions,
+- human-editable model profili.
 
-ReviewKit nie może jeszcze zastąpić:
+Do pełnego przejęcia legacy flow brakuje już tylko warstwy integracyjnej i domenowej,
+która **z założenia zostaje poza core** ReviewKit:
 
-- Mnemozyna grounding,
+- mapper Dike Finding/`ParagraphAssessment` -> `ReviewAction`,
+- profil/adapter `dike.legal-review`,
+- Mnemozyna grounding podpięta jako context provider.
+
+Dalej po stronie Dike/Fali (nie cel ReviewKit):
+
 - Dike legal rule engine,
 - Dike compliance reports,
 - Dike review packets,
-- profile-driven corrected policy,
-- Posejdon placeholder safety,
-- bogatego parsera DOCX/PDF.
+- bogaty parser PDF,
+- batch/cache/audit/history/workflow surfaces.
 
-Po dodaniu adapterów i policy hooks ReviewKit może przejąć **80-90% legacy Dike DOCX artifact flow**, ale Dike nadal powinien zostać legal/compliance providerem.
+Po dodaniu mappera i profilu adaptera ReviewKit może przejąć **~90% legacy Dike DOCX
+artifact flow**, ale Dike nadal powinien zostać legal/compliance providerem.
