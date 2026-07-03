@@ -38,7 +38,7 @@ class ReviewState(BaseModel):
         _extend_unique(self.questions, response.questions)
         _extend_unique(self.missing_elements, response.missing_elements)
         _extend_unique(self.human_decisions, response.human_decisions)
-        self.findings.extend(response.findings)
+        self._add_findings(response.findings)
 
         if response.summary:
             if scope == ReviewScope.PARAGRAPH:
@@ -58,6 +58,36 @@ class ReviewState(BaseModel):
                 _append_unique(self.questions, detail)
             if action.status == ActionStatus.NEEDS_HUMAN_DECISION:
                 _append_unique(self.human_decisions, detail)
+
+    def _add_findings(self, findings: list[ReviewFinding]) -> None:
+        """Accumulate findings, skipping ones already seen.
+
+        The same finding is often re-surfaced when a higher level echoes a lower
+        level's observation. ``state.findings`` is the single source of truth for
+        both prompt context and the final report, so deduplicate here to avoid
+        inflating prompts and double-counting in the result. A finding is a
+        duplicate if it shares an explicit ``finding_id`` (the stable key a caller
+        reuses to re-surface the same finding) or if its full content matches.
+        """
+        seen_ids = {finding.finding_id for finding in self.findings}
+        seen_content = {_finding_content_key(finding) for finding in self.findings}
+        for finding in findings:
+            content_key = _finding_content_key(finding)
+            if finding.finding_id in seen_ids or content_key in seen_content:
+                continue
+            seen_ids.add(finding.finding_id)
+            seen_content.add(content_key)
+            self.findings.append(finding)
+
+
+def _finding_content_key(finding: ReviewFinding) -> tuple[str, str, str, str, str]:
+    return (
+        finding.node_id,
+        finding.title,
+        finding.description,
+        str(finding.dimension),
+        finding.severity,
+    )
 
 
 def _extend_unique(target: list[str], values: list[str]) -> None:

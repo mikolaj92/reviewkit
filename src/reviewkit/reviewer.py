@@ -43,7 +43,6 @@ class HierarchicalReviewer:
         self, document: ReviewDocument
     ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
         state = ReviewState()
-        findings: list[ReviewFinding] = []
         actions: list[ReviewAction] = []
         section_level_actions: list[ReviewAction] = []
         pipeline = set(self.profile.review_pipeline)
@@ -71,7 +70,6 @@ class HierarchicalReviewer:
                         )
                         sentence_response = self._prepare_response(document, sentence_response)
                         state.absorb_response(ReviewScope.SENTENCE, sentence.id, sentence_response)
-                        findings.extend(sentence_response.findings)
                         sentence_level_actions.extend(sentence_response.actions)
                         actions.extend(sentence_response.actions)
 
@@ -97,7 +95,6 @@ class HierarchicalReviewer:
                     )
                     paragraph_response = self._prepare_response(document, paragraph_response)
                     state.absorb_response(ReviewScope.PARAGRAPH, paragraph.id, paragraph_response)
-                    findings.extend(paragraph_response.findings)
                     paragraph_level_actions.extend(paragraph_response.actions)
                     actions.extend(paragraph_response.actions)
 
@@ -123,7 +120,6 @@ class HierarchicalReviewer:
                 )
                 section_response = self._prepare_response(document, section_response)
                 state.absorb_response(ReviewScope.SECTION, section.id, section_response)
-                findings.extend(section_response.findings)
                 section_level_actions.extend(section_response.actions)
                 actions.extend(section_response.actions)
 
@@ -149,10 +145,10 @@ class HierarchicalReviewer:
             )
             document_response = self._prepare_response(document, document_response)
             state.absorb_response(ReviewScope.DOCUMENT, document.id, document_response)
-            findings.extend(document_response.findings)
             actions.extend(document_response.actions)
 
-        return findings, actions, state
+        # ``state.findings`` is the single, deduplicated source of truth.
+        return state.findings, actions, state
 
     def _complete[T: ReviewResponse](
         self,
