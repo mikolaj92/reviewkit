@@ -181,8 +181,18 @@ def _iter_paragraph_sources(docx: object) -> Iterator[tuple[object, str, str]]:
         yield paragraph, f"body:p:{index}", "body"
 
     for table_index, table in enumerate(getattr(docx, "tables", [])):
+        # A merged cell is yielded by ``row.cells`` once per grid position it spans
+        # (across columns AND rows), so walk each underlying ``<w:tc>`` exactly once at
+        # its first grid position - otherwise merged cells (ubiquitous in forms and
+        # contracts) are reviewed twice, edited twice, and inflate paragraph_count.
+        # The set holds the lxml element proxies (not ``id()``, whose value is reused
+        # after GC) so identity is stable and unique per physical cell.
+        seen_cells: set[object] = set()
         for row_index, row in enumerate(table.rows):
             for cell_index, cell in enumerate(row.cells):
+                if cell._tc in seen_cells:
+                    continue
+                seen_cells.add(cell._tc)
                 for paragraph_index, paragraph in enumerate(cell.paragraphs):
                     locator = (
                         f"table:{table_index}:row:{row_index}:cell:{cell_index}:p:{paragraph_index}"

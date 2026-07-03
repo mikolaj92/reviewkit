@@ -91,3 +91,32 @@ def test_docx_parser_reads_table_paragraphs_with_locators(tmp_path: Path) -> Non
     paragraph = document.sections[0].paragraphs[0]
     assert paragraph.text == "Treść w tabeli."
     assert paragraph.locator == "table:0:row:0:cell:0:p:0"
+
+
+def test_merged_table_cells_are_walked_exactly_once(tmp_path: Path) -> None:
+    # row.cells yields a merged cell once per grid position it spans, so without dedup a
+    # merged cell's paragraphs are emitted multiple times: reviewed twice, edited twice.
+    input_path = tmp_path / "merged.docx"
+    docx = DocxDocument()
+    table = docx.add_table(rows=2, cols=3)
+    for row in range(2):
+        for col in range(3):
+            table.cell(row, col).paragraphs[0].add_run(f"r{row}c{col}")
+    table.cell(0, 0).merge(table.cell(0, 1))  # horizontal merge
+    table.cell(0, 2).merge(table.cell(1, 2))  # vertical merge
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    table_paragraphs = [
+        paragraph
+        for paragraph in document.iter_paragraphs()
+        if (paragraph.locator or "").startswith("table:")
+    ]
+
+    # 4 physical cells survive the two merges; each merged cell keeps both its paragraphs
+    # but is walked once, so 6 nodes total with no text (and no locator) emitted twice.
+    assert len(table_paragraphs) == 6
+    texts = [paragraph.text for paragraph in table_paragraphs]
+    assert len(texts) == len(set(texts))
+    locators = [paragraph.locator for paragraph in table_paragraphs]
+    assert len(locators) == len(set(locators))
