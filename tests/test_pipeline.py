@@ -413,6 +413,89 @@ def test_tracked_revision_inputs_are_reported_as_warning(tmp_path: Path, monkeyp
     assert result.warnings == ["Input DOCX contains tracked revisions."]
 
 
+def test_action_referencing_unknown_finding_id_is_reported_as_warning(tmp_path: Path) -> None:
+    # The finding<->action linkage is the archetype's audit trail. An action pointing at a
+    # finding_id no finding carries is a broken link and must surface as a warning; an action
+    # whose finding_id resolves must not.
+    input_path = _make_docx(tmp_path, "The cat sat.")
+    llm = MockLLMClient(
+        responses=[
+            {
+                "findings": [
+                    {
+                        "finding_id": "finding-real",
+                        "node_id": "p1.s1",
+                        "title": "Observation",
+                        "description": "Worth reviewing.",
+                    }
+                ],
+                "actions": [
+                    {
+                        "id": "a-linked",
+                        "scope": "sentence",
+                        "action_type": "comment",
+                        "node_id": "p1.s1",
+                        "finding_id": "finding-real",
+                        "comment": "Responds to the finding.",
+                        "confidence": 0.9,
+                    },
+                    {
+                        "id": "a-dangling",
+                        "scope": "sentence",
+                        "action_type": "comment",
+                        "node_id": "p1.s1",
+                        "finding_id": "finding-ghost",
+                        "comment": "Points at a finding that does not exist.",
+                        "confidence": 0.9,
+                    },
+                ],
+                "summary": "Sentence checked.",
+            },
+            {"actions": [], "summary": "Paragraph checked."},
+            {"actions": [], "summary": "Section checked."},
+            {"actions": [], "summary": "Document checked."},
+        ]
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+    )
+
+    assert result.warnings == [
+        "Action a-dangling references unknown finding_id 'finding-ghost'."
+    ]
+
+
+def test_core_system_prompt_requests_finding_id_linkage(tmp_path: Path) -> None:
+    # The prompt must actually ask the model to emit finding_ids and link actions to them,
+    # otherwise the linkage the archetype relies on is never populated in real runs.
+    input_path = _make_docx(tmp_path, "The cat sat.")
+    llm = MockLLMClient(
+        responses=[
+            {"actions": [], "summary": "Sentence checked."},
+            {"actions": [], "summary": "Paragraph checked."},
+            {"actions": [], "summary": "Section checked."},
+            {"actions": [], "summary": "Document checked."},
+        ]
+    )
+
+    review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+    )
+
+    system_prompt = llm.calls[0].messages[0]["content"]
+    assert llm.calls[0].messages[0]["role"] == "system"
+    assert "set that action's finding_id to the same value" in system_prompt
+
+
 def test_sentence_offset_edit_targets_the_correct_sentence(tmp_path: Path) -> None:
     input_path = _make_docx(tmp_path, "First sentence. Second sentence.")
     llm = MockLLMClient(
