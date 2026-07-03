@@ -632,6 +632,45 @@ def test_action_policy_without_guards_still_auto_applies() -> None:
     assert prepared[0].status == ActionStatus.APPLIED
 
 
+def test_omitted_ids_are_derived_deterministically_from_content() -> None:
+    # A uuid4 default made ids differ between identical runs, breaking report
+    # reproducibility. Omitted ids must now be content-derived (stable + collision-safe
+    # across distinct content), while an explicit id is preserved.
+    first = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1",
+        comment="Same note.",
+    )
+    second = first.model_validate(first.model_dump())
+    different = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1",
+        comment="Other note.",
+    )
+    explicit = ReviewAction(
+        id="keep-me",
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1",
+        comment="Same note.",
+    )
+
+    assert first.id == second.id
+    assert first.id != different.id
+    assert first.id.startswith("action-")
+    assert explicit.id == "keep-me"
+
+    finding = ReviewFinding(node_id="p1", title="T", description="D")
+    finding_again = ReviewFinding(node_id="p1", title="T", description="D")
+    assert finding.finding_id == finding_again.finding_id
+    assert finding.finding_id.startswith("finding-")
+    assert (
+        ReviewFinding(finding_id="fx", node_id="p1", title="T", description="D").finding_id == "fx"
+    )
+
+
 def _document(text: str) -> ReviewDocument:
     return ReviewDocument(
         sections=[

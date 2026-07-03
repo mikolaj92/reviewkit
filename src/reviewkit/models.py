@@ -8,9 +8,8 @@ from collections import Counter
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class ReviewScope(StrEnum):
@@ -88,7 +87,7 @@ class ReviewLocator(BaseModel):
 
 
 class ReviewFinding(BaseModel):
-    finding_id: str = Field(default_factory=lambda: f"finding-{uuid4().hex}")
+    finding_id: str = ""
     node_id: str
     title: str
     description: str
@@ -99,12 +98,25 @@ class ReviewFinding(BaseModel):
     rationale: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def _ensure_finding_id(self) -> "ReviewFinding":
+        # Derive omitted ids deterministically from content so identical LLM output
+        # yields identical ids across runs (a uuid4 default broke report reproducibility
+        # and made any referenced finding_id unstable). An explicit id is preserved.
+        if not self.finding_id:
+            self.finding_id = _stable_id(
+                "finding",
+                [self.node_id, self.title, self.description, _dimension_key(self.dimension),
+                 self.severity],
+            )
+        return self
+
 
 class ReviewAction(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str = Field(
-        default_factory=lambda: f"action-{uuid4().hex}",
+        default="",
         validation_alias=AliasChoices("id", "action_id"),
         serialization_alias="action_id",
     )
@@ -135,6 +147,18 @@ class ReviewAction(BaseModel):
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     references: list[ReviewReference] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _ensure_action_id(self) -> "ReviewAction":
+        # Deterministic content-derived id for omitted ids (see ReviewFinding); an
+        # explicit id/action_id from the model is preserved unchanged.
+        if not self.id:
+            self.id = _stable_id(
+                "action",
+                [self.node_id, self.scope, self.action_type, self.original_text,
+                 self.replacement_text, self.comment],
+            )
+        return self
 
     @property
     def action_id(self) -> str:
@@ -258,3 +282,10 @@ def _dimension_key(dimension: str | ReviewDimension | None) -> str:
     if isinstance(dimension, ReviewDimension):
         return dimension.id
     return dimension
+
+
+def _stable_id(prefix: str, parts: list[Any]) -> str:
+    """A deterministic short id derived from stable content, for reproducible reports."""
+    payload = json.dumps(parts, ensure_ascii=False, sort_keys=True, default=str)
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"

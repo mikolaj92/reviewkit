@@ -627,6 +627,55 @@ def test_review_document_threads_an_injected_action_policy(tmp_path: Path) -> No
     assert "bład" in _docx_text(result.corrected_docx)
 
 
+def test_identical_runs_produce_byte_identical_json_reports(tmp_path: Path) -> None:
+    # A uuid4 default made every report unique even for identical input, defeating
+    # diffing/caching. With content-derived ids two identical runs must serialize to
+    # byte-identical JSON. The action and finding omit ids so the derivation is exercised.
+    input_path = _make_docx(tmp_path, "To jest zdanie.")
+    reviewed_path = tmp_path / "reviewed.docx"
+    corrected_path = tmp_path / "corrected.docx"
+
+    def _report(dest: Path) -> bytes:
+        llm = MockLLMClient(
+            responses=[
+                {
+                    "actions": [
+                        {
+                            "scope": "sentence",
+                            "action_type": "comment",
+                            "node_id": "p1.s1",
+                            "comment": "Dobre zdanie.",
+                            "confidence": 0.9,
+                        }
+                    ],
+                    "findings": [
+                        {
+                            "node_id": "p1.s1",
+                            "title": "Observation",
+                            "description": "A stable finding.",
+                            "dimension": "clarity",
+                            "severity": "low",
+                        }
+                    ],
+                    "summary": "Zdanie sprawdzone.",
+                },
+                {"actions": [], "summary": "Akapit sprawdzony."},
+                {"actions": [], "summary": "Sekcja sprawdzona."},
+                {"actions": [], "summary": "Dokument sprawdzony."},
+            ]
+        )
+        result = review_document(
+            input_path=input_path,
+            profile_path="examples/profiles/story.teacher",
+            llm=llm,
+            out_reviewed=reviewed_path,
+            out_corrected=corrected_path,
+        )
+        return result.save_json(dest).read_bytes()
+
+    assert _report(tmp_path / "a.json") == _report(tmp_path / "b.json")
+
+
 def _run_with_single_sentence_action(
     tmp_path: Path,
     action: dict[str, Any],
