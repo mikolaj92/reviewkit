@@ -73,6 +73,10 @@ def _unresolved_finding_id_warnings(
     # no finding carries is a broken link (a hallucinated or stale reference), so surface it as
     # a warning rather than let the dangling reference pass silently.
     known = {finding.finding_id for finding in findings}
+    # A finding whose duplicate was merged away carries the merged-away id(s) as aliases, so
+    # an action that referenced the dropped copy still resolves and must not be flagged.
+    for finding in findings:
+        known.update(finding.metadata.get("merged_finding_ids", []))
     return [
         f"Action {action.id} references unknown finding_id {action.finding_id!r}."
         for action in actions
