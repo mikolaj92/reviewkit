@@ -270,6 +270,37 @@ def test_priority_vocabulary_is_caller_defined_not_hardcoded() -> None:
     assert "priority" in (prepared[0].policy_reason or "")
 
 
+def test_action_type_keyed_policy_applies_when_category_has_no_rule() -> None:
+    document = _document("The cat sat.")
+    profile = ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        action_policy=ActionPolicyConfig(
+            apply_policy={"replace_text": "apply"},
+            require_llm_apply_hint=True,
+            min_confidence_for_auto_apply=0.0,
+        ),
+    )
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="cat",
+        replacement_text="dog",
+        category="unmapped_category",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=4, char_end=7, original_text="cat"),
+    )
+
+    prepared = prepare_actions(document, profile, [action])
+
+    assert prepared[0].status == ActionStatus.APPLIED
+    assert apply_corrections_to_text(document.text, prepared) == "The dog sat."
+
+
 def _document(text: str) -> ReviewDocument:
     return ReviewDocument(
         sections=[

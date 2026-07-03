@@ -132,8 +132,14 @@ class ActionPolicy:
         )
 
     def _status_from_category_policy(self, action: ReviewAction) -> ActionStatus:
-        policy_key = action.category or action.action_type.value
-        policy = self.config.apply_policy.get(policy_key)
+        # Precedence: a category-keyed rule wins, but if the category has no rule
+        # (or the action has no category) fall back to an action-type-keyed rule so
+        # policies keyed either way are honored.
+        policy = None
+        if action.category is not None:
+            policy = self.config.apply_policy.get(action.category)
+        if policy is None:
+            policy = self.config.apply_policy.get(action.action_type.value)
 
         if policy == "apply":
             return ActionStatus.APPLIED
