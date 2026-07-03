@@ -157,6 +157,36 @@ def test_findings_actions_and_result_json_are_separate(tmp_path: Path) -> None:
     assert payload["actions_by_type"] == {"comment": 1}
 
 
+def test_report_exposes_needs_human_decision_escalation_queue(tmp_path: Path) -> None:
+    def _action(status: ActionStatus, comment: str) -> ReviewAction:
+        return ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.COMMENT,
+            node_id="p1",
+            comment=comment,
+            status=status,
+        )
+
+    escalated = _action(ActionStatus.NEEDS_HUMAN_DECISION, "Ambiguous edit — decide.")
+    result = ReviewResult(
+        actions=[
+            _action(ActionStatus.APPLIED, "Applied."),
+            _action(ActionStatus.CONFLICT, "Conflicting."),
+            escalated,
+        ]
+    )
+
+    # The escalation queue is a first-class property, not something consumers hand-filter.
+    assert result.needs_human_decision == [escalated]
+
+    report_path = tmp_path / "review.json"
+    _ = result.save_json(report_path)
+    payload = json.loads(report_path.read_text(encoding="utf-8"))
+
+    assert [a["comment_text"] for a in payload["needs_human_decision"]] == ["Ambiguous edit — decide."]
+    assert payload["actions_by_status"]["needs_human_decision"] == 1
+
+
 def test_stale_locator_becomes_conflict_instead_of_silent_edit() -> None:
     document = _document("The cat sat.")
     profile = _auto_apply_profile()
