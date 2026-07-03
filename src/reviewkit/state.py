@@ -15,6 +15,7 @@ from reviewkit.models import (
 
 class ReviewState(BaseModel):
     findings: list[ReviewFinding] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
     repeated_issues: list[str] = Field(default_factory=list)
     style_observations: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)

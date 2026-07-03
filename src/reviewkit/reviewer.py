@@ -66,6 +66,8 @@ class HierarchicalReviewer:
                         sentence_response = self._complete(
                             sentence_review_prompt(self.profile, state, sentence, context),
                             SentenceReviewResponse,
+                            state=state,
+                            label=f"sentence {sentence.id}",
                         )
                         sentence_response = self._prepare_response(document, sentence_response)
                         state.absorb_response(ReviewScope.SENTENCE, sentence.id, sentence_response)
@@ -90,6 +92,8 @@ class HierarchicalReviewer:
                             context,
                         ),
                         ParagraphReviewResponse,
+                        state=state,
+                        label=f"paragraph {paragraph.id}",
                     )
                     paragraph_response = self._prepare_response(document, paragraph_response)
                     state.absorb_response(ReviewScope.PARAGRAPH, paragraph.id, paragraph_response)
@@ -114,6 +118,8 @@ class HierarchicalReviewer:
                         context,
                     ),
                     SectionReviewResponse,
+                    state=state,
+                    label=f"section {section.id}",
                 )
                 section_response = self._prepare_response(document, section_response)
                 state.absorb_response(ReviewScope.SECTION, section.id, section_response)
@@ -138,6 +144,8 @@ class HierarchicalReviewer:
                     context,
                 ),
                 DocumentReviewResponse,
+                state=state,
+                label="document",
             )
             document_response = self._prepare_response(document, document_response)
             state.absorb_response(ReviewScope.DOCUMENT, document.id, document_response)
@@ -150,11 +158,23 @@ class HierarchicalReviewer:
         self,
         messages: list[dict[str, str]],
         schema: type[T],
+        *,
+        state: ReviewState,
+        label: str,
     ) -> T:
-        raw = self.llm.complete_json(messages=messages, schema=schema)
-        if isinstance(raw, BaseModel):
-            return schema.model_validate(raw.model_dump(mode="json"))
-        return schema.model_validate(raw)
+        try:
+            raw = self.llm.complete_json(messages=messages, schema=schema)
+            if isinstance(raw, BaseModel):
+                return schema.model_validate(raw.model_dump(mode="json"))
+            return schema.model_validate(raw)
+        except Exception as error:
+            # Resilience: a single failing node (client error or malformed/invalid
+            # response) must not abort the whole review. Skip this node with an empty
+            # response and surface the failure as a warning so callers can react.
+            state.warnings.append(
+                f"LLM review skipped for {label}: {type(error).__name__}: {error}"
+            )
+            return schema()
 
     def _prepare_response[T: ReviewResponse](
         self,

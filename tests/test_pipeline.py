@@ -374,6 +374,56 @@ def test_sentence_string_edit_targets_the_matching_sentence(tmp_path: Path) -> N
     assert corrected_text == "The cat sat. The dog ran."
 
 
+def test_one_failing_node_does_not_abort_the_review(tmp_path: Path) -> None:
+    class _PartiallyFailingLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete_json(self, messages: list[dict[str, str]], schema: type[Any]) -> Any:
+            self.calls += 1
+            if self.calls == 1:  # sentence node raises
+                raise RuntimeError("simulated LLM failure")
+            if self.calls == 2:  # paragraph node still produces a real, applicable edit
+                return schema.model_validate(
+                    {
+                        "actions": [
+                            {
+                                "id": "p1a",
+                                "scope": "paragraph",
+                                "action_type": "replace",
+                                "node_id": "p1",
+                                "original_text": "bład",
+                                "replacement_text": "błąd",
+                                "category": "typo",
+                                "confidence": 1.0,
+                            }
+                        ],
+                        "summary": "ok",
+                    }
+                )
+            return schema()
+
+    input_path = _make_docx(tmp_path, "To jest bład.")
+    llm = _PartiallyFailingLLM()
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+    )
+
+    # Every node was still visited despite the sentence failure.
+    assert llm.calls == 4
+    # The failure is surfaced as a warning, naming the node.
+    assert any("sentence p1.s1" in warning for warning in result.warnings)
+    assert any("RuntimeError" in warning for warning in result.warnings)
+    # The other nodes produced results: the paragraph edit was applied.
+    assert result.stats.applied_count == 1
+    assert _docx_text(result.corrected_docx) == "To jest błąd."
+
+
 def _run_with_single_sentence_action(
     tmp_path: Path,
     action: dict[str, Any],
