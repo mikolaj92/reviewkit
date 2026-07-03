@@ -20,7 +20,7 @@ from reviewkit.actions import (
 from reviewkit.document import ReviewDocument
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 
-_SegmentKind = Literal["text", "ins", "del"]
+_SegmentKind = Literal["text", "ins", "del", "opaque"]
 
 # Deterministic default stamped on tracked-change revisions so ``reviewed.docx`` is
 # reproducible byte-for-byte. Callers that want wall-clock revision dates opt in by
@@ -46,6 +46,21 @@ class _Segment:
     revision_id: int | None = None
     start_comments: list[int] = field(default_factory=list)
     end_comments: list[int] = field(default_factory=list)
+    # For ``opaque`` segments: the original inline element (image, hyperlink, tab,
+    # break, field, pre-existing revision, ...) re-emitted verbatim on rebuild. Its
+    # ``text`` is the visible characters it contributes to the paragraph so char
+    # offsets around it stay aligned with the parser's coordinate system.
+    element: Any | None = None
+
+
+def _advances_offset(segment: _Segment) -> bool:
+    """Whether ``segment`` occupies visible characters in the parser's offset space.
+
+    Original content (kept text and preserved inline objects) advances offsets;
+    tracked-change markup we introduce (``ins``/``del``) is zero-width so that
+    later, left-ward edits keep their original-text coordinates.
+    """
+    return segment.kind in ("text", "opaque")
 
 
 def render_reviewed_docx(
@@ -170,8 +185,15 @@ def _apply_clean_corrections(paragraph: Any, actions: list[ReviewAction]) -> Non
         if child.tag != qn("w:pPr"):
             parent.remove(child)
     for segment in segments:
-        if segment.kind == "del" or not segment.text:
+        if segment.kind == "del":
             continue
+        if segment.kind == "opaque":
+            if segment.element is not None:
+                parent.append(deepcopy(segment.element))
+            continue
+        if not segment.text:
+            continue
+        # ``ins`` segments are accepted corrections: they land as ordinary text.
         _append_text_run(parent, segment.text, segment.rpr)
 
 
@@ -352,13 +374,74 @@ def _align_locators_to_visible_text(
 
 
 def _paragraph_segments(paragraph: Any) -> list[_Segment]:
+    """Decompose a paragraph into ordered segments, preserving non-text content.
+
+    Editable text becomes ``text`` segments; every other inline object (images,
+    hyperlinks, tabs, breaks, fields, bookmarks, pre-existing tracked revisions,
+    math, ...) is kept verbatim as an ``opaque`` segment so an edited paragraph
+    never loses that content when it is rebuilt.
+    """
     segments: list[_Segment] = []
-    for run in paragraph._p.iter(qn("w:r")):
-        rpr = run.find(qn("w:rPr"))
-        for text in run.iter(qn("w:t")):
-            if text.text:
-                segments.append(_Segment("text", text.text, deepcopy(rpr)))
+    for child in paragraph._p:
+        tag = child.tag
+        if tag == qn("w:pPr"):
+            continue
+        if tag == qn("w:r"):
+            segments.extend(_run_segments(child))
+            continue
+        segments.append(
+            _Segment("opaque", _descendant_visible_text(child), element=deepcopy(child))
+        )
     return segments or [_Segment("text", paragraph.text)]
+
+
+def _run_segments(run: Any) -> list[_Segment]:
+    rpr = run.find(qn("w:rPr"))
+    result: list[_Segment] = []
+    for child in run:
+        tag = child.tag
+        if tag == qn("w:rPr"):
+            continue
+        if tag == qn("w:t"):
+            if child.text:
+                result.append(_Segment("text", child.text, deepcopy(rpr)))
+            continue
+        # Non-text run content (tab, break, drawing/image, symbol, field char, ...)
+        # is re-wrapped into its own run so run properties survive, and kept opaque
+        # with the visible width it contributes to the paragraph text.
+        result.append(
+            _Segment("opaque", _inline_width(child), element=_wrap_run_child(rpr, child))
+        )
+    return result
+
+
+def _wrap_run_child(rpr: Any | None, child: Any) -> Any:
+    run = OxmlElement("w:r")
+    if rpr is not None:
+        run.append(deepcopy(rpr))
+    run.append(deepcopy(child))
+    return run
+
+
+def _inline_width(child: Any) -> str:
+    if child.tag == qn("w:tab"):
+        return "\t"
+    if child.tag in (qn("w:br"), qn("w:cr")):
+        return "\n"
+    return ""
+
+
+def _descendant_visible_text(element: Any) -> str:
+    """Visible characters an opaque element contributes, mirroring ``paragraph.text``."""
+    parts: list[str] = []
+    for node in element.iter():
+        if node.tag == qn("w:t") and node.text:
+            parts.append(node.text)
+        elif node.tag == qn("w:tab"):
+            parts.append("\t")
+        elif node.tag in (qn("w:br"), qn("w:cr")):
+            parts.append("\n")
+    return "".join(parts)
 
 
 def _replace_visible_range(
@@ -372,7 +455,7 @@ def _replace_visible_range(
     inserted = False
     offset = 0
     for segment in segments:
-        next_offset = offset + (len(segment.text) if segment.kind == "text" else 0)
+        next_offset = offset + (len(segment.text) if _advances_offset(segment) else 0)
         if segment.kind == "text" and start <= offset and next_offset <= end:
             if not inserted:
                 result.extend(segment for segment in replacement if segment.text)
@@ -402,6 +485,8 @@ def _split_visible_offset(segments: list[_Segment], offset: int) -> list[_Segmen
     for segment in segments:
         if segment.kind != "text":
             result.append(segment)
+            if _advances_offset(segment):
+                cursor += len(segment.text)
             continue
         next_cursor = cursor + len(segment.text)
         if not split_done and cursor < offset < next_cursor:
@@ -418,7 +503,7 @@ def _split_visible_offset(segments: list[_Segment], offset: int) -> list[_Segmen
 def _index_at_visible_offset(segments: list[_Segment], offset: int) -> int:
     cursor = 0
     for index, segment in enumerate(segments):
-        if segment.kind != "text":
+        if not _advances_offset(segment):
             continue
         if cursor >= offset:
             return index
@@ -439,7 +524,7 @@ def _visible_slice(
     selected: list[_Segment] = []
     offset = 0
     for segment in segments:
-        next_offset = offset + (len(segment.text) if segment.kind == "text" else 0)
+        next_offset = offset + (len(segment.text) if _advances_offset(segment) else 0)
         if segment.kind == "text" and start <= offset and next_offset <= end:
             selected.append(_Segment(kind, segment.text, deepcopy(segment.rpr), action_id))
         offset = next_offset
@@ -455,7 +540,7 @@ def _assign_revision_ids(segments: list[_Segment], revision_id: int) -> int:
 
 
 def _visible_text(segments: list[_Segment]) -> str:
-    return "".join(segment.text for segment in segments if segment.kind == "text")
+    return "".join(segment.text for segment in segments if _advances_offset(segment))
 
 
 def _action_range(segments: list[_Segment], action: ReviewAction) -> tuple[int, int] | None:
@@ -487,6 +572,8 @@ def _rpr_at(segments: list[_Segment], offset: int) -> Any | None:
     previous: Any | None = None
     for segment in segments:
         if segment.kind != "text":
+            if _advances_offset(segment):
+                cursor += len(segment.text)
             continue
         next_cursor = cursor + len(segment.text)
         if cursor <= offset <= next_cursor:
@@ -505,6 +592,7 @@ def _copy_segment(segment: _Segment, text: str) -> _Segment:
         revision_id=segment.revision_id,
         start_comments=list(segment.start_comments),
         end_comments=list(segment.end_comments),
+        element=deepcopy(segment.element) if segment.element is not None else None,
     )
 
 
@@ -517,12 +605,15 @@ def _replace_paragraph_children(
             parent.remove(child)
 
     for segment in segments:
-        if not segment.text:
+        if not segment.text and segment.kind != "opaque":
             continue
         for comment_id in segment.start_comments:
             parent.append(_comment_range("w:commentRangeStart", comment_id))
         if segment.kind == "text":
             _append_text_run(parent, segment.text, segment.rpr)
+        elif segment.kind == "opaque":
+            if segment.element is not None:
+                parent.append(deepcopy(segment.element))
         else:
             _append_revision(
                 parent, segment.kind, segment.text, reviewer, segment.rpr, segment.revision_id

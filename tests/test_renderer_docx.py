@@ -312,6 +312,68 @@ def test_locator_edit_aligns_offsets_past_leading_whitespace(tmp_path: Path) -> 
     assert corrected_text.strip() == "Hello planet."
 
 
+def test_edited_paragraph_preserves_images_hyperlinks_tabs_and_breaks(tmp_path: Path) -> None:
+    from docx.oxml import OxmlElement
+
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph()
+    paragraph.add_run("Ala ma ")
+    image_run = paragraph.add_run()  # inline image lives in its own run
+    image_run._r.append(OxmlElement("w:drawing"))
+    paragraph.add_run("kota")
+    tab_run = paragraph.add_run()
+    tab_run._r.append(OxmlElement("w:tab"))
+    paragraph.add_run("oraz")
+    break_run = paragraph.add_run()
+    break_run._r.append(OxmlElement("w:br"))
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink_run = OxmlElement("w:r")
+    hyperlink_text = OxmlElement("w:t")
+    hyperlink_text.text = "link"
+    hyperlink_run.append(hyperlink_text)
+    hyperlink.append(hyperlink_run)
+    paragraph._p.append(hyperlink)
+    paragraph.add_run(" koniec")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    node = document.sections[0].paragraphs[0]
+    assert node.text == "Ala ma kota\toraz\nlink koniec"
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id=node.id,
+        original_text="kota",
+        replacement_text="pies",
+        reason="Change the animal.",
+        status=ActionStatus.APPLIED,
+    )
+
+    # corrected.docx: the edit applies cleanly and every inline object survives.
+    corrected_path = render_corrected_docx(document, [action], tmp_path / "corrected.docx")
+    corrected_xml = _part_xml(corrected_path, "word/document.xml")
+    assert "<w:drawing" in corrected_xml
+    assert "<w:tab" in corrected_xml
+    assert "<w:br" in corrected_xml
+    assert "<w:hyperlink" in corrected_xml
+    corrected_text = DocxDocument(corrected_path).paragraphs[0].text
+    assert "pies" in corrected_text
+    assert "kota" not in corrected_text
+    assert "link" in corrected_text
+    assert "<w:ins" not in corrected_xml and "<w:del" not in corrected_xml
+
+    # reviewed.docx: tracked change is applied and every inline object survives.
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    reviewed_xml = _part_xml(reviewed_path, "word/document.xml")
+    assert "<w:drawing" in reviewed_xml
+    assert "<w:tab" in reviewed_xml
+    assert "<w:br" in reviewed_xml
+    assert "<w:hyperlink" in reviewed_xml
+    assert _revision_texts(reviewed_xml, "del", "delText") == ["kota"]
+    assert _revision_texts(reviewed_xml, "ins", "t") == ["pies"]
+
+
 def _part_xml(path: Path, member: str) -> str:
     with ZipFile(path) as archive:
         return archive.read(member).decode()
