@@ -39,6 +39,14 @@ def test_genuine_sentence_boundaries_still_split() -> None:
     assert split_sentences("First one. Second one!") == ["First one.", "Second one!"]
 
 
+def test_non_latin_terminators_split_sentences() -> None:
+    # The sentence tier must not silently disappear for non-Latin scripts (contract #2975).
+    # CJK writes no inter-sentence space, so these strong terminators split without one.
+    assert split_sentences("这是第一句。这是第二句。") == ["这是第一句。", "这是第二句。"]
+    assert split_sentences("पहला वाक्य। दूसरा वाक्य।") == ["पहला वाक्य।", "दूसरा वाक्य।"]
+    assert split_sentences("هل هذا صحيح؟ نعم.") == ["هل هذا صحيح؟", "نعم."]
+
+
 def test_english_styled_heading_starts_a_new_section(tmp_path: Path) -> None:
     input_path = tmp_path / "headings.docx"
     docx = DocxDocument()

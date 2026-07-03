@@ -11,7 +11,14 @@ from docx import Document as DocxDocument
 
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 
-_SENTENCE_PUNCT_RE = re.compile(r"[.!?]+", re.UNICODE)
+# Terminators span Latin (. ! ?) and common non-Latin sentence enders so the sentence
+# tier does not silently disappear for non-Latin-script documents: CJK (。！？), the
+# horizontal ellipsis (…), the Arabic question mark (؟) and the Devanagari danda (।).
+_SENTENCE_PUNCT_RE = re.compile(r"[.!?。！？…؟।]+", re.UNICODE)
+# The non-Latin enders above are unambiguous, script-specific sentence terminators with
+# no abbreviation/decimal role, and CJK writes no space between sentences - so they end a
+# sentence regardless of what follows, unlike the whitespace-gated Latin punctuation.
+_STRONG_TERMINATORS = frozenset("。！？…؟।")
 _TRAILING_WORD_RE = re.compile(r"(\w+)$", re.UNICODE)
 _REVISION_TAG_RE = re.compile(rb"<w:(ins|del)(?=[\s>/])")
 
@@ -133,13 +140,18 @@ def _is_sentence_boundary(text: str, punct_start: int, punct_end: int) -> bool:
     """Decide whether the punctuation run at ``[punct_start:punct_end]`` ends a sentence.
 
     Language- and domain-neutral heuristics avoid the classic over-splits:
-    - a boundary must be followed by whitespace or end-of-text, so ``3.14`` and the
-      inner dots of ``o.o.`` are never boundaries;
+    - non-Latin terminators (``。！？…؟।``) are unambiguous sentence enders with no
+      abbreviation role, and CJK writes no inter-sentence space, so a run containing one
+      is always a boundary regardless of the following character;
+    - otherwise (Latin ``.!?``) a boundary must be followed by whitespace or end-of-text,
+      so ``3.14`` and the inner dots of ``o.o.`` are never boundaries;
     - a period preceded by a single-letter token is treated as an initial/abbreviation
       (``J. R. R.``, the trailing ``o.``);
     - a period followed by a lowercase word is treated as an abbreviation (``Sp. z``).
     ``!`` and ``?`` are always strong boundaries when followed by whitespace/end.
     """
+    if any(char in _STRONG_TERMINATORS for char in text[punct_start:punct_end]):
+        return True
     if punct_end < len(text) and not text[punct_end].isspace():
         return False
     if "!" in text[punct_start:punct_end] or "?" in text[punct_start:punct_end]:
