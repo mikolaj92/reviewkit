@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import itertools
 import re
 from collections.abc import Iterator
 from pathlib import Path
 from zipfile import ZipFile
 
 from docx import Document as DocxDocument
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 
@@ -27,12 +30,19 @@ def load_docx(path: str | Path) -> ReviewDocument:
     source_path = Path(path)
     docx = DocxDocument(str(source_path))
 
+    # Section/paragraph id counters are shared across the body walk and the synthetic
+    # header/footer sections so every node keeps a globally unique id. "s1" is reserved
+    # for the implicit leading body section, so section numbering starts at 2.
+    section_ids = itertools.count(2)
+    paragraph_ids = itertools.count(1)
+
     sections: list[SectionNode] = []
     current = SectionNode(id="s1")
-    next_section_number = 2
-    next_paragraph_number = 1
 
-    for docx_paragraph, locator, source in _iter_paragraph_sources(docx):
+    # Walk the body in true document order so a table interleaves with the paragraphs
+    # around it and lands under its authoring heading, instead of every table being
+    # appended to whatever section happened to be open at the end of the body.
+    for docx_paragraph, locator, source in _iter_body_sources(docx):
         text = str(getattr(docx_paragraph, "text", "")).strip()
         if not text:
             continue
@@ -41,12 +51,11 @@ def load_docx(path: str | Path) -> ReviewDocument:
             if current.title or current.paragraphs:
                 sections.append(current)
                 current = SectionNode(
-                    id=f"s{next_section_number}",
+                    id=f"s{next(section_ids)}",
                     title=text,
                     locator=locator,
                     metadata={"source": source},
                 )
-                next_section_number += 1
             else:
                 current = SectionNode(
                     id=current.id,
@@ -56,35 +65,17 @@ def load_docx(path: str | Path) -> ReviewDocument:
                 )
             continue
 
-        paragraph_id = f"p{next_paragraph_number}"
-        next_paragraph_number += 1
-        sentences = [
-            SentenceNode(
-                id=f"{paragraph_id}.s{index}",
-                text=sentence,
-                paragraph_id=paragraph_id,
-                char_start=start,
-                char_end=end,
-                locator=f"{locator}:s:{index - 1}",
-                metadata={"source": source},
-            )
-            for index, (sentence, start, end) in enumerate(
-                split_sentences_with_spans(text), start=1
-            )
-        ]
         current.paragraphs.append(
-            ParagraphNode(
-                id=paragraph_id,
-                text=text,
-                section_id=current.id,
-                locator=locator,
-                metadata={"source": source},
-                sentences=sentences,
-            )
+            _paragraph_node(f"p{next(paragraph_ids)}", text, current.id, locator, source)
         )
 
     if current.title or current.paragraphs or not sections:
         sections.append(current)
+
+    # Header/footer paragraphs get their own synthetic sections keyed by source so they
+    # are not misread as body prose tacked onto the trailing body section. Locator strings
+    # ("header:S:p:P"/"footer:S:p:P") are unchanged, so rendering resolves them identically.
+    sections.extend(_header_footer_sections(docx, section_ids, paragraph_ids))
 
     metadata = {
         "paragraph_count": str(sum(len(section.paragraphs) for section in sections)),
@@ -187,30 +178,105 @@ def _is_heading(docx_paragraph: object) -> bool:
     return style_name.startswith("heading") or style_name.startswith("title")
 
 
-def _iter_paragraph_sources(docx: object) -> Iterator[tuple[object, str, str]]:
-    paragraphs = getattr(docx, "paragraphs", [])
-    for index, paragraph in enumerate(paragraphs):
-        yield paragraph, f"body:p:{index}", "body"
+def _paragraph_node(
+    paragraph_id: str, text: str, section_id: str, locator: str, source: str
+) -> ParagraphNode:
+    sentences = [
+        SentenceNode(
+            id=f"{paragraph_id}.s{index}",
+            text=sentence,
+            paragraph_id=paragraph_id,
+            char_start=start,
+            char_end=end,
+            locator=f"{locator}:s:{index - 1}",
+            metadata={"source": source},
+        )
+        for index, (sentence, start, end) in enumerate(split_sentences_with_spans(text), start=1)
+    ]
+    return ParagraphNode(
+        id=paragraph_id,
+        text=text,
+        section_id=section_id,
+        locator=locator,
+        metadata={"source": source},
+        sentences=sentences,
+    )
 
-    for table_index, table in enumerate(getattr(docx, "tables", [])):
-        # A merged cell is yielded by ``row.cells`` once per grid position it spans
-        # (across columns AND rows), so walk each underlying ``<w:tc>`` exactly once at
-        # its first grid position - otherwise merged cells (ubiquitous in forms and
-        # contracts) are reviewed twice, edited twice, and inflate paragraph_count.
-        # The set holds the lxml element proxies (not ``id()``, whose value is reused
-        # after GC) so identity is stable and unique per physical cell.
-        seen_cells: set[object] = set()
-        for row_index, row in enumerate(table.rows):
-            for cell_index, cell in enumerate(row.cells):
-                if cell._tc in seen_cells:
-                    continue
-                seen_cells.add(cell._tc)
-                for paragraph_index, paragraph in enumerate(cell.paragraphs):
-                    locator = (
-                        f"table:{table_index}:row:{row_index}:cell:{cell_index}:p:{paragraph_index}"
-                    )
-                    yield paragraph, locator, "table"
 
+def _iter_body_sources(docx: object) -> Iterator[tuple[object, str, str]]:
+    # ``iter_inner_content`` yields body ``<w:p>`` and ``<w:tbl>`` children in true document
+    # order, so a table is emitted at its real position (between the paragraphs that surround
+    # it) rather than after all paragraphs. Separate paragraph/table counters keep the emitted
+    # locators identical to the previous scheme: ``paragraph_index`` matches ``docx.paragraphs``
+    # (which excludes table paragraphs) and ``table_index`` matches ``docx.tables``.
+    paragraph_index = 0
+    table_index = 0
+    for block in docx.iter_inner_content():  # type: ignore[attr-defined]
+        if isinstance(block, Paragraph):
+            yield block, f"body:p:{paragraph_index}", "body"
+            paragraph_index += 1
+        elif isinstance(block, Table):
+            yield from _iter_table_sources(block, table_index)
+            table_index += 1
+
+
+def _iter_table_sources(table: Table, table_index: int) -> Iterator[tuple[object, str, str]]:
+    # A merged cell is yielded by ``row.cells`` once per grid position it spans (across
+    # columns AND rows), so walk each underlying ``<w:tc>`` exactly once at its first grid
+    # position - otherwise merged cells (ubiquitous in forms and contracts) are reviewed
+    # twice, edited twice, and inflate paragraph_count. The set holds the lxml element
+    # proxies (not ``id()``, whose value is reused after GC) so identity is stable and
+    # unique per physical cell.
+    seen_cells: set[object] = set()
+    for row_index, row in enumerate(table.rows):
+        for cell_index, cell in enumerate(row.cells):
+            if cell._tc in seen_cells:
+                continue
+            seen_cells.add(cell._tc)
+            for paragraph_index, paragraph in enumerate(cell.paragraphs):
+                locator = f"table:{table_index}:row:{row_index}:cell:{cell_index}:p:{paragraph_index}"
+                yield paragraph, locator, "table"
+
+
+def _header_footer_sections(
+    docx: object, section_ids: Iterator[int], paragraph_ids: Iterator[int]
+) -> list[SectionNode]:
+    grouped: dict[str, list[tuple[object, str]]] = {}
+    for docx_paragraph, locator, source in _iter_header_footer_sources(docx):
+        grouped.setdefault(source, []).append((docx_paragraph, locator))
+
+    sections: list[SectionNode] = []
+    for source, entries in grouped.items():
+        non_empty = [
+            (paragraph, locator)
+            for paragraph, locator in entries
+            if str(getattr(paragraph, "text", "")).strip()
+        ]
+        if not non_empty:
+            continue
+        section_id = f"s{next(section_ids)}"
+        paragraphs = [
+            _paragraph_node(
+                f"p{next(paragraph_ids)}",
+                str(getattr(paragraph, "text", "")).strip(),
+                section_id,
+                locator,
+                source,
+            )
+            for paragraph, locator in non_empty
+        ]
+        sections.append(
+            SectionNode(
+                id=section_id,
+                title=source.capitalize(),
+                metadata={"source": source},
+                paragraphs=paragraphs,
+            )
+        )
+    return sections
+
+
+def _iter_header_footer_sources(docx: object) -> Iterator[tuple[object, str, str]]:
     for section_index, section in enumerate(getattr(docx, "sections", [])):
         for paragraph_index, paragraph in enumerate(section.header.paragraphs):
             yield paragraph, f"header:{section_index}:p:{paragraph_index}", "header"
