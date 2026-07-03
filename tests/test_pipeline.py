@@ -7,10 +7,11 @@ from docx import Document as DocxDocument
 
 from reviewkit import ReviewResult, parser_docx, review_document
 from reviewkit.context import ReviewContext, ReviewContextProvider
-from reviewkit.document import ReviewDocument
+from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.llm import MockLLMClient
-from reviewkit.models import ActionStatus, ReviewActionType
+from reviewkit.models import ActionStatus, ReviewActionType, ReviewScope
 from reviewkit.profile import ReviewProfile
+from reviewkit.reviewer import HierarchicalReviewer
 from reviewkit.state import ReviewState
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -88,6 +89,63 @@ def test_hierarchical_review_passes_lower_level_results(tmp_path: Path) -> None:
     assert "a-paragraph" in llm.calls[2].content
     assert "section_review_results" in llm.calls[3].content
     assert "a-section" in llm.calls[3].content
+
+
+def test_subset_pipeline_rolls_lower_actions_up_to_the_next_enabled_scope() -> None:
+    # A profile may enable only sentence + document (a subset the API permits). The
+    # sentence-level action must still reach the document review even though the
+    # intermediate paragraph and section scopes are skipped.
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[
+                    ParagraphNode(
+                        id="p1",
+                        text="The cat sat.",
+                        section_id="s1",
+                        sentences=[
+                            SentenceNode(id="p1.s1", text="The cat sat.", paragraph_id="p1")
+                        ],
+                    )
+                ],
+            )
+        ]
+    )
+    profile = ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        review_pipeline=[ReviewScope.SENTENCE, ReviewScope.DOCUMENT],
+    )
+    llm = MockLLMClient(
+        responses=[
+            {
+                "actions": [
+                    {
+                        "id": "a-sentence",
+                        "scope": "sentence",
+                        "action_type": "comment",
+                        "node_id": "p1.s1",
+                        "comment": "Observed at sentence level.",
+                        "confidence": 0.9,
+                    }
+                ],
+                "summary": "Sentence checked.",
+            },
+            {"actions": [], "summary": "Document checked."},
+        ]
+    )
+
+    reviewer = HierarchicalReviewer(profile=profile, llm=llm)
+    reviewer.review(document)
+
+    # Exactly two LLM calls: sentence then document (paragraph + section skipped).
+    assert len(llm.calls) == 2
+    document_prompt = llm.calls[1].content
+    assert "section_review_results" in document_prompt
+    assert "a-sentence" in document_prompt
 
 
 def test_sentence_review_adds_action(tmp_path: Path) -> None:
