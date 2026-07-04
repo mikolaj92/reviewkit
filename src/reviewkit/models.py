@@ -11,6 +11,8 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
+from reviewkit.document import ReviewDocument
+
 
 class ReviewScope(StrEnum):
     SENTENCE = "sentence"
@@ -220,7 +222,7 @@ class ReviewStats(BaseModel):
 
 
 class ReviewResult(BaseModel):
-    document: Any | None = None
+    document: ReviewDocument | None = None
     findings: list[ReviewFinding] = Field(default_factory=list)
     actions: list[ReviewAction] = Field(default_factory=list)
     reviewed_docx: Path | None = None
