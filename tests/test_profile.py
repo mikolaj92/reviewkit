@@ -22,7 +22,11 @@ def test_profile_loads_from_folder() -> None:
 
     assert profile.name == "story.teacher"
     assert profile.language == "pl"
-    assert profile.apply_policy["typo"] == "apply"
+    # The example carries its per-category policy under the nested action_policy, and no
+    # longer duplicates it into the legacy top-level apply_policy field: the example must
+    # not model that deprecated shape for the users who copy it.
+    assert profile.action_policy.apply_policy["typo"] == "apply"
+    assert profile.apply_policy == {}
     assert "instructions.md" in profile.markdown_files
     assert "nauczyciel" in profile.instructions_text
 
