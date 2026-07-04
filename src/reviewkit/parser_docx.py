@@ -268,7 +268,11 @@ def _header_footer_sections(
         sections.append(
             SectionNode(
                 id=section_id,
-                title=source.capitalize(),
+                # No fabricated title: capitalizing the source ("Header"/"Footer") injected an
+                # English word into the reviewable tree, which the LLM would see as document
+                # prose -- a language leak in the language-blind core. The header/footer
+                # distinction is preserved in metadata["source"] below.
+                title=None,
                 metadata={"source": source},
                 paragraphs=paragraphs,
             )
