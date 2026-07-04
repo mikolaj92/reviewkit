@@ -315,6 +315,49 @@ def test_guard_uses_the_real_locator_position_for_insert_after() -> None:
     assert "Protected pattern" in (prepared[0].policy_reason or "")
 
 
+def test_blocked_category_forces_escalation_over_apply_policy() -> None:
+    # ``blocked_categories`` is a hard override: even an edit that the action-type apply_policy
+    # would auto-apply must escalate to a human and be kept out of the corrected copy when its
+    # category is blocked. This is a fail-closed guarantee, so it gets its own regression test.
+    document = _document("The cat sat here.")
+    profile = ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        action_policy=ActionPolicyConfig(
+            # Keyed by action TYPE: replace_text edits auto-apply in general...
+            apply_policy={"replace_text": "apply"},
+            # ...except any edit categorized "pii_redaction", which is force-escalated.
+            blocked_categories=["pii_redaction"],
+            require_llm_apply_hint=True,
+            min_confidence_for_auto_apply=0.85,
+            max_severity_for_auto_apply="medium",
+        ),
+    )
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="cat",
+        replacement_text="dog",
+        category="pii_redaction",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=4, char_end=7, original_text="cat"),
+    )
+
+    prepared = prepare_actions(document, profile, [action])
+
+    assert prepared[0].status == ActionStatus.NEEDS_HUMAN_DECISION
+    assert prepared[0].metadata["blocked_from_corrected"] is True
+    assert "blocked by action policy" in (prepared[0].policy_reason or "")
+    assert "pii_redaction" in (prepared[0].policy_reason or "")
+    # Fail-closed: the blocked edit must not reach the corrected copy nor mutate the text.
+    assert should_apply_to_corrected(prepared[0]) is False
+    assert apply_corrections_to_text(document.text, prepared) == document.text
+
+
 def test_multiple_locator_edits_apply_from_original_offsets() -> None:
     document = _document("Alpha beta gamma.")
     profile = _auto_apply_profile()
