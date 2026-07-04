@@ -372,12 +372,20 @@ def _applied_char_range(node_text: str, action: ReviewAction) -> tuple[int, int]
             # conflicts with an edit spanning that exact point - not with edits that merely
             # sit inside its anchor span, which are compatible and must not be false-demoted.
             return locator.char_end, locator.char_end
+        if action.action_type == ReviewActionType.INSERT_BEFORE:
+            # Symmetric to INSERT_AFTER: INSERT_BEFORE inserts at char_start (see
+            # apply_action_to_text), so its footprint is that zero-width point, not the
+            # whole anchor span. Reporting the full span false-demotes compatible edits
+            # that merely sit inside the anchor.
+            return locator.char_start, locator.char_start
         return locator.char_start, locator.char_end
     original = action.original_text
     if original and node_text.count(original) == 1:
         start = node_text.find(original)
         if action.action_type == ReviewActionType.INSERT_AFTER:
             return start + len(original), start + len(original)
+        if action.action_type == ReviewActionType.INSERT_BEFORE:
+            return start, start
         return start, start + len(original)
     return None
 
