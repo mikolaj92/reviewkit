@@ -7,14 +7,6 @@ review_pipeline:
   - paragraph
   - section
   - document
-apply_policy:
-  typo: apply
-  grammar: apply
-  punctuation: apply
-  unclear_sentence: suggest
-  style: suggest
-  structure: suggest
-  plot_issue: comment
 action_policy:
   apply_policy:
     typo: apply

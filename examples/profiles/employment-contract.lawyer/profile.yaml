@@ -7,14 +7,6 @@ review_pipeline:
   - paragraph
   - section
   - document
-apply_policy:
-  typo: apply
-  grammar: apply
-  formatting: apply
-  unclear_sentence: suggest
-  risky_clause: human_decision
-  missing_clause: human_decision
-  legal_rewrite: human_decision
 action_policy:
   apply_policy:
     typo: apply
