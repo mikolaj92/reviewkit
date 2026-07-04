@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from reviewkit.actions import prepare_actions
+from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import EmptyReviewContextProvider, ReviewContextProvider
 from reviewkit.document import ReviewDocument
 from reviewkit.llm import LLMClient
@@ -167,6 +167,11 @@ class HierarchicalReviewer:
             document_response = self._prepare_response(document, document_response)
             state.absorb_response(ReviewScope.DOCUMENT, document.id, document_response)
             actions.extend(document_response.actions)
+
+        # prepare_actions only guards overlaps within one response; edits from different
+        # scopes that resolve onto the same paragraph are compared only now, once the whole
+        # hierarchy has run and every action can be rebased into paragraph coordinates.
+        actions = demote_cross_scope_overlaps(document, actions)
 
         # ``state.findings`` is the single, deduplicated source of truth.
         return state.findings, actions, state

@@ -334,18 +334,7 @@ def _demote_overlapping_actions(
 
     overlapping: set[int] = set()
     for spans in ranges_by_node.values():
-        spans.sort()
-        cluster: list[int] = []
-        cluster_end = 0
-        for start, end, index in spans:
-            if cluster and start < cluster_end:
-                overlapping.update(cluster)
-                overlapping.add(index)
-                cluster.append(index)
-                cluster_end = max(cluster_end, end)
-            else:
-                cluster = [index]
-                cluster_end = end
+        overlapping |= _overlapping_span_indices(spans)
     if not overlapping:
         return actions
 
@@ -360,6 +349,76 @@ def _demote_overlapping_actions(
                 "policy_reason": reason,
             }
         )
+    return result
+
+
+def _overlapping_span_indices(spans: list[tuple[int, int, int]]) -> set[int]:
+    """Third-element indices of ``(start, end, index)`` spans that overlap.
+
+    A zero-width span (``start == end``) only overlaps a range that strictly
+    contains its point, never one it merely abuts - the strict ``start < cluster_end``
+    test keeps abutting and zero-width-at-boundary edits compatible.
+    """
+    overlapping: set[int] = set()
+    cluster: list[int] = []
+    cluster_end = 0
+    for start, end, index in sorted(spans):
+        if cluster and start < cluster_end:
+            overlapping.update(cluster)
+            overlapping.add(index)
+            cluster.append(index)
+            cluster_end = max(cluster_end, end)
+        else:
+            cluster = [index]
+            cluster_end = end
+    return overlapping
+
+
+def demote_cross_scope_overlaps(
+    document: ReviewDocument, actions: list[ReviewAction]
+) -> list[ReviewAction]:
+    """Escalate APPLIED edits that overlap once resolved into the same paragraph.
+
+    ``prepare_actions`` runs the overlap guard within a single LLM response, grouped
+    by ``node_id``, so it never compares edits produced at different review scopes
+    (sentence/paragraph/section/document) that ultimately land on one paragraph. Both
+    renderers apply corrections per paragraph (see ``actions_for_paragraph``), rebasing
+    sentence offsets and anchoring scope-level edits, so two such edits with overlapping
+    spans would silently clobber each other. Resolve every action into the paragraph it
+    edits and demote overlapping clusters in that shared coordinate system.
+    """
+    to_demote: set[str] = set()
+    for paragraph in document.iter_paragraphs():
+        candidates = [
+            action
+            for action in actions_for_paragraph(document, paragraph, actions)
+            if action.status == ActionStatus.APPLIED and action.action_type in WRITING_ACTIONS
+        ]
+        spans: list[tuple[int, int, int]] = []
+        for index, action in enumerate(candidates):
+            span = _applied_char_range(paragraph.text, action)
+            if span is not None:
+                spans.append((span[0], span[1], index))
+        for index in _overlapping_span_indices(spans):
+            to_demote.add(candidates[index].id)
+    if not to_demote:
+        return actions
+
+    reason = "overlapping edit range conflicts with another edit on the same paragraph"
+    result: list[ReviewAction] = []
+    for action in actions:
+        if action.id in to_demote and action.status == ActionStatus.APPLIED:
+            result.append(
+                action.model_copy(
+                    update={
+                        "status": ActionStatus.CONFLICT,
+                        "reason": _append_reason(action.reason, reason),
+                        "policy_reason": reason,
+                    }
+                )
+            )
+        else:
+            result.append(action)
     return result
 
 

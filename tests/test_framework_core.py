@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from reviewkit.actions import (
     actions_for_paragraph,
     apply_corrections_to_text,
+    demote_cross_scope_overlaps,
     prepare_actions,
     should_apply_to_corrected,
 )
@@ -785,6 +786,89 @@ def test_insert_before_inside_another_edits_span_does_not_false_conflict() -> No
 
     assert [action.status for action in prepared] == [ActionStatus.APPLIED, ActionStatus.APPLIED]
     assert apply_corrections_to_text(document.text, prepared) == "[note] Alpha BETA gamma."
+
+
+def test_cross_scope_edits_overlapping_on_one_paragraph_both_conflict() -> None:
+    # A paragraph-scope edit and a section-scope edit each pass their own prepare_actions
+    # pass (they run in different LLM responses, grouped by different node_ids), but they
+    # both resolve onto paragraph "p1" and their spans overlap on "Alpha beta"/"beta gamma".
+    # Applying both would clobber one silently, so the post-hierarchy pass must escalate both.
+    document = _document("Alpha beta gamma.")
+    paragraph_edit = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="Alpha beta",
+        replacement_text="X",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        status=ActionStatus.APPLIED,
+        locator=ReviewLocator(node_id="p1", char_start=0, char_end=10, original_text="Alpha beta"),
+    )
+    section_edit = ReviewAction(
+        scope=ReviewScope.SECTION,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="s1",
+        original_text="beta gamma",
+        replacement_text="Y",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        status=ActionStatus.APPLIED,
+    )
+
+    demoted = demote_cross_scope_overlaps(document, [paragraph_edit, section_edit])
+
+    assert [action.status for action in demoted] == [
+        ActionStatus.CONFLICT,
+        ActionStatus.CONFLICT,
+    ]
+    assert all("overlapping edit range" in (action.policy_reason or "") for action in demoted)
+    # Nothing overlapping leaks into the clean copy for that paragraph.
+    paragraph = document.sections[0].paragraphs[0]
+    resolved = [
+        action
+        for action in actions_for_paragraph(document, paragraph, demoted)
+        if should_apply_to_corrected(action)
+    ]
+    assert apply_corrections_to_text(paragraph.text, resolved) == paragraph.text
+
+
+def test_cross_scope_edits_on_disjoint_spans_both_stay_applied() -> None:
+    # The cross-scope guard must not over-demote: a paragraph edit and a section edit that
+    # resolve onto the same paragraph but touch disjoint spans are unambiguous.
+    document = _document("Alpha beta gamma.")
+    paragraph_edit = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="Alpha",
+        replacement_text="A",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        status=ActionStatus.APPLIED,
+        locator=ReviewLocator(node_id="p1", char_start=0, char_end=5, original_text="Alpha"),
+    )
+    section_edit = ReviewAction(
+        scope=ReviewScope.SECTION,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="s1",
+        original_text="gamma",
+        replacement_text="G",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        status=ActionStatus.APPLIED,
+    )
+
+    demoted = demote_cross_scope_overlaps(document, [paragraph_edit, section_edit])
+
+    assert [action.status for action in demoted] == [
+        ActionStatus.APPLIED,
+        ActionStatus.APPLIED,
+    ]
 
 
 def test_injected_action_policy_guard_escalates_an_otherwise_applied_edit() -> None:
