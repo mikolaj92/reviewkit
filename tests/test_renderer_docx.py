@@ -202,6 +202,36 @@ def test_reviewed_docx_renders_delete_and_insert_text_revisions(tmp_path: Path) 
     assert _revision_texts(document_xml, "ins", "t") == ["!"]
 
 
+def test_insert_honors_locator_when_anchor_text_repeats(tmp_path: Path) -> None:
+    # "beta" occurs twice; the locator disambiguates to the *second* one. The renderer
+    # must honor the locator (like apply_action_to_text) instead of blindly inserting
+    # before the first find() match, which would land the revision on the wrong "beta".
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("beta alpha beta gamma.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    paragraph = document.sections[0].paragraphs[0]
+    actions = [
+        ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.INSERT_BEFORE,
+            node_id=paragraph.id,
+            original_text="beta",
+            replacement_text="X",
+            locator=ReviewLocator(node_id=paragraph.id, char_start=11, char_end=15),
+            reason="Mark the second occurrence.",
+            status=ActionStatus.NOT_APPLIED,
+        ),
+    ]
+
+    reviewed_path = render_reviewed_docx(document, actions, tmp_path / "reviewed.docx")
+    document_xml = _part_xml(reviewed_path, "word/document.xml")
+
+    assert _accepted_paragraph_text(document_xml) == "beta alpha Xbeta gamma."
+
+
 def test_reviewed_docx_patches_original_and_preserves_run_formatting(tmp_path: Path) -> None:
     input_path = tmp_path / "input.docx"
     docx = DocxDocument()
@@ -741,6 +771,15 @@ def _part_xml(path: Path, member: str) -> str:
 def _comment_texts(path: Path) -> list[str]:
     root = ElementTree.fromstring(_part_xml(path, "word/comments.xml"))
     return ["".join(comment.itertext()) for comment in root.findall(f".//{_W}comment")]
+
+
+def _accepted_paragraph_text(xml: str) -> str:
+    # Visible text of the first paragraph with all insertions accepted: every w:t in
+    # document order (w:delText under w:del is a different tag, so deletions drop out).
+    root = ElementTree.fromstring(xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    return "".join(text.text or "" for text in paragraph.iter(f"{_W}t"))
 
 
 def _revision_texts(xml: str, revision_tag: str, text_tag: str) -> list[str]:
