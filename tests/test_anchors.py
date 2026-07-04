@@ -35,6 +35,8 @@ def _make_document(texts: list[str]) -> DocxDocument:
         ("body:p:last", None),
         ("body:p:-1", None),
         ("body:p:1x", None),
+        ("body:p:²", None),
+        ("body:p:①", None),
         ("body:p:", None),
         ("body:p:0:extra", None),
         ("table:0:row:0:cell:0:p:0", None),
@@ -49,6 +51,7 @@ def test_is_supported_anchor() -> None:
     assert is_supported_anchor(ANCHOR_LAST)
     assert is_supported_anchor("body:p:3")
     assert not is_supported_anchor("body:p:-3")
+    assert not is_supported_anchor("body:p:²")
     assert not is_supported_anchor("header:0:p:0")
     assert not is_supported_anchor("")
 
@@ -99,11 +102,14 @@ def test_find_paragraph_by_locator_header_and_footer() -> None:
         "body:p:last",
         "body:p:9",
         "body:p:-1",
+        "body:p:²",
         "body:x:0",
         "table:0:row:0:cell:0:q:0",
         "table:0:row:0:p:0",
         "table:x:row:0:cell:0:p:0",
+        "table:²:row:0:cell:0:p:0",
         "header:x:p:0",
+        "header:²:p:0",
         "header:5:p:0",
         "footnote:0:p:0",
     ],
@@ -153,6 +159,15 @@ def test_signature_scan_treats_ignored_texts_like_whitespace() -> None:
 def test_signature_scan_respects_tail_window() -> None:
     document = _make_document(["Signature: ____"] + [f"Trailing clause {i}." for i in range(5)])
     assert find_signature_block_start(document, signature_patterns=_SIGNATURE_PATTERNS) is None
+
+
+def test_signature_scan_whitespace_does_not_consume_tail_window() -> None:
+    document = _make_document(
+        ["Signature: ____", " ", "Trailing 1.", "Trailing 2.", "Trailing 3.", "Trailing 4."]
+    )
+    start = find_signature_block_start(document, signature_patterns=_SIGNATURE_PATTERNS)
+    assert start is not None
+    assert "Signature" in start.text
 
 
 def test_signature_scan_stops_at_first_non_match_above_block() -> None:

@@ -69,21 +69,27 @@ class InsertionAction:
 class InsertionResult:
     """A recorded insertion whose predecessor stays adjacency-true.
 
-    ``predecessor`` is the element the inserted paragraph directly follows in
-    the paragraph sequence. Later insertions that land in that slot remap it,
+    ``predecessor`` is the body element the inserted paragraph directly
+    follows — usually a paragraph, but it can be e.g. a table when an end
+    insert lands below one. Later insertions that land in that slot remap it,
     so the recorded ``applied_anchor`` (``body:p:<n>`` of the predecessor in
-    the final document, ``None`` for a plain append with no predecessor) never
-    claims an adjacency another insertion took over. ``action`` keeps the
-    original request, including the originally requested ``anchor``.
+    the final document; ``None`` when the inserted paragraph has no preceding
+    body paragraph — a plain append into an empty body, an insert at the top,
+    or a non-paragraph predecessor) never claims an adjacency another
+    insertion took over. ``action`` keeps the original request, including the
+    originally requested ``anchor``.
     """
 
     action: InsertionAction
     element: CT_P
-    predecessor: CT_P | None
+    predecessor: BaseOxmlElement | None
     applied_anchor: str | None = None
 
 
-@dataclass(frozen=True)
+# eq=False: list fields would make the generated __eq__/__hash__ unusable
+# (frozen + lists means hash() raises); identity semantics match the lxml
+# elements the results carry.
+@dataclass(frozen=True, eq=False)
 class InsertionReport:
     """Outcome of one insertion batch: applied results and failed actions."""
 
@@ -121,7 +127,9 @@ def _skip_following_tables(element: CT_P) -> BaseOxmlElement:
     return last
 
 
-def _intended_anchor(paragraph_positions: dict[int, int], predecessor: CT_P | None) -> str | None:
+def _intended_anchor(
+    paragraph_positions: dict[int, int], predecessor: BaseOxmlElement | None
+) -> str | None:
     """Return the anchor of the paragraph the insertion was intended to follow.
 
     The predecessor is captured at apply time from the resolved target, never
@@ -252,7 +260,7 @@ class ClauseInserter:
 
     def _apply_resolved(
         self, resolved: _ResolvedAction, chained_anchors: dict[int, CT_P]
-    ) -> tuple[CT_P, CT_P | None]:
+    ) -> tuple[CT_P, BaseOxmlElement | None]:
         if resolved.anchor_paragraph is None:
             return self._insert_at_end(resolved.text, resolved.insert_before)
         anchor_element = resolved.anchor_paragraph._element
@@ -292,7 +300,9 @@ class ClauseInserter:
                 return True
         return False
 
-    def _insert_at_end(self, text: str, insert_before: CT_P | None) -> tuple[CT_P, CT_P | None]:
+    def _insert_at_end(
+        self, text: str, insert_before: CT_P | None
+    ) -> tuple[CT_P, BaseOxmlElement | None]:
         # Capture the intended predecessor before mutating, for applied-anchor
         # bookkeeping.
         if insert_before is not None:
@@ -336,7 +346,10 @@ class InsertionValidator:
     its recorded anchor (or, without one, at a position consistent with the
     originally requested anchor), that no insertion landed at or below the
     trailing signature block, and that the document body is structurally
-    sound. Result aggregation and error wording are caller concerns.
+    sound. The per-action checks return booleans and action lists — error
+    wording for those is a caller concern — while
+    :meth:`check_document_integrity` returns a structural summary dict with
+    fixed error strings.
     """
 
     def __init__(
@@ -348,16 +361,23 @@ class InsertionValidator:
         self.document = document
         # Snapshot once: python-docx rebuilds the paragraph wrapper list on
         # every .paragraphs access; validation never mutates the document.
-        self._paragraphs = list(document.paragraphs)
+        try:
+            self._paragraphs = list(document.paragraphs)
+        except AttributeError:
+            # A document whose w:body is missing raises here; keep the
+            # validator constructible so check_document_integrity can report
+            # the corruption instead of the constructor crashing.
+            self._paragraphs = []
         self._signature_patterns = tuple(signature_patterns)
 
     def action_applied(self, action: InsertionAction, applied_anchor: str | None = None) -> bool:
         """True when ``action``'s rendered text sits where the insertion claimed.
 
         With an ``applied_anchor`` the text must directly follow that
-        paragraph. Without one, the check falls back to the originally
-        requested anchor: ``body:p:last`` degrades to a text-exists check,
-        ``body:p:<n>`` to an adjacency check against the pristine index.
+        paragraph in the paragraph sequence. Without one, the check falls
+        back to the originally requested anchor: ``suggest`` actions and
+        ``body:p:last`` degrade to a document-wide text-exists check,
+        ``body:p:<n>`` to the same paragraph-sequence adjacency check.
         """
         text = action.rendered_text()
 
@@ -371,15 +391,12 @@ class InsertionValidator:
         if anchor == ANCHOR_LAST:
             return self._text_exists_in_document(text)
 
-        paragraph_index = parse_body_anchor_index(anchor)
-        if paragraph_index is not None:
-            if not 0 <= paragraph_index < len(self._paragraphs):
-                return False
-            target = self._paragraphs[paragraph_index]
-            next_paragraph = target._element.getnext()
-            if next_paragraph is None:
-                return False
-            return text in (next_paragraph.text or "")
+        if parse_body_anchor_index(anchor) is not None:
+            # Paragraph-sequence adjacency, same as the applied_anchor path:
+            # an XML-sibling check would falsely fail table lead-in
+            # placements, where the clause follows the anchor's table rather
+            # than the anchor element itself.
+            return self._text_follows_anchor(anchor, text)
 
         return False
 

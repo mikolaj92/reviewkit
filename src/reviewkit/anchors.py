@@ -78,10 +78,19 @@ def find_signature_block_start(
     return None
 
 
+def _is_ascii_digits(token: str) -> bool:
+    """True for non-empty ASCII-decimal tokens.
+
+    ``str.isdigit`` alone also accepts Unicode digits (e.g. ``"²"``, ``"①"``)
+    that ``int()`` rejects; such tokens must fail closed, not raise.
+    """
+    return token.isascii() and token.isdigit()
+
+
 def parse_body_anchor_index(anchor: str) -> int | None:
     """Return the body-paragraph index for ``body:p:<digits>`` anchors, else ``None``."""
     parts = anchor.split(":")
-    if len(parts) == 3 and parts[0] == "body" and parts[1] == "p" and parts[2].isdigit():
+    if len(parts) == 3 and parts[0] == "body" and parts[1] == "p" and _is_ascii_digits(parts[2]):
         return int(parts[2])
     return None
 
@@ -110,7 +119,7 @@ def find_paragraph_by_locator(document: DocxDocument, locator: str | None) -> Pa
     if not locator:
         return None
     parts = locator.split(":")
-    if len(parts) < 3 or parts[-2] != "p" or not parts[-1].isdigit():
+    if len(parts) < 3 or parts[-2] != "p" or not _is_ascii_digits(parts[-1]):
         return None
     index = int(parts[-1])
     prefix = parts[:-2]
@@ -123,9 +132,9 @@ def find_paragraph_by_locator(document: DocxDocument, locator: str | None) -> Pa
         and prefix[0] == "table"
         and prefix[2] == "row"
         and prefix[4] == "cell"
-        and prefix[1].isdigit()
-        and prefix[3].isdigit()
-        and prefix[5].isdigit()
+        and _is_ascii_digits(prefix[1])
+        and _is_ascii_digits(prefix[3])
+        and _is_ascii_digits(prefix[5])
     ):
         table_index, row_index, cell_index = int(prefix[1]), int(prefix[3]), int(prefix[5])
         if table_index < len(document.tables):
@@ -134,7 +143,7 @@ def find_paragraph_by_locator(document: DocxDocument, locator: str | None) -> Pa
                 row = table.rows[row_index]
                 if cell_index < len(row.cells):
                     paragraphs = list(row.cells[cell_index].paragraphs)
-    elif len(prefix) == 2 and prefix[0] in ("header", "footer") and prefix[1].isdigit():
+    elif len(prefix) == 2 and prefix[0] in ("header", "footer") and _is_ascii_digits(prefix[1]):
         section_index = int(prefix[1])
         if section_index < len(document.sections):
             section = document.sections[section_index]

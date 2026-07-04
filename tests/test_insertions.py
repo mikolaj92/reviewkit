@@ -1,9 +1,11 @@
 import io
 import re
+import zipfile
 
 import pytest
 from docx import Document
 from docx.document import Document as DocxDocument
+from docx.oxml.ns import qn
 
 from reviewkit.anchors import ANCHOR_LAST
 from reviewkit.insertions import (
@@ -82,6 +84,16 @@ def test_out_of_range_and_unsupported_anchors_fail_in_order() -> None:
     assert _texts(document) == ["Only paragraph."]
 
 
+def test_unicode_digit_anchor_fails_action_not_batch() -> None:
+    document = _make_document(["A."])
+    inserter = ClauseInserter(document)
+    bad = InsertionAction(action_id="a1", anchor="body:p:²", text="X.")
+    good = InsertionAction(action_id="a2", anchor="body:p:0", text="Y.")
+    report = inserter.apply_actions([bad, good])
+    assert report.failed == [bad]
+    assert _texts(document) == ["A.", "Y."]
+
+
 def test_failed_only_batch_keeps_inserter_reusable() -> None:
     document = _make_document(["Only paragraph."])
     inserter = ClauseInserter(document)
@@ -118,6 +130,28 @@ def test_anchor_last_inserts_above_signature_block() -> None:
     )
     assert _texts(document) == ["Body clause.", "New clause.", "Signature: ____", "Date: ____"]
     assert report.applied[0].applied_anchor == "body:p:0"
+
+
+def test_end_insert_batch_keeps_order_even_when_clause_matches_signature_pattern() -> None:
+    # "date" in the first clause matches a signature pattern; the signature
+    # scan runs at resolve time against the pristine document, so a clause
+    # inserted earlier in the batch must never be mistaken for the block.
+    document = _make_document(["Body clause.", "Signature: ____"])
+    inserter = ClauseInserter(document, signature_patterns=_SIGNATURE_PATTERNS)
+    report = inserter.apply_actions(
+        [
+            InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="Valid until date X."),
+            InsertionAction(action_id="a2", anchor=ANCHOR_LAST, text="Second clause."),
+        ]
+    )
+    assert not report.failed
+    assert _texts(document) == [
+        "Body clause.",
+        "Valid until date X.",
+        "Second clause.",
+        "Signature: ____",
+    ]
+    assert [result.applied_anchor for result in report.applied] == ["body:p:0", "body:p:1"]
 
 
 def test_suggestion_action_inserts_formatted_text() -> None:
@@ -186,6 +220,20 @@ def test_contextual_resolution_into_signature_block_falls_back_above_it() -> Non
     assert report.applied[0].applied_anchor == "body:p:0"
 
 
+def test_contextual_resolution_above_signature_block_is_honored() -> None:
+    document = _make_document(["P0.", "P1.", "Signature: ____"])
+    inserter = ClauseInserter(
+        document,
+        signature_patterns=_SIGNATURE_PATTERNS,
+        resolve_last_anchor=lambda action: "body:p:0",
+    )
+    report = inserter.apply_actions(
+        [InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="X.")]
+    )
+    assert _texts(document) == ["P0.", "X.", "P1.", "Signature: ____"]
+    assert report.applied[0].applied_anchor == "body:p:0"
+
+
 def test_predecessor_remap_keeps_applied_anchors_adjacency_true() -> None:
     document = _make_document(["P0.", "P1.", "P2."])
     inserter = ClauseInserter(document)
@@ -221,7 +269,26 @@ def test_table_leadin_insertion_lands_after_table() -> None:
     assert validator.action_applied(report.applied[0].action, report.applied[0].applied_anchor)
 
 
-def test_two_runs_produce_byte_identical_output() -> None:
+def test_multi_table_leadin_insertion_lands_after_all_tables() -> None:
+    document = _make_document(["Lead-in."])
+    document.add_table(rows=1, cols=1)
+    document.add_table(rows=1, cols=1)
+    document.add_paragraph("After.")
+    inserter = ClauseInserter(document)
+    report = inserter.apply_actions(
+        [InsertionAction(action_id="a1", anchor="body:p:0", text="Clause.")]
+    )
+    assert _texts(document) == ["Lead-in.", "Clause.", "After."]
+    tags = [
+        child.tag.rsplit("}", 1)[-1]
+        for child in document.element.body.iterchildren()
+        if isinstance(child.tag, str)
+    ]
+    assert tags == ["p", "tbl", "tbl", "p", "p", "sectPr"]
+    assert report.applied[0].applied_anchor == "body:p:0"
+
+
+def test_two_runs_produce_identical_document_xml() -> None:
     def run() -> bytes:
         document = _make_document(["Body clause.", "Signature: ____"])
         inserter = ClauseInserter(document, signature_patterns=_SIGNATURE_PATTERNS)
@@ -239,7 +306,10 @@ def test_two_runs_produce_byte_identical_output() -> None:
         )
         buffer = io.BytesIO()
         document.save(buffer)
-        return buffer.getvalue()
+        # Zip member metadata carries wall-clock timestamps, so whole-archive
+        # bytes are not comparable across runs; the document part must be.
+        with zipfile.ZipFile(io.BytesIO(buffer.getvalue())) as archive:
+            return archive.read("word/document.xml")
 
     assert run() == run()
 
@@ -254,6 +324,17 @@ def test_validator_rejects_wrong_or_missing_placement() -> None:
     assert not validator.action_applied(action, "not-an-anchor")
     missing = InsertionAction(action_id="a2", anchor="body:p:0", text="Nonexistent.")
     assert not validator.action_applied(missing, "body:p:0")
+
+
+def test_validator_fallback_accepts_table_leadin_placement() -> None:
+    # The clause sits after the anchor's table, so it directly follows the
+    # anchor in the paragraph sequence even though it is not its XML sibling.
+    document = _make_document(["Lead-in."])
+    document.add_table(rows=1, cols=1)
+    document.add_paragraph("Inserted.")
+    validator = InsertionValidator(document)
+    action = InsertionAction(action_id="a1", anchor="body:p:0", text="Inserted.")
+    assert validator.action_applied(action)
 
 
 def test_validator_fallbacks_without_applied_anchor() -> None:
@@ -282,6 +363,27 @@ def test_validator_suggest_fallback_checks_formatted_text() -> None:
         action_id="a2", anchor="body:p:0", text="Proposed.", kind="suggest", reason="Other"
     )
     assert not validator.action_applied(wrong_reason)
+
+
+def test_validator_suggest_with_applied_anchor_checks_adjacency() -> None:
+    document = _make_document(["A.", "[SUGGESTION: Why]\nProposed.", "B."])
+    validator = InsertionValidator(document)
+    action = InsertionAction(
+        action_id="a1", anchor=ANCHOR_LAST, text="Proposed.", kind="suggest", reason="Why"
+    )
+    assert validator.action_applied(action, "body:p:0")
+    assert not validator.action_applied(action, "body:p:1")
+
+
+def test_validator_flags_suggestion_below_signature_start() -> None:
+    document = _make_document(
+        ["Body clause.", "Signature: ____", "[SUGGESTION: Why]\nProposed.", "Date: ____"]
+    )
+    validator = InsertionValidator(document, signature_patterns=_SIGNATURE_PATTERNS)
+    misplaced = InsertionAction(
+        action_id="a1", anchor=ANCHOR_LAST, text="Proposed.", kind="suggest", reason="Why"
+    )
+    assert validator.misplaced_actions([misplaced]) == [misplaced]
 
 
 def test_validator_flags_clause_at_or_below_signature_start() -> None:
@@ -320,6 +422,16 @@ def test_check_document_integrity_empty_document() -> None:
     assert not result["valid"]
     assert "Document has no paragraphs" in result["errors"]
     assert result["paragraph_count"] == 0
+
+
+def test_check_document_integrity_missing_body() -> None:
+    document = Document()
+    root = document.element
+    root.remove(root.find(qn("w:body")))
+    validator = InsertionValidator(document)
+    result = validator.check_document_integrity()
+    assert not result["valid"]
+    assert "Document body is corrupted" in result["errors"]
 
 
 def test_check_document_integrity_sectpr_not_last() -> None:
