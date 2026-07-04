@@ -693,6 +693,55 @@ def test_scope_level_edit_without_original_text_is_conflicted_not_falsely_applie
     assert actions_for_paragraph(document, paragraph, prepared) == []
 
 
+def test_applied_scope_edit_anchors_to_one_paragraph_and_applies() -> None:
+    # The positive counterpart to the unanchorable case: a section-scoped writing edit that
+    # DOES carry original_text stays APPLIED, anchors to exactly the one paragraph whose text
+    # holds the quote (never duplicated onto the others), and its replacement lands in that
+    # paragraph's corrected text -- so applied_count and corrected.docx agree.
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[
+                    ParagraphNode(id="p1", text="The cat sat here.", section_id="s1"),
+                    ParagraphNode(id="p2", text="The dog ran there.", section_id="s1"),
+                ],
+            )
+        ]
+    )
+    profile = _auto_apply_profile()
+    scope_edit = ReviewAction(
+        scope=ReviewScope.SECTION,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="s1",
+        original_text="cat",
+        replacement_text="lion",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+    )
+
+    prepared = prepare_actions(document, profile, [scope_edit])
+
+    assert prepared[0].status == ActionStatus.APPLIED
+    assert should_apply_to_corrected(prepared[0]) is True
+
+    p1, p2 = document.sections[0].paragraphs
+    p1_actions = actions_for_paragraph(document, p1, prepared)
+    p2_actions = actions_for_paragraph(document, p2, prepared)
+
+    # Anchored to exactly one paragraph (the one containing "cat"), not both.
+    attachments = [a for a in (*p1_actions, *p2_actions) if a.node_id == "s1"]
+    assert len(attachments) == 1
+    assert [a.node_id for a in p1_actions] == ["s1"]
+    assert p2_actions == []
+    # The anchored copy carries no stale scope offsets and applies by text match in-paragraph.
+    anchored = p1_actions[0]
+    assert anchored.locator is None or anchored.locator.char_start is None
+    assert apply_corrections_to_text(p1.text, p1_actions) == "The lion sat here."
+    assert apply_corrections_to_text(p2.text, p2_actions) == "The dog ran there."
+
+
 def test_paragraph_level_insert_without_original_text_still_applies() -> None:
     # The scope-anchor guard is narrow: a paragraph-scoped insert (no original_text needed)
     # is directly applicable, so it must remain APPLIED and in the corrected set.
