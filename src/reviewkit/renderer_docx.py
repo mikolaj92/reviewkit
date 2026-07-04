@@ -684,7 +684,11 @@ def _mark_text_comment(
     indexes: list[int] = []
     offset = 0
     for index, segment in enumerate(segments):
-        next_offset = offset + (len(segment.text) if segment.kind == "text" else 0)
+        # ``start``/``end`` come from _visible_text, which counts every _advances_offset
+        # segment (text AND opaque). Advance this accumulator the same way, or an opaque
+        # segment before the quote desyncs the two coordinate systems, leaves ``indexes``
+        # empty, and the anchor silently degrades to a whole-paragraph comment.
+        next_offset = offset + (len(segment.text) if _advances_offset(segment) else 0)
         if segment.kind == "text" and start <= offset and next_offset <= end:
             indexes.append(index)
         offset = next_offset

@@ -678,6 +678,61 @@ def test_reviewed_and_corrected_artifacts_are_byte_reproducible(tmp_path: Path) 
     assert first_json == second_json
 
 
+def test_precise_comment_anchor_survives_opaque_segment_before_the_quote(tmp_path: Path) -> None:
+    # A comment carrying original_text anchors to just the quoted span. When an opaque inline
+    # object (here a line break) precedes the quote, _mark_text_comment must count its visible
+    # width the same way _visible_text does; otherwise the two coordinate systems desync, the
+    # anchor indexes come back empty, and the comment silently degrades to whole-paragraph.
+    from docx.oxml import OxmlElement
+
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph()
+    paragraph.add_run("Ala")
+    break_run = paragraph.add_run()
+    break_run._r.append(OxmlElement("w:br"))
+    paragraph.add_run("beta target here")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    node = document.sections[0].paragraphs[0]
+    assert node.text == "Ala\nbeta target here"
+
+    reviewed_path = render_reviewed_docx(
+        document,
+        [
+            ReviewAction(
+                scope=ReviewScope.PARAGRAPH,
+                action_type=ReviewActionType.RISK,
+                node_id=node.id,
+                original_text="target",
+                comment="Ambiguous term.",
+            )
+        ],
+        tmp_path / "reviewed.docx",
+    )
+
+    paragraph_xml = ElementTree.fromstring(
+        _part_xml(reviewed_path, "word/document.xml")
+    ).find(f".//{_W}p")
+    assert paragraph_xml is not None
+    # Only "target" is inside the comment range - not the whole paragraph.
+    assert _commented_run_text(paragraph_xml) == "target"
+
+
+def _commented_run_text(paragraph_xml: ElementTree.Element) -> str:
+    inside = False
+    parts: list[str] = []
+    for child in paragraph_xml:
+        if child.tag == f"{_W}commentRangeStart":
+            inside = True
+        elif child.tag == f"{_W}commentRangeEnd":
+            inside = False
+        elif inside and child.tag == f"{_W}r":
+            parts.extend(text.text or "" for text in child.iter(f"{_W}t"))
+    return "".join(parts)
+
+
 def _part_xml(path: Path, member: str) -> str:
     with ZipFile(path) as archive:
         return archive.read(member).decode()
