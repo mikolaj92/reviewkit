@@ -124,7 +124,16 @@ action_policy:
   require_llm_apply_hint: true
   min_confidence_for_auto_apply: 0.85
   max_severity_for_auto_apply: medium
+outputs:
+  reviewed_docx: true
+  corrected_docx: true
 ```
+
+`outputs` toggles which DOCX artifacts the pipeline renders. Both default to `true`; set
+either to `false` to skip that render (for example a review-only profile that emits a
+`reviewed.docx` but never a `corrected.docx`). The skipped artifact's path is `None` on the
+`ReviewResult` and absent from its `artifacts` map; the JSON report (via
+`result.save_json(...)`) is unaffected.
 
 The default action policy does not silently rewrite text. A write action must be allowed by
 policy, carry enough confidence, have an explicit apply hint, pass protected-pattern checks
@@ -155,6 +164,10 @@ deletion, flag or domain-specific advisory action. Actions may reference finding
 - review notes are anchored as Word comments on the reviewed fragment when possible.
 - `corrected.docx` applies deterministic text-edit actions into a clean document.
 - Conflicts and hard safety-guard violations are not applied to `corrected.docx`.
+
+Either DOCX render can be turned off per profile via the `outputs` block (see
+[Review Profiles](#review-profiles)); a disabled artifact is skipped and its `ReviewResult`
+path is `None`.
 
 ## Extension Points
 
