@@ -51,6 +51,26 @@ def test_extension_points_and_reference_mock_are_exported_from_package_root() ->
     assert ReviewDocument is not None
 
 
+def test_nested_model_types_are_exported_from_package_root() -> None:
+    # ReviewFinding/ReviewResponse are already public, but the types nested inside them
+    # (dimension, references, evidence, and the response envelope itself) were not exported,
+    # so a consumer annotating or constructing them had to reach into reviewkit.models.
+    import reviewkit
+    from reviewkit import (
+        EvidenceRef,
+        ReviewDimension,
+        ReviewReference,
+        ReviewResponse,
+    )
+
+    for name in ("EvidenceRef", "ReviewDimension", "ReviewReference", "ReviewResponse"):
+        assert name in reviewkit.__all__
+    assert EvidenceRef is not None
+    assert ReviewDimension is not None
+    assert ReviewReference is not None
+    assert ReviewResponse is not None
+
+
 def test_profile_accepts_arbitrary_dimensions_and_conservative_defaults() -> None:
     profile = ReviewProfile.model_validate(
         {
