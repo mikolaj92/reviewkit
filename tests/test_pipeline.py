@@ -99,6 +99,35 @@ def test_hierarchical_review_passes_lower_level_results(tmp_path: Path) -> None:
     assert "a-section" in llm.calls[3].content
 
 
+def test_review_document_accepts_a_review_profile_object(tmp_path: Path) -> None:
+    # A caller that already holds a ReviewProfile (built in memory or cached) should not have
+    # to round-trip it through a folder on disk. Passing the object directly must work exactly
+    # like passing its folder path.
+    from reviewkit.profile import load_profile
+
+    input_path = _make_docx(tmp_path, "The cat sat.")
+    profile = load_profile("examples/profiles/story.teacher")
+    llm = MockLLMClient(
+        responses=[
+            {"actions": [], "summary": "sentence"},
+            {"actions": [], "summary": "paragraph"},
+            {"actions": [], "summary": "section"},
+            {"actions": [], "summary": "Dokument sprawdzony."},
+        ]
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path=profile,
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+    )
+
+    assert isinstance(result, ReviewResult)
+    assert result.document_summary == "Dokument sprawdzony."
+
+
 def test_overlapping_edits_from_different_scopes_both_escalate(tmp_path: Path) -> None:
     # A sentence-scope edit and a paragraph-scope edit each auto-apply in isolation - they
     # run in separate LLM responses, so prepare_actions never compares them. But both land
