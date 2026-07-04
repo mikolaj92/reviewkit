@@ -313,8 +313,17 @@ def _track_action(
         ReviewActionType.INSERT_BEFORE,
         ReviewActionType.INSERT_AFTER,
     }:
-        if action.action_type == ReviewActionType.INSERT_TEXT and action.locator:
-            offset = action.locator.char_start or 0
+        locator = action.locator
+        if locator and locator.char_start is not None and locator.char_end is not None:
+            # Honor the locator exactly as apply_action_to_text does: INSERT_AFTER
+            # inserts at char_end, INSERT_TEXT/INSERT_BEFORE at char_start. Offsets are
+            # already aligned to visible-text coordinates by the alignment pass above.
+            # find()-by-text below would land on the wrong occurrence when the anchor
+            # repeats, diverging the reviewed markup from the corrected text.
+            if action.action_type == ReviewActionType.INSERT_AFTER:
+                offset = locator.char_end
+            else:
+                offset = locator.char_start
         elif action.original_text:
             start = _visible_text(segments).find(action.original_text)
             if start < 0:
