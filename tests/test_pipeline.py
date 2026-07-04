@@ -99,6 +99,66 @@ def test_hierarchical_review_passes_lower_level_results(tmp_path: Path) -> None:
     assert "a-section" in llm.calls[3].content
 
 
+def test_overlapping_edits_from_different_scopes_both_escalate(tmp_path: Path) -> None:
+    # A sentence-scope edit and a paragraph-scope edit each auto-apply in isolation - they
+    # run in separate LLM responses, so prepare_actions never compares them. But both land
+    # on paragraph p1 ("The cat" at [0,7] vs "cat sat" at [4,11] overlap), and applying both
+    # would clobber one silently. The post-hierarchy cross-scope pass must escalate both.
+    input_path = _make_docx(tmp_path, "The cat sat.")
+    llm = MockLLMClient(
+        responses=[
+            {
+                "actions": [
+                    {
+                        "id": "a-sentence",
+                        "scope": "sentence",
+                        "action_type": "replace",
+                        "node_id": "p1.s1",
+                        "original_text": "The cat",
+                        "replacement_text": "A feline",
+                        "category": "typo",
+                        "confidence": 1.0,
+                        "apply_hint": True,
+                    }
+                ],
+                "summary": "Sentence checked.",
+            },
+            {
+                "actions": [
+                    {
+                        "id": "a-paragraph",
+                        "scope": "paragraph",
+                        "action_type": "replace",
+                        "node_id": "p1",
+                        "original_text": "cat sat",
+                        "replacement_text": "dog ran",
+                        "category": "typo",
+                        "confidence": 1.0,
+                        "apply_hint": True,
+                    }
+                ],
+                "summary": "Paragraph checked.",
+            },
+            {"actions": [], "summary": "Section checked."},
+            {"actions": [], "summary": "Document checked."},
+        ]
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+    )
+
+    statuses = {action.id: action.status for action in result.actions}
+    assert statuses["a-sentence"] == ActionStatus.CONFLICT
+    assert statuses["a-paragraph"] == ActionStatus.CONFLICT
+    # Neither clobbering edit reached the clean copy.
+    assert _docx_text(result.corrected_docx) == "The cat sat."
+
+
 def test_subset_pipeline_rolls_lower_actions_up_to_the_next_enabled_scope() -> None:
     # A profile may enable only sentence + document (a subset the API permits). The
     # sentence-level action must still reach the document review even though the
