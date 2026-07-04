@@ -169,6 +169,33 @@ Either DOCX render can be turned off per profile via the `outputs` block (see
 [Review Profiles](#review-profiles)); a disabled artifact is skipped and its `ReviewResult`
 path is `None`.
 
+## Anchored Clause Insertion
+
+Besides in-place rendering, ReviewKit ships a standalone insertion engine
+(`reviewkit.insertions`, `reviewkit.anchors`) for pipelines that add whole paragraphs —
+fix clauses or `[SUGGESTION: ...]` markers — into an existing DOCX at `body:p:<n>` /
+`body:p:last` anchors:
+
+```python
+from reviewkit import ClauseInserter, InsertionAction, InsertionValidator
+
+inserter = ClauseInserter(document, signature_patterns=my_patterns)
+report = inserter.apply_actions([
+    InsertionAction(action_id="a1", anchor="body:p:4", text="New clause."),
+    InsertionAction(action_id="a2", anchor="body:p:last", text="Wording.",
+                    kind="suggest", reason="Missing clause"),
+])
+```
+
+Placement is deterministic: all anchors resolve against the pristine document before any
+mutation, actions sharing an anchor chain in batch order, a paragraph directly followed by
+a table keeps its table (insertions land after it), and end-of-document insertions stay
+above a trailing signature block. Signature detection and contextual `body:p:last`
+re-anchoring are injectable (`signature_patterns`, `resolve_last_anchor`) — the engine has
+no built-in language or domain assumptions. `InsertionValidator` re-checks a saved document:
+each action's text is where its `applied_anchor` claims, nothing landed below the signature
+block, and the body structure is intact.
+
 ## Extension Points
 
 ReviewKit keeps domain logic outside the core. Legal, editorial, educational or internal
