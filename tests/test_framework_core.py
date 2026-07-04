@@ -751,6 +751,42 @@ def test_adjacent_non_overlapping_edits_still_both_apply() -> None:
     assert apply_corrections_to_text(document.text, prepared) == "A B."
 
 
+def test_insert_before_inside_another_edits_span_does_not_false_conflict() -> None:
+    # INSERT_BEFORE is a zero-width insertion at char_start (see apply_action_to_text),
+    # not an edit spanning [char_start, char_end]. A wide anchor span whose range merely
+    # *contains* a compatible edit must not be treated as overlapping - both are
+    # unambiguous and must stay APPLIED, mirroring the INSERT_AFTER guarantee.
+    document = _document("Alpha beta gamma.")
+    profile = _auto_apply_profile()
+    prefix = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_BEFORE,
+        node_id="p1",
+        original_text="Alpha beta",
+        replacement_text="[note] ",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=0, char_end=10, original_text="Alpha beta"),
+    )
+    inner = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="beta",
+        replacement_text="BETA",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+        locator=ReviewLocator(node_id="p1", char_start=6, char_end=10, original_text="beta"),
+    )
+
+    prepared = prepare_actions(document, profile, [prefix, inner])
+
+    assert [action.status for action in prepared] == [ActionStatus.APPLIED, ActionStatus.APPLIED]
+    assert apply_corrections_to_text(document.text, prepared) == "[note] Alpha BETA gamma."
+
+
 def test_injected_action_policy_guard_escalates_an_otherwise_applied_edit() -> None:
     # A programmatic guard is the pluggable peer of regex protected_patterns: an edit
     # that clears every config gate must still escalate to a human when a caller-supplied
