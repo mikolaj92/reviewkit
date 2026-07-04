@@ -147,6 +147,12 @@ def test_header_and_footer_get_dedicated_sections(tmp_path: Path) -> None:
     assert [p.text for p in footer.paragraphs] == ["Footer line."]
     assert header.paragraphs[0].locator == "header:0:p:0"
     assert footer.paragraphs[0].locator == "footer:0:p:0"
+    # The synthetic section title must not fabricate an English word ("Header"/"Footer") into
+    # the reviewable tree: that would leak language into the language-blind core and reach the
+    # LLM as if it were document prose. The header/footer distinction lives only in the
+    # machine-readable metadata["source"] key, exactly like a titleless body section.
+    assert header.title is None
+    assert footer.title is None
     # The body section must hold only the body prose, not the header/footer lines.
     body = next(s for s in document.sections if s.id == "s1")
     assert [p.text for p in body.paragraphs] == ["Body prose."]
