@@ -190,6 +190,19 @@ def test_report_exposes_needs_human_decision_escalation_queue(tmp_path: Path) ->
     assert payload["actions_by_status"]["needs_human_decision"] == 1
 
 
+def test_review_result_document_is_typed_not_any() -> None:
+    # ``document`` is the reviewed tree, not an untyped escape hatch: a ReviewDocument must
+    # round-trip through the model untouched, while a wrong type is rejected at construction
+    # rather than silently accepted (which ``Any`` did, deferring the failure downstream).
+    document = _document("The cat sat.")
+    result = ReviewResult(document=document)
+    assert result.document is document
+    assert result.document.text == "The cat sat."
+
+    with pytest.raises(ValidationError):
+        ReviewResult(document=42)
+
+
 def test_stale_locator_becomes_conflict_instead_of_silent_edit() -> None:
     document = _document("The cat sat.")
     profile = _auto_apply_profile()
