@@ -434,6 +434,15 @@ def test_check_document_integrity_missing_body() -> None:
     assert "Document body is corrupted" in result["errors"]
 
 
+def test_misplaced_actions_missing_body_returns_empty() -> None:
+    document = Document()
+    root = document.element
+    root.remove(root.find(qn("w:body")))
+    validator = InsertionValidator(document, signature_patterns=_SIGNATURE_PATTERNS)
+    action = InsertionAction(action_id="a1", anchor="body:p:0", text="X.")
+    assert validator.misplaced_actions([action]) == []
+
+
 def test_check_document_integrity_sectpr_not_last() -> None:
     document = _make_document(["A."])
     body = document.element.body

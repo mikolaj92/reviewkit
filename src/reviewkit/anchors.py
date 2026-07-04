@@ -45,6 +45,10 @@ def find_signature_block_start(
     so a clause inserted into the tail cannot split the signature block.
     """
     body = document.element.body
+    if body is None:
+        # A document whose w:body is missing has no tail to scan; the
+        # corruption is check_document_integrity's to report, not a crash here.
+        return None
     children = list(body.iterchildren())
     lowered_ignores = [ignored.lower() for ignored in ignore_texts if ignored]
 
