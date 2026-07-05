@@ -283,6 +283,21 @@ def _prepare_action(
             }
         )
 
+    # An original_text found NOWHERE in the node can never be applied: str.replace would
+    # silently no-op while the action is still reported APPLIED, so the report and stats
+    # over-claim a fix that was never made. This is not the ambiguity the policy config
+    # governs (that is MULTIPLE matches), so it fails closed to CONFLICT regardless of
+    # ``auto_apply_requires_unique_match`` / ``ambiguous_edit_behavior``.
+    missing = _missing_anchor_reason(node_text, action)
+    if missing:
+        return action.model_copy(
+            update={
+                "status": ActionStatus.CONFLICT,
+                "reason": _append_reason(action.reason, missing),
+                "policy_reason": missing,
+            }
+        )
+
     # Honor the profile's ambiguity config (previously declared but never consulted): only
     # gate on a non-unique match when ``auto_apply_requires_unique_match`` is set, and pick
     # the escalation status via ``ambiguous_edit_behavior`` (default CONFLICT).
@@ -386,28 +401,30 @@ def demote_cross_scope_overlaps(
     sentence offsets and anchoring scope-level edits, so two such edits with overlapping
     spans would silently clobber each other. Resolve every action into the paragraph it
     edits and demote overlapping clusters in that shared coordinate system.
+
+    Demotion is tracked by list position, never by ``action.id``: ids are chosen by the
+    LLM and (via ``extra_actions``) by independent callers, so nothing guarantees their
+    uniqueness across sources. Keying the demotion on ids would collaterally flip an
+    unrelated, non-overlapping edit that merely reuses an id from an overlapping cluster.
     """
-    to_demote: set[str] = set()
+    to_demote: set[int] = set()
     for paragraph in document.iter_paragraphs():
-        candidates = [
-            action
-            for action in actions_for_paragraph(document, paragraph, actions)
-            if action.status == ActionStatus.APPLIED and action.action_type in WRITING_ACTIONS
-        ]
         spans: list[tuple[int, int, int]] = []
-        for index, action in enumerate(candidates):
-            span = _applied_char_range(paragraph.text, action)
-            if span is not None:
-                spans.append((span[0], span[1], index))
-        for index in _overlapping_span_indices(spans):
-            to_demote.add(candidates[index].id)
+        for position, action in enumerate(actions):
+            if action.status != ActionStatus.APPLIED or action.action_type not in WRITING_ACTIONS:
+                continue
+            for resolved in actions_for_paragraph(document, paragraph, [action]):
+                span = _applied_char_range(paragraph.text, resolved)
+                if span is not None:
+                    spans.append((span[0], span[1], position))
+        to_demote |= _overlapping_span_indices(spans)
     if not to_demote:
         return actions
 
     reason = "overlapping edit range conflicts with another edit on the same paragraph"
     result: list[ReviewAction] = []
-    for action in actions:
-        if action.id in to_demote and action.status == ActionStatus.APPLIED:
+    for position, action in enumerate(actions):
+        if position in to_demote:
             result.append(
                 action.model_copy(
                     update={
@@ -511,6 +528,22 @@ def _unanchorable_scope_edit_reason(
     if not _is_scope_level_node(document, action.node_id):
         return None
     return "section/document-scoped edits require original_text to anchor to a paragraph"
+
+
+def _missing_anchor_reason(node_text: str, action: ReviewAction) -> str | None:
+    """Reason a writing action's ``original_text`` anchor is absent from the node.
+
+    Restricted to writing actions: a comment with an unmatched quote has a documented
+    fallback anchor (see ``_scope_comment_anchor_id``) and stays governed by the
+    ambiguity config, whereas an unmatched EDIT would be a silent no-op apply.
+    """
+    if action.action_type not in WRITING_ACTIONS:
+        return None
+    if not action.original_text or action.original_text in node_text:
+        return None
+    return (
+        f"original_text must match exactly once in node {action.node_id}; found 0 matches"
+    )
 
 
 def _ambiguous_match_reason(node_text: str, action: ReviewAction) -> str | None:

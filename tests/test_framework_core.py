@@ -490,6 +490,25 @@ def test_ambiguous_edit_behavior_can_escalate_to_human_instead_of_conflict() -> 
     assert "match exactly once" in (prepared[0].policy_reason or "")
 
 
+def test_zero_match_original_text_conflicts_regardless_of_ambiguity_config() -> None:
+    # An original_text found NOWHERE is not "ambiguous" - applying it is a guaranteed
+    # no-op that the report would still count as APPLIED. It must fail closed to
+    # CONFLICT even when auto_apply_requires_unique_match is off, and it must not be
+    # rerouted to NEEDS_HUMAN_DECISION by ambiguous_edit_behavior (that config governs
+    # multi-match ambiguity only).
+    document = _document("kot i kot.")
+    for overrides in (
+        {"auto_apply_requires_unique_match": False},
+        {"ambiguous_edit_behavior": "needs_human_decision"},
+    ):
+        profile = _ambiguity_profile(**overrides)
+        prepared = prepare_actions(document, profile, [_safe_replace("unicorn", "pies")])
+
+        assert prepared[0].status == ActionStatus.CONFLICT, overrides
+        assert "found 0 matches" in (prepared[0].policy_reason or ""), overrides
+        assert apply_corrections_to_text(document.text, prepared) == document.text
+
+
 def test_comment_action_requiring_human_decision_is_not_downgraded() -> None:
     document = _document("This clause is unusual.")
     profile = _auto_apply_profile()
@@ -994,6 +1013,59 @@ def test_cross_scope_edits_on_disjoint_spans_both_stay_applied() -> None:
         ActionStatus.APPLIED,
         ActionStatus.APPLIED,
     ]
+
+
+def test_duplicate_action_ids_do_not_collaterally_demote_a_disjoint_edit() -> None:
+    # Action ids come from the LLM and (via extra_actions) from independent callers, so
+    # nothing guarantees cross-source uniqueness. The overlap demotion must be tracked
+    # per action, not by id: an overlapping cluster on p1 must not flip an unrelated,
+    # non-overlapping edit on p2 that happens to reuse the same id.
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[
+                    ParagraphNode(id="p1", text="The cat sat.", section_id="s1"),
+                    ParagraphNode(id="p2", text="Dogs bark loudly.", section_id="s1"),
+                ],
+            )
+        ]
+    )
+
+    def _edit(action_id: str, node_id: str, original: str, replacement: str) -> ReviewAction:
+        return ReviewAction(
+            id=action_id,
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.REPLACE_TEXT,
+            node_id=node_id,
+            original_text=original,
+            replacement_text=replacement,
+            category="safe_edit",
+            confidence=1.0,
+            apply_hint=True,
+            status=ActionStatus.APPLIED,
+        )
+
+    llm_edit = _edit("a1", "p1", "The cat", "A feline")
+    overlapping_extra = _edit("x-overlap", "p1", "cat sat", "dog ran")
+    innocent_same_id_extra = _edit("a1", "p2", "loudly", "softly")
+
+    demoted = demote_cross_scope_overlaps(
+        document, [llm_edit, overlapping_extra, innocent_same_id_extra]
+    )
+
+    assert [action.status for action in demoted] == [
+        ActionStatus.CONFLICT,
+        ActionStatus.CONFLICT,
+        ActionStatus.APPLIED,
+    ]
+    paragraph = document.sections[0].paragraphs[1]
+    resolved = [
+        action
+        for action in actions_for_paragraph(document, paragraph, demoted)
+        if should_apply_to_corrected(action)
+    ]
+    assert apply_corrections_to_text(paragraph.text, resolved) == "Dogs bark softly."
 
 
 def test_injected_action_policy_guard_escalates_an_otherwise_applied_edit() -> None:

@@ -11,6 +11,7 @@ from reviewkit.models import (
     ReviewActionType,
     ReviewFinding,
     ReviewLocator,
+    ReviewReference,
     ReviewResult,
     ReviewScope,
 )
@@ -276,6 +277,127 @@ def test_reviewed_docx_patches_original_and_preserves_run_formatting(tmp_path: P
     assert _revision_texts(document_xml, "ins", "t") == ["replacement"]
     assert root.find(f".//{_W}del/{_W}r/{_W}rPr/{_W}b") is not None
     assert "[DELETE:" not in document_xml
+
+
+def test_reviewed_docx_comment_carries_a_references_line(tmp_path: Path) -> None:
+    # An action's references are the citation carrier for downstream users: the comment body
+    # in word/comments.xml must include a "References:" line listing each reference by label
+    # (falling back to source when no label is set).
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("The quick brown fox jumps.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1",
+        comment="Grounded observation.",
+        references=[
+            ReviewReference(source="KC", label="art. 385(1)"),
+            ReviewReference(source="unlabelled-source"),
+        ],
+    )
+
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+
+    comments = _comment_texts(reviewed_path)
+    assert any(
+        "References: art. 385(1), unlabelled-source" in text for text in comments
+    ), comments
+
+
+def test_reviewed_docx_interleaves_several_tracked_edits_in_one_paragraph(tmp_path: Path) -> None:
+    # Several trackable edits landing on ONE paragraph must interleave correctly: each edit's
+    # w:del/w:ins pair sits inside its own commentRangeStart/commentRangeEnd, untouched text
+    # survives between them, and every revision carries a fresh id (strictly increasing in
+    # document order for edits applied left to right).
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Alpha beta gamma delta.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    actions = [
+        ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.REPLACE,
+            node_id="p1",
+            original_text="beta",
+            replacement_text="B",
+            reason="First edit.",
+            status=ActionStatus.NOT_APPLIED,
+        ),
+        ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.DELETE_TEXT,
+            node_id="p1",
+            original_text=" gamma",
+            reason="Second edit.",
+            status=ActionStatus.NOT_APPLIED,
+        ),
+        ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.INSERT_AFTER,
+            node_id="p1",
+            original_text="delta",
+            replacement_text="!",
+            reason="Third edit.",
+            status=ActionStatus.NOT_APPLIED,
+        ),
+    ]
+
+    reviewed_path = render_reviewed_docx(document, actions, tmp_path / "reviewed.docx")
+    document_xml = _part_xml(reviewed_path, "word/document.xml")
+    root = ElementTree.fromstring(document_xml)
+    paragraph_xml = root.find(f".//{_W}p")
+    assert paragraph_xml is not None
+
+    # Exact interleaving: kept runs between the edits, each edit wrapped in its own
+    # comment range (replace = del+ins, delete = del only, insert = ins only).
+    assert [child.tag for child in paragraph_xml] == [
+        f"{_W}r",  # "Alpha "
+        f"{_W}commentRangeStart",
+        f"{_W}del",  # "beta"
+        f"{_W}ins",  # "B"
+        f"{_W}commentRangeEnd",
+        f"{_W}r",  # comment reference
+        f"{_W}commentRangeStart",
+        f"{_W}del",  # " gamma"
+        f"{_W}commentRangeEnd",
+        f"{_W}r",  # comment reference
+        f"{_W}r",  # " delta"
+        f"{_W}commentRangeStart",
+        f"{_W}ins",  # "!"
+        f"{_W}commentRangeEnd",
+        f"{_W}r",  # comment reference
+        f"{_W}r",  # "."
+    ]
+    assert _revision_texts(document_xml, "del", "delText") == ["beta", " gamma"]
+    assert _revision_texts(document_xml, "ins", "t") == ["B", "!"]
+
+    # Every revision gets a fresh id: strictly increasing in document order.
+    revision_ids = [
+        int(child.get(f"{_W}id") or -1)
+        for child in paragraph_xml
+        if child.tag in {f"{_W}del", f"{_W}ins"}
+    ]
+    assert len(revision_ids) == 4
+    assert all(earlier < later for earlier, later in zip(revision_ids, revision_ids[1:]))
+
+    # Comment ranges pair up: starts and ends carry the same ids in the same order,
+    # one distinct comment per edit.
+    start_ids = [
+        child.get(f"{_W}id")
+        for child in paragraph_xml
+        if child.tag == f"{_W}commentRangeStart"
+    ]
+    end_ids = [
+        child.get(f"{_W}id") for child in paragraph_xml if child.tag == f"{_W}commentRangeEnd"
+    ]
+    assert start_ids == end_ids
+    assert len(set(start_ids)) == 3
 
 
 def test_reviewed_docx_patches_table_header_and_footer_paragraphs(tmp_path: Path) -> None:

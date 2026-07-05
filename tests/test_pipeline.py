@@ -885,6 +885,194 @@ def test_identical_runs_produce_byte_identical_json_reports(tmp_path: Path) -> N
     assert _report(tmp_path / "a.json") == _report(tmp_path / "b.json")
 
 
+def test_extra_action_is_tracked_in_reviewed_and_applied_in_corrected(tmp_path: Path) -> None:
+    # A valid extra action (deterministic caller, no LLM involved) must flow through the same
+    # machinery as reviewer output: validated, policy-checked, rendered as a tracked change in
+    # reviewed.docx and applied in corrected.docx, with its source_system preserved.
+    input_path = _make_docx(tmp_path, "To jest bład.")
+    extra = ReviewAction(
+        id="extra-1",
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id="p1",
+        original_text="bład",
+        replacement_text="błąd",
+        category="typo",
+        confidence=1.0,
+        apply_hint=True,
+        source_system="deterministic-checker",
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=_empty_llm(),
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+        extra_actions=[extra],
+    )
+
+    assert [action.id for action in result.actions] == ["extra-1"]
+    assert result.actions[0].status == ActionStatus.APPLIED
+    assert result.actions[0].source_system == "deterministic-checker"
+    assert _revision_texts(result.reviewed_docx, "del", "delText") == ["bład"]
+    assert _revision_texts(result.reviewed_docx, "ins", "t") == ["błąd"]
+    assert _docx_text(result.corrected_docx) == "To jest błąd."
+
+
+def test_extra_action_overlapping_an_llm_action_escalates_both(tmp_path: Path) -> None:
+    # An extra action overlapping an LLM edit must demote per the existing overlap semantics:
+    # both actions in the cluster become CONFLICT and neither reaches the clean copy.
+    input_path = _make_docx(tmp_path, "The cat sat.")
+    llm = MockLLMClient(
+        responses=[
+            {
+                "actions": [
+                    {
+                        "id": "a-llm",
+                        "scope": "sentence",
+                        "action_type": "replace",
+                        "node_id": "p1.s1",
+                        "original_text": "The cat",
+                        "replacement_text": "A feline",
+                        "category": "typo",
+                        "confidence": 1.0,
+                        "apply_hint": True,
+                    }
+                ],
+                "summary": "Sentence checked.",
+            },
+            {"actions": [], "summary": "Paragraph checked."},
+            {"actions": [], "summary": "Section checked."},
+            {"actions": [], "summary": "Document checked."},
+        ]
+    )
+    extra = ReviewAction(
+        id="a-extra",
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id="p1",
+        original_text="cat sat",
+        replacement_text="dog ran",
+        category="typo",
+        confidence=1.0,
+        apply_hint=True,
+        source_system="deterministic-checker",
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+        extra_actions=[extra],
+    )
+
+    statuses = {action.id: action.status for action in result.actions}
+    assert statuses["a-llm"] == ActionStatus.CONFLICT
+    assert statuses["a-extra"] == ActionStatus.CONFLICT
+    extra_result = next(action for action in result.actions if action.id == "a-extra")
+    assert extra_result.source_system == "deterministic-checker"
+    # Neither clobbering edit reached the clean copy.
+    assert _docx_text(result.corrected_docx) == "The cat sat."
+
+
+def test_extra_action_with_unmatched_original_text_becomes_conflict(tmp_path: Path) -> None:
+    # An extra action whose original_text does not exist in the document must surface as a
+    # CONFLICT comment in reviewed.docx - never a silent apply - and leave corrected untouched.
+    input_path = _make_docx(tmp_path, "To jest bład.")
+    extra = ReviewAction(
+        id="extra-ghost",
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id="p1",
+        original_text="unicorn",
+        replacement_text="horse",
+        category="typo",
+        confidence=1.0,
+        apply_hint=True,
+        source_system="deterministic-checker",
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=_empty_llm(),
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+        extra_actions=[extra],
+    )
+
+    assert result.actions[0].status == ActionStatus.CONFLICT
+    assert "found 0 matches" in (result.actions[0].policy_reason or "")
+    comment_lines = _docx_comments(result.reviewed_docx).splitlines()
+    assert any(line.startswith("CONFLICT:") for line in comment_lines), comment_lines
+    assert _docx_text(result.corrected_docx) == "To jest bład."
+
+
+def test_extra_actions_none_or_empty_matches_omitting_the_parameter(tmp_path: Path) -> None:
+    # extra_actions=None (and []) must be byte-identical to today's behavior: same report
+    # JSON and same reviewed/corrected artifacts as a call without the parameter.
+    input_path = _make_docx(tmp_path, "To jest bład.")
+    reviewed_path = tmp_path / "reviewed.docx"
+    corrected_path = tmp_path / "corrected.docx"
+
+    def _artifacts(suffix: str, **kwargs: Any) -> tuple[bytes, ...]:
+        llm = MockLLMClient(
+            responses=[
+                {
+                    "actions": [
+                        {
+                            "id": "a1",
+                            "scope": "sentence",
+                            "action_type": "replace",
+                            "node_id": "p1.s1",
+                            "original_text": "bład",
+                            "replacement_text": "błąd",
+                            "category": "typo",
+                            "confidence": 1.0,
+                            "apply_hint": True,
+                        }
+                    ],
+                    "summary": "Zdanie sprawdzone.",
+                },
+                {"actions": [], "summary": "Akapit sprawdzony."},
+                {"actions": [], "summary": "Sekcja sprawdzona."},
+                {"actions": [], "summary": "Dokument sprawdzony."},
+            ]
+        )
+        result = review_document(
+            input_path=input_path,
+            profile_path="examples/profiles/story.teacher",
+            llm=llm,
+            out_reviewed=reviewed_path,
+            out_corrected=corrected_path,
+            **kwargs,
+        )
+        report = result.save_json(tmp_path / f"report-{suffix}.json").read_bytes()
+        with ZipFile(reviewed_path) as archive:
+            reviewed = (archive.read("word/document.xml"), archive.read("word/comments.xml"))
+        with ZipFile(corrected_path) as archive:
+            corrected = archive.read("word/document.xml")
+        return (report, *reviewed, corrected)
+
+    baseline = _artifacts("baseline")
+    assert _artifacts("none", extra_actions=None) == baseline
+    assert _artifacts("empty", extra_actions=[]) == baseline
+
+
+def _empty_llm() -> MockLLMClient:
+    return MockLLMClient(
+        responses=[
+            {"actions": [], "summary": "Zdanie sprawdzone."},
+            {"actions": [], "summary": "Akapit sprawdzony."},
+            {"actions": [], "summary": "Sekcja sprawdzona."},
+            {"actions": [], "summary": "Dokument sprawdzony."},
+        ]
+    )
+
+
 def _run_with_single_sentence_action(
     tmp_path: Path,
     action: dict[str, Any],

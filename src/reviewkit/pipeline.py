@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import ReviewContextProvider
 from reviewkit.document import ReviewDocument
 from reviewkit.llm import LLMClient
@@ -23,7 +24,25 @@ def review_document(
     out_corrected: str | Path = "corrected.docx",
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
+    extra_actions: list[ReviewAction] | None = None,
 ) -> ReviewResult:
+    """Run the hierarchical review and render the reviewed/corrected artifacts.
+
+    ``extra_actions`` are pre-built actions from OUTSIDE the LLM (deterministic
+    callers). Contract: pass them RAW (unprepared) - the pipeline runs them through
+    the exact same machinery as reviewer-produced actions, so any pre-set ``status``
+    is recomputed: validation against the document text (an ``original_text`` found
+    nowhere in the node becomes CONFLICT regardless of the profile's ambiguity
+    config - never a silent apply - while a non-unique match escalates per that
+    config), the action policy, and the overlap guards against the LLM's actions
+    (an overlapping cluster is demoted to CONFLICT as a whole, matched per action,
+    so an extra reusing an LLM action's id is never collaterally demoted). Each
+    action's ``source_system`` is preserved,
+    prepared extras are appended after the reviewer's actions, and both artifacts
+    include them: reviewed.docx as tracked edits/comments, corrected.docx applying
+    only the APPLIED ones. With ``extra_actions=None`` or ``[]`` the result is
+    identical to omitting the parameter.
+    """
     # Accept an already-built profile as well as a folder path: callers that construct or cache
     # a ReviewProfile in memory shouldn't be forced to round-trip it through disk.
     profile = profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
@@ -35,6 +54,14 @@ def review_document(
         action_policy=action_policy,
     )
     findings, actions, state = reviewer.review(document)
+
+    if extra_actions:
+        # Same machinery as reviewer output: prepare_actions validates each extra action
+        # against the document and applies the action policy (plus the in-batch overlap
+        # guard), then the cross-scope pass re-runs over the MERGED list so an extra edit
+        # overlapping an LLM edit demotes exactly like two LLM edits would.
+        prepared_extra = prepare_actions(document, profile, extra_actions, policy=action_policy)
+        actions = demote_cross_scope_overlaps(document, actions + prepared_extra)
 
     reviewed_path: Path | None = None
     corrected_path: Path | None = None
