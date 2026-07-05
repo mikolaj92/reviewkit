@@ -4,7 +4,10 @@ from zipfile import ZipFile
 
 import pytest
 from docx import Document as DocxDocument
+from docx.oxml import OxmlElement
 
+from reviewkit.actions import prepare_actions
+from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
 from reviewkit.models import (
     ActionStatus,
     ReviewAction,
@@ -16,7 +19,12 @@ from reviewkit.models import (
     ReviewScope,
 )
 from reviewkit.parser_docx import load_docx
-from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
+from reviewkit.profile import ActionPolicyConfig, ReviewProfile
+from reviewkit.renderer_docx import (
+    RenderIntegrityError,
+    render_corrected_docx,
+    render_reviewed_docx,
+)
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -872,6 +880,157 @@ def test_precise_comment_anchor_survives_opaque_segment_before_the_quote(tmp_pat
     assert _commented_run_text(paragraph_xml) == "target"
 
 
+# --- Render integrity (issue #142): a writing action that must leave a trace can never
+# --- be skipped silently - every miss raises a typed RenderIntegrityError naming the
+# --- action, so consumers can fail closed without re-parsing the artifact.
+
+
+def _saved_docx(tmp_path: Path, *paragraphs: str) -> Path:
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    for text in paragraphs:
+        docx.add_paragraph(text)
+    docx.save(input_path)
+    return input_path
+
+
+def _writing_action(**overrides: object) -> ReviewAction:
+    fields: dict = {
+        "scope": ReviewScope.PARAGRAPH,
+        "action_type": ReviewActionType.REPLACE,
+        "node_id": "p1",
+        "original_text": "fox",
+        "replacement_text": "cat",
+        "status": ActionStatus.APPLIED,
+    }
+    fields.update(overrides)
+    return ReviewAction(**fields)
+
+
+@pytest.mark.parametrize("renderer", [render_reviewed_docx, render_corrected_docx])
+def test_render_raises_when_writing_action_routes_to_no_paragraph(tmp_path, renderer) -> None:
+    # An action whose node_id names no paragraph/sentence/scope is never picked up by
+    # actions_for_paragraph, so it used to vanish from both artifacts without a trace.
+    document = load_docx(_saved_docx(tmp_path, "The quick brown fox jumps."))
+    action = _writing_action(id="a-ghost", node_id="ghost-node")
+
+    with pytest.raises(RenderIntegrityError) as excinfo:
+        renderer(document, [action], tmp_path / "out.docx")
+    assert "a-ghost" in str(excinfo.value)
+    assert "ghost-node" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("renderer", [render_reviewed_docx, render_corrected_docx])
+def test_conflict_action_on_unknown_node_still_renders_without_error(tmp_path, renderer) -> None:
+    # prepare_actions demotes unknown-node actions to CONFLICT; those are advisory-only
+    # (never trackable, never applied to corrected), so rendering them must NOT raise.
+    document = load_docx(_saved_docx(tmp_path, "The quick brown fox jumps."))
+    action = _writing_action(id="a-conflict", node_id="ghost-node", status=ActionStatus.CONFLICT)
+
+    assert renderer(document, [action], tmp_path / "out.docx").exists()
+
+
+@pytest.mark.parametrize(
+    "action_type",
+    [ReviewActionType.REPLACE, ReviewActionType.DELETE_TEXT, ReviewActionType.INSERT_AFTER],
+)
+@pytest.mark.parametrize("status", [ActionStatus.APPLIED, ActionStatus.NOT_APPLIED])
+def test_reviewed_docx_raises_when_tracked_edit_fails_to_anchor(
+    tmp_path: Path, action_type: ReviewActionType, status: ActionStatus
+) -> None:
+    # The original issue-#142 hole: _track_action could not find original_text in the
+    # paragraph and returned unchanged segments, silently dropping the tracked change.
+    document = load_docx(_saved_docx(tmp_path, "The quick brown fox jumps."))
+    action = _writing_action(
+        id="a-miss", action_type=action_type, original_text="unicorn", status=status
+    )
+
+    with pytest.raises(RenderIntegrityError) as excinfo:
+        render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    assert "a-miss" in str(excinfo.value)
+    assert "'p1'" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "action_type",
+    [ReviewActionType.REPLACE, ReviewActionType.DELETE_TEXT, ReviewActionType.INSERT_AFTER],
+)
+def test_corrected_docx_raises_when_applied_edit_fails_to_anchor(
+    tmp_path: Path, action_type: ReviewActionType
+) -> None:
+    # Sibling hole in the clean rewrite: _apply_clean_corrections used the same silent
+    # _track_action skip, so corrected.docx shipped without an edit the report claimed.
+    document = load_docx(_saved_docx(tmp_path, "The quick brown fox jumps."))
+    action = _writing_action(id="a-miss", action_type=action_type, original_text="unicorn")
+
+    with pytest.raises(RenderIntegrityError) as excinfo:
+        render_corrected_docx(document, [action], tmp_path / "corrected.docx")
+    assert "a-miss" in str(excinfo.value)
+
+
+def test_corrected_docx_without_source_raises_when_applied_edit_fails_to_anchor(
+    tmp_path: Path,
+) -> None:
+    # No-source documents take the apply_corrections_to_text path, where an unmatched
+    # original_text used to be a silent str.replace no-op.
+    from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
+
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[
+                    ParagraphNode(id="p1", text="The quick brown fox jumps.", section_id="s1")
+                ],
+            )
+        ]
+    )
+    action = _writing_action(id="a-miss", original_text="unicorn")
+
+    with pytest.raises(RenderIntegrityError) as excinfo:
+        render_corrected_docx(document, [action], tmp_path / "corrected.docx")
+    assert "a-miss" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("renderer", [render_reviewed_docx, render_corrected_docx])
+def test_render_raises_when_paragraph_locator_does_not_resolve(tmp_path, renderer) -> None:
+    # With a source document every parsed locator must resolve; the old fallback landed
+    # the edit in a detached appended paragraph while the real one stayed untouched.
+    document = load_docx(_saved_docx(tmp_path, "The quick brown fox jumps."))
+    document.sections[0].paragraphs[0].locator = "body:p:99"
+    action = _writing_action(id="a-locator")
+
+    with pytest.raises(RenderIntegrityError) as excinfo:
+        renderer(document, [action], tmp_path / "out.docx")
+    assert "a-locator" in str(excinfo.value)
+    assert "body:p:99" in str(excinfo.value)
+
+
+def test_overlap_consumed_suggestion_degrades_to_comment_not_error(tmp_path: Path) -> None:
+    # Two NOT_APPLIED suggestions on overlapping spans are legitimate reviewer output
+    # (prepare_actions only demotes overlapping APPLIED edits). The first tracked change
+    # consumes the second one's anchor; that documented degrade to a labelled comment
+    # must survive the fail-closed guards - it anchored fine in the pristine text.
+    document = load_docx(_saved_docx(tmp_path, "The quick brown fox jumps."))
+    actions = [
+        _writing_action(
+            id="a-first",
+            original_text="brown fox",
+            replacement_text="red cat",
+            status=ActionStatus.NOT_APPLIED,
+        ),
+        _writing_action(id="a-second", status=ActionStatus.NOT_APPLIED),
+    ]
+
+    reviewed_path = render_reviewed_docx(document, actions, tmp_path / "reviewed.docx")
+
+    document_xml = _part_xml(reviewed_path, "word/document.xml")
+    assert _revision_texts(document_xml, "del", "delText") == ["brown fox"]
+    # The consumed suggestion still surfaces as a labelled comment carrying its content.
+    comments = _comment_texts(reviewed_path)
+    assert any("Original: 'fox'" in text for text in comments), comments
+
+
 def _commented_run_text(paragraph_xml: ElementTree.Element) -> str:
     inside = False
     parts: list[str] = []
@@ -911,3 +1070,237 @@ def _revision_texts(xml: str, revision_tag: str, text_tag: str) -> list[str]:
         for element in root.findall(f".//{_W}{revision_tag}")
         if element.find(f".//{_W}{text_tag}") is not None
     ]
+
+
+# --- Fail-closed pins: anchor consumption, opaque inline content, application order ---
+
+
+def _auto_profile() -> ReviewProfile:
+    return ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        action_policy=ActionPolicyConfig(
+            apply_policy={"safe_edit": "apply"},
+            require_llm_apply_hint=True,
+            min_confidence_for_auto_apply=0.85,
+            max_severity_for_auto_apply="medium",
+        ),
+    )
+
+
+def _safe_edit(**overrides: object) -> ReviewAction:
+    fields: dict = {
+        "scope": ReviewScope.PARAGRAPH,
+        "action_type": ReviewActionType.REPLACE_TEXT,
+        "node_id": "p1",
+        "category": "safe_edit",
+        "confidence": 1.0,
+        "apply_hint": True,
+    }
+    fields.update(overrides)
+    return ReviewAction(**fields)
+
+
+def _tabbed_docx(tmp_path: Path) -> Path:
+    # One paragraph reading "A\tB" where the tab is a real w:tab element.
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph()
+    paragraph.add_run("A")
+    paragraph.add_run().add_tab()
+    paragraph.add_run("B")
+    docx.save(input_path)
+    return input_path
+
+
+def _hyperlink_docx(tmp_path: Path) -> Path:
+    # One paragraph reading "See the appendix for details." where "the appendix"
+    # is the text of a real w:hyperlink child (python-docx includes it in .text).
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph("See ")
+    hyperlink = OxmlElement("w:hyperlink")
+    run = OxmlElement("w:r")
+    text = OxmlElement("w:t")
+    text.text = "the appendix"
+    run.append(text)
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
+    paragraph.add_run(" for details.")
+    docx.save(input_path)
+    return input_path
+
+
+def test_corrected_no_source_raises_when_earlier_applied_edit_consumes_anchor(
+    tmp_path: Path,
+) -> None:
+    # No-source path: each anchor must be checked against the EVOLVING text in
+    # application order. Deleting "abc" from "abcabc" leaves "abc", which consumes
+    # the second APPLIED delete's "bca" anchor - str.replace would silently no-op
+    # it while the report claims it APPLIED, so render must raise instead.
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[ParagraphNode(id="p1", text="abcabc", section_id="s1")],
+            )
+        ]
+    )
+    actions = [
+        _writing_action(
+            id="a-first",
+            action_type=ReviewActionType.DELETE_TEXT,
+            original_text="abc",
+            replacement_text=None,
+        ),
+        _writing_action(
+            id="a-second",
+            action_type=ReviewActionType.DELETE_TEXT,
+            original_text="bca",
+            replacement_text=None,
+        ),
+    ]
+
+    with pytest.raises(RenderIntegrityError, match="a-second"):
+        render_corrected_docx(document, actions, tmp_path / "corrected.docx")
+
+
+@pytest.mark.parametrize("renderer", [render_reviewed_docx, render_corrected_docx])
+@pytest.mark.parametrize(
+    ("original", "replacement"),
+    [("\t", " - "), ("A\tB", "AB")],
+    ids=["tab-only-range", "range-spanning-tab"],
+)
+def test_applied_replace_covering_opaque_tab_raises_instead_of_misrendering(
+    tmp_path: Path, renderer, original: str, replacement: str
+) -> None:
+    # An APPLIED replace whose range covers opaque inline content (a real w:tab)
+    # cannot be honored: the tab survives verbatim, so marking/applying only the
+    # editable remainder would ship a wrong paragraph (historically the insertion
+    # even landed at the paragraph END). A hand-built APPLIED action that bypasses
+    # prepare must fail closed in BOTH renderers, never mis-render.
+    document = load_docx(_tabbed_docx(tmp_path))
+    action = _writing_action(
+        id="a-tab", original_text=original, replacement_text=replacement
+    )
+
+    with pytest.raises(RenderIntegrityError, match="a-tab"):
+        renderer(document, [action], tmp_path / "out.docx")
+
+
+def test_prepare_demotes_edit_over_tab_and_both_artifacts_still_render(
+    tmp_path: Path,
+) -> None:
+    # The supported flow: prepare detects that the edit's span covers the paragraph's
+    # opaque tab (parser-recorded opaque_ranges), demotes it to CONFLICT, and both
+    # artifacts render - the tab intact, the edit surfaced as a labelled comment.
+    document = load_docx(_tabbed_docx(tmp_path))
+    paragraph = next(document.iter_paragraphs())
+    assert paragraph.text == "A\tB"
+    assert paragraph.opaque_ranges == [(1, 2)]
+
+    action = _safe_edit(original_text="\t", replacement_text=" - ")
+    prepared = prepare_actions(document, _auto_profile(), [action])
+    assert prepared[0].status == ActionStatus.CONFLICT
+
+    reviewed_path = render_reviewed_docx(document, prepared, tmp_path / "reviewed.docx")
+    corrected_path = render_corrected_docx(document, prepared, tmp_path / "corrected.docx")
+
+    assert DocxDocument(str(corrected_path)).paragraphs[0].text == "A\tB"
+    assert any(text.startswith("CONFLICT:") for text in _comment_texts(reviewed_path))
+
+
+def test_hyperlink_edit_demotes_to_conflict_and_both_artifacts_render(
+    tmp_path: Path,
+) -> None:
+    # paragraph.text includes hyperlink text, so validation anchors an APPLIED delete
+    # inside it - but the hyperlink is opaque to both renderers. This used to raise
+    # RenderIntegrityError and abort the whole run with no artifacts; the fail-closed
+    # outcome is a CONFLICT at prepare: both artifacts render, the hyperlink survives,
+    # and the edit surfaces as a CONFLICT-labelled comment.
+    document = load_docx(_hyperlink_docx(tmp_path))
+    paragraph = next(document.iter_paragraphs())
+    assert paragraph.text == "See the appendix for details."
+    assert paragraph.opaque_ranges == [(4, 16)]
+
+    action = _safe_edit(
+        action_type=ReviewActionType.DELETE_TEXT, original_text="the appendix"
+    )
+    prepared = prepare_actions(document, _auto_profile(), [action])
+    assert prepared[0].status == ActionStatus.CONFLICT
+
+    reviewed_path = render_reviewed_docx(document, prepared, tmp_path / "reviewed.docx")
+    corrected_path = render_corrected_docx(document, prepared, tmp_path / "corrected.docx")
+
+    corrected = DocxDocument(str(corrected_path))
+    assert corrected.paragraphs[0].text == "See the appendix for details."
+    assert "<w:hyperlink" in _part_xml(corrected_path, "word/document.xml")
+    assert any(text.startswith("CONFLICT:") for text in _comment_texts(reviewed_path))
+
+
+def test_applied_insert_after_abutting_applied_replace_renders_in_both_artifacts(
+    tmp_path: Path,
+) -> None:
+    # Abutting zero-width spans are deliberately compatible in prepare, so both actions
+    # arrive APPLIED. If the tracked replace ran first it would consume the insert's
+    # find-based anchor and abort the run; zero-width inserts must apply first so both
+    # edits land, identically in reviewed (accepted) and corrected output.
+    document = load_docx(_saved_docx(tmp_path, "The foo bar."))
+    actions = [
+        _safe_edit(id="a-replace", original_text="foo", replacement_text="qux"),
+        _safe_edit(
+            id="a-insert",
+            action_type=ReviewActionType.INSERT_AFTER,
+            original_text="foo",
+            replacement_text=" indeed",
+        ),
+    ]
+    prepared = prepare_actions(document, _auto_profile(), actions)
+    assert [action.status for action in prepared] == [
+        ActionStatus.APPLIED,
+        ActionStatus.APPLIED,
+    ]
+
+    reviewed_path = render_reviewed_docx(document, prepared, tmp_path / "reviewed.docx")
+    corrected_path = render_corrected_docx(document, prepared, tmp_path / "corrected.docx")
+
+    reviewed_xml = _part_xml(reviewed_path, "word/document.xml")
+    assert _accepted_paragraph_text(reviewed_xml) == "The qux indeed bar."
+    assert DocxDocument(str(corrected_path)).paragraphs[0].text == "The qux indeed bar."
+
+
+def test_applied_delete_tracks_before_listed_overlapping_suggestion(
+    tmp_path: Path,
+) -> None:
+    # A non-APPLIED suggestion listed BEFORE an APPLIED delete it overlaps: the
+    # APPLIED edit must always land as a tracked change (it is what corrected.docx
+    # applies), so it applies first; the suggestion whose anchor it consumed keeps
+    # the documented degrade to a labelled comment. Historically the suggestion
+    # tracked first and the APPLIED delete aborted the run.
+    document = load_docx(_saved_docx(tmp_path, "The quick brown fox jumps."))
+    suggestion = ReviewAction(
+        id="a-suggest",
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="p1",
+        original_text="brown fox",
+        replacement_text="red cat",
+        category="style",  # not in apply_policy -> stays non-APPLIED
+        confidence=0.9,
+    )
+    applied = _safe_edit(
+        id="a-applied", action_type=ReviewActionType.DELETE_TEXT, original_text="fox"
+    )
+    prepared = prepare_actions(document, _auto_profile(), [suggestion, applied])
+    assert prepared[0].status != ActionStatus.APPLIED
+    assert prepared[1].status == ActionStatus.APPLIED
+
+    reviewed_path = render_reviewed_docx(document, prepared, tmp_path / "reviewed.docx")
+    corrected_path = render_corrected_docx(document, prepared, tmp_path / "corrected.docx")
+
+    reviewed_xml = _part_xml(reviewed_path, "word/document.xml")
+    assert _revision_texts(reviewed_xml, "del", "delText") == ["fox"]
+    assert any("Original: 'brown fox'" in text for text in _comment_texts(reviewed_path))
+    assert DocxDocument(str(corrected_path)).paragraphs[0].text == "The quick brown  jumps."

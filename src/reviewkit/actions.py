@@ -29,7 +29,8 @@ def prepare_actions(
 ) -> list[ReviewAction]:
     resolved_policy = policy if policy is not None else ActionPolicy.from_profile(profile)
     prepared = [_prepare_action(document, resolved_policy, action) for action in actions]
-    return _demote_overlapping_actions(document, prepared)
+    prepared = _demote_overlapping_actions(document, prepared)
+    return _demote_edits_over_opaque_content(document, prepared)
 
 
 def apply_actions_to_text(text: str, actions: Iterable[ReviewAction]) -> str:
@@ -95,6 +96,33 @@ def apply_action_to_text(text: str, action: ReviewAction) -> str:
     return text
 
 
+_ZERO_WIDTH_INSERTS = {
+    ReviewActionType.INSERT_TEXT,
+    ReviewActionType.INSERT_BEFORE,
+    ReviewActionType.INSERT_AFTER,
+}
+
+
+def _find_anchor_application_order(actions: list[ReviewAction]) -> list[ReviewAction]:
+    """Order find-based (offset-less) actions so one edit cannot consume another's anchor.
+
+    These actions re-find ``original_text`` in the already-edited text, so application
+    order decides whether a later anchor still exists. Two rules keep prepare-approved
+    combinations applicable: zero-width insertions go first (they consume no text, while
+    a replace/delete applied earlier would consume THEIR anchor), and APPLIED edits go
+    before non-APPLIED suggestions (an APPLIED edit must always land; a suggestion whose
+    anchor was consumed has a documented degrade to a labelled comment). The sort is
+    stable, so equal-priority actions keep their listed order.
+    """
+    return sorted(
+        actions,
+        key=lambda action: (
+            action.action_type not in _ZERO_WIDTH_INSERTS,
+            action.status != ActionStatus.APPLIED,
+        ),
+    )
+
+
 def _actions_in_text_application_order(actions: list[ReviewAction]) -> list[ReviewAction]:
     locator_actions: list[tuple[int, int, int, ReviewAction]] = []
     other_actions: list[ReviewAction] = []
@@ -106,7 +134,7 @@ def _actions_in_text_application_order(actions: list[ReviewAction]) -> list[Revi
         start, end = action_range
         locator_actions.append((start, end, index, action))
     locator_actions.sort(key=lambda item: (-item[0], -item[1], item[2]))
-    return [item[3] for item in locator_actions] + other_actions
+    return [item[3] for item in locator_actions] + _find_anchor_application_order(other_actions)
 
 
 def _locator_range(action: ReviewAction) -> tuple[int, int] | None:
@@ -439,6 +467,69 @@ def demote_cross_scope_overlaps(
     return result
 
 
+def _demote_edits_over_opaque_content(
+    document: ReviewDocument, actions: list[ReviewAction]
+) -> list[ReviewAction]:
+    """Escalate APPLIED edits whose span covers non-text inline content.
+
+    ``paragraph.text`` includes the visible characters of inline content the
+    renderers cannot edit (tabs/breaks, hyperlink and field text, ...), so text
+    validation happily anchors an edit inside it. Neither renderer can honor such
+    an edit: the opaque XML survives untouched, so the corrected output keeps (or
+    misplaces) the covered content and the reviewed output would mark the wrong
+    span. Fail closed at prepare time: the action becomes CONFLICT, both artifacts
+    still render (the edit surfaces as a labelled comment) and the report is honest,
+    instead of aborting the whole run with a RenderIntegrityError.
+    """
+    to_demote: set[int] = set()
+    for paragraph in document.iter_paragraphs():
+        if not paragraph.opaque_ranges:
+            continue
+        for position, action in enumerate(actions):
+            if position in to_demote:
+                continue
+            if action.status != ActionStatus.APPLIED or action.action_type not in WRITING_ACTIONS:
+                continue
+            for resolved in actions_for_paragraph(document, paragraph, [action]):
+                span = _applied_char_range(paragraph.text, resolved)
+                if span is not None and _span_touches_opaque(span, paragraph.opaque_ranges):
+                    to_demote.add(position)
+                    break
+    if not to_demote:
+        return actions
+
+    reason = (
+        "edit range covers non-text inline content (tab/break/hyperlink/field/...) "
+        "that cannot be edited deterministically"
+    )
+    result = list(actions)
+    for position in to_demote:
+        action = result[position]
+        result[position] = action.model_copy(
+            update={
+                "status": ActionStatus.CONFLICT,
+                "reason": _append_reason(action.reason, reason),
+                "policy_reason": reason,
+            }
+        )
+    return result
+
+
+def _span_touches_opaque(
+    span: tuple[int, int], opaque_ranges: list[tuple[int, int]]
+) -> bool:
+    start, end = span
+    for opaque_start, opaque_end in opaque_ranges:
+        if start == end:
+            # Zero-width insertion: only conflicts when the point falls strictly
+            # inside opaque content; abutting its boundary is a valid insert.
+            if opaque_start < start < opaque_end:
+                return True
+        elif max(start, opaque_start) < min(end, opaque_end):
+            return True
+    return False
+
+
 def _applied_char_range(node_text: str, action: ReviewAction) -> tuple[int, int] | None:
     """Span of ``node_text`` an APPLIED writing action mutates, if determinable."""
     locator = action.locator
@@ -456,7 +547,10 @@ def _applied_char_range(node_text: str, action: ReviewAction) -> tuple[int, int]
             return locator.char_start, locator.char_start
         return locator.char_start, locator.char_end
     original = action.original_text
-    if original and node_text.count(original) == 1:
+    if original and original in node_text:
+        # First occurrence, exactly like apply_action_to_text's str.replace(..., 1):
+        # when a profile allows non-unique anchors, this is the span that actually
+        # gets edited, so the overlap guards must reason about the same occurrence.
         start = node_text.find(original)
         if action.action_type == ReviewActionType.INSERT_AFTER:
             return start + len(original), start + len(original)
@@ -520,14 +614,27 @@ def _unanchorable_scope_edit_reason(
     A scope-level writing action carrying ``original_text`` is routed to the paragraph
     where the quote lives (see ``actions_for_paragraph``); one WITHOUT it has no anchor,
     so the corrected renderer drops it while the stats still claim it. Escalate.
+
+    The quote must also sit INSIDE one paragraph: both renderers apply edits at
+    paragraph granularity, so a quote that only matches across a paragraph boundary
+    (section text joins paragraphs with a separator) can never be applied and must
+    fail closed here rather than blow up at render time.
     """
     if action.action_type not in WRITING_ACTIONS:
         return None
-    if action.original_text:
-        return None
     if not _is_scope_level_node(document, action.node_id):
         return None
-    return "section/document-scoped edits require original_text to anchor to a paragraph"
+    if not action.original_text:
+        return "section/document-scoped edits require original_text to anchor to a paragraph"
+    if any(
+        action.original_text in paragraph.text
+        for paragraph in _scope_paragraphs(document, action)
+    ):
+        return None
+    return (
+        "section/document-scoped edits require original_text that falls within a single "
+        "paragraph to anchor deterministically"
+    )
 
 
 def _missing_anchor_reason(node_text: str, action: ReviewAction) -> str | None:

@@ -761,6 +761,49 @@ def test_applied_scope_edit_anchors_to_one_paragraph_and_applies() -> None:
     assert apply_corrections_to_text(p2.text, p2_actions) == "The dog ran there."
 
 
+def test_scope_edit_whose_quote_spans_paragraphs_is_conflicted() -> None:
+    # A section-scoped quote can match section.text (paragraphs joined with "\n\n") while
+    # matching NO single paragraph. Such an edit can never anchor deterministically at
+    # render time, so prepare must demote it to CONFLICT instead of letting the renderer's
+    # fail-closed integrity guard blow up on legitimately prepared input.
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[
+                    ParagraphNode(id="p1", text="The cat sat here.", section_id="s1"),
+                    ParagraphNode(id="p2", text="The dog ran there.", section_id="s1"),
+                ],
+            )
+        ]
+    )
+    profile = _auto_apply_profile()
+    spanning_edit = ReviewAction(
+        scope=ReviewScope.SECTION,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id="s1",
+        original_text="here.\n\nThe dog",
+        replacement_text="here. The dog",
+        category="safe_edit",
+        confidence=1.0,
+        apply_hint=True,
+    )
+
+    prepared = prepare_actions(document, profile, [spanning_edit])
+
+    assert prepared[0].status == ActionStatus.CONFLICT
+    assert "single paragraph" in (prepared[0].policy_reason or "")
+    assert should_apply_to_corrected(prepared[0]) is False
+    # It still surfaces (as an advisory CONFLICT comment via the documented scope-comment
+    # fallback) but is never trackable, so neither renderer edits any paragraph for it.
+    routed = [
+        action
+        for paragraph in document.sections[0].paragraphs
+        for action in actions_for_paragraph(document, paragraph, prepared)
+    ]
+    assert all(action.status == ActionStatus.CONFLICT for action in routed)
+
+
 def test_paragraph_level_insert_without_original_text_still_applies() -> None:
     # The scope-anchor guard is narrow: a paragraph-scoped insert (no original_text needed)
     # is directly applicable, so it must remain APPLIED and in the corrected set.
@@ -1266,3 +1309,34 @@ def _safe_replace(original: str, replacement: str) -> ReviewAction:
         confidence=1.0,
         apply_hint=True,
     )
+
+
+def test_prepare_demotes_first_occurrence_overlap_under_non_unique_match() -> None:
+    # With auto_apply_requires_unique_match=False, find-based anchors resolve to their
+    # FIRST occurrence (str.replace semantics). In "abcabc", delete "abc" (first
+    # occurrence [0,3)) and delete "bca" ([1,4)) overlap there: applying one consumes
+    # the other's anchor and str.replace would silently no-op it. The overlap guard
+    # must reason about the same occurrence the applier edits and demote both.
+    document = _document("abcabc")
+    profile = _ambiguity_profile(auto_apply_requires_unique_match=False)
+
+    def _delete(action_id: str, original: str) -> ReviewAction:
+        return ReviewAction(
+            id=action_id,
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.DELETE_TEXT,
+            node_id="p1",
+            original_text=original,
+            category="safe_edit",
+            confidence=1.0,
+            apply_hint=True,
+        )
+
+    prepared = prepare_actions(document, profile, [_delete("a-abc", "abc"), _delete("a-bca", "bca")])
+
+    assert [action.status for action in prepared] == [
+        ActionStatus.CONFLICT,
+        ActionStatus.CONFLICT,
+    ]
+    # Nothing applies, so the corrected text is honest: unchanged, not a partial apply.
+    assert apply_corrections_to_text("abcabc", prepared) == "abcabc"

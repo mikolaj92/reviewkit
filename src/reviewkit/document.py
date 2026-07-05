@@ -25,6 +25,10 @@ class ParagraphNode(BaseModel):
     locator: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
     sentences: list[SentenceNode] = Field(default_factory=list)
+    # Spans of ``text`` contributed by non-editable inline content (tabs, breaks,
+    # hyperlink/field text, ...). Coordinates match ``text`` (post-strip). Filled by
+    # the DOCX parser; empty for plain-text paragraphs or unknown layouts.
+    opaque_ranges: list[tuple[int, int]] = Field(default_factory=list)
 
 
 class SectionNode(BaseModel):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,8 +14,10 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from reviewkit.actions import (
+    _actions_in_text_application_order,
+    _find_anchor_application_order,
     actions_for_paragraph,
-    apply_corrections_to_text,
+    apply_action_to_text,
     should_apply_to_corrected,
 )
 from reviewkit.document import ReviewDocument
@@ -26,6 +29,80 @@ _SegmentKind = Literal["text", "ins", "del", "opaque"]
 # reproducible byte-for-byte. Callers that want wall-clock revision dates opt in by
 # passing ``revision_timestamp=datetime.now(UTC)`` explicitly.
 _DEFAULT_REVISION_DATE = "1970-01-01T00:00:00+00:00"
+
+
+class RenderIntegrityError(RuntimeError):
+    """A writing action that must leave a trace in an artifact could not be rendered.
+
+    After ``prepare_actions`` validation every writing action anchors deterministically,
+    so a miss at render time is an internal inconsistency (unknown node_id, a paragraph
+    locator that no longer resolves, stale char offsets, drifted text) - never a
+    legitimate skip. Raising converts what used to be silent data loss (an artifact
+    quietly missing edits) into a hard error, so consumers can fail closed on a raised
+    render call and trust a successful one without re-parsing the DOCX.
+    """
+
+
+def _describe_action(action: ReviewAction) -> str:
+    locator = action.locator
+    if locator is not None and locator.char_start is not None and locator.char_end is not None:
+        where = f"chars [{locator.char_start}, {locator.char_end})"
+    else:
+        where = "no char range"
+    return (
+        f"action {action.id!r} ({action.action_type.value}, status={action.status.value}) "
+        f"on node {action.node_id!r} ({where}, original_text={action.original_text!r})"
+    )
+
+
+def _assert_writing_actions_reach_a_paragraph(
+    document: ReviewDocument,
+    actions: list[ReviewAction],
+    must_render: Callable[[ReviewAction], bool],
+    artifact: str,
+) -> None:
+    """Fail closed when a writing action's node_id routes to no paragraph.
+
+    ``actions_for_paragraph`` silently ignores an action whose node_id names no
+    paragraph or sentence and is not a section/document scope that can anchor
+    (original_text present and the scope has at least one paragraph); such an
+    action would leave no trace in the artifact.
+    """
+    paragraph_ids = {paragraph.id for paragraph in document.iter_paragraphs()}
+    sentence_ids = {sentence.id for sentence in document.iter_sentences()}
+
+    def _routes(action: ReviewAction) -> bool:
+        node_id = action.node_id
+        if node_id in paragraph_ids or node_id in sentence_ids:
+            return True
+        if not action.original_text:
+            return False
+        if node_id == document.id:
+            return bool(paragraph_ids)
+        section = next((s for s in document.sections if s.id == node_id), None)
+        return section is not None and bool(section.paragraphs)
+
+    dropped = [action for action in actions if must_render(action) and not _routes(action)]
+    if dropped:
+        raise RenderIntegrityError(
+            f"{artifact} would silently drop writing action(s) whose node_id routes to "
+            "no paragraph: " + "; ".join(_describe_action(action) for action in dropped)
+        )
+
+
+def _anchored_in_text(text: str, action: ReviewAction) -> bool:
+    """Whether ``action`` has a usable anchor against the pristine paragraph ``text``."""
+    action_range = _locator_action_range(action)
+    if action_range is not None:
+        return action_range[1] <= len(text)
+    if action.original_text:
+        return action.original_text in text
+    # Insertions without an anchor legitimately default to paragraph start/end.
+    return action.action_type in {
+        ReviewActionType.INSERT_TEXT,
+        ReviewActionType.INSERT_BEFORE,
+        ReviewActionType.INSERT_AFTER,
+    }
 
 
 @dataclass(frozen=True)
@@ -74,6 +151,9 @@ def render_reviewed_docx(
 ) -> Path:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_writing_actions_reach_a_paragraph(
+        document, actions, _is_trackable_edit, "reviewed.docx"
+    )
     docx = DocxDocument(str(document.source_path)) if document.source_path else DocxDocument()
     revision_date = (
         _DEFAULT_REVISION_DATE
@@ -90,6 +170,17 @@ def render_reviewed_docx(
             paragraph_actions = actions_for_paragraph(document, paragraph, actions)
             docx_paragraph = _paragraph_for_locator(docx, paragraph.locator)
             if docx_paragraph is None:
+                trackable = [a for a in paragraph_actions if _is_trackable_edit(a)]
+                if trackable and document.source_path is not None:
+                    # With a source document every parsed locator must resolve; landing
+                    # tracked edits in an appended duplicate paragraph would leave the
+                    # real paragraph untouched.
+                    raise RenderIntegrityError(
+                        f"reviewed.docx: paragraph locator {paragraph.locator!r} does not "
+                        "resolve in the source document; tracked edits would land in a "
+                        "detached paragraph: "
+                        + "; ".join(_describe_action(a) for a in trackable)
+                    )
                 docx_paragraph = docx.add_paragraph(paragraph.text)
             revision_id = _add_reviewed_runs(
                 docx,
@@ -144,6 +235,9 @@ def render_corrected_docx(
 ) -> Path:
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_writing_actions_reach_a_paragraph(
+        document, actions, should_apply_to_corrected, "corrected.docx"
+    )
     # Apply the accepted edits onto a copy of the ORIGINAL document so tables,
     # headers/footers, images, styles and section structure are preserved. Only
     # fall back to a blank document when there is no source to copy from.
@@ -161,7 +255,28 @@ def render_corrected_docx(
             ]
             docx_paragraph = _paragraph_for_locator(docx, paragraph.locator) if has_source else None
             if docx_paragraph is None:
-                corrected = apply_corrections_to_text(paragraph.text, paragraph_actions)
+                if has_source and paragraph_actions:
+                    # With a source document every parsed locator must resolve; applying
+                    # the edits to an appended duplicate paragraph would leave the real
+                    # paragraph uncorrected.
+                    raise RenderIntegrityError(
+                        f"corrected.docx: paragraph locator {paragraph.locator!r} does not "
+                        "resolve in the source document; APPLIED edits would land in a "
+                        "detached paragraph: "
+                        + "; ".join(_describe_action(a) for a in paragraph_actions)
+                    )
+                # Check each anchor against the EVOLVING text right before applying, in
+                # the exact application order: an earlier APPLIED edit can consume a
+                # later edit's original_text, and str.replace would then silently no-op
+                # while the report still claims the edit APPLIED.
+                corrected = paragraph.text
+                for action in _actions_in_text_application_order(paragraph_actions):
+                    if not _anchored_in_text(corrected, action):
+                        raise RenderIntegrityError(
+                            "corrected.docx would silently drop an APPLIED edit that fails "
+                            "to anchor in its paragraph: " + _describe_action(action)
+                        )
+                    corrected = apply_action_to_text(corrected, action)
                 docx.add_paragraph(corrected)
                 continue
             _apply_clean_corrections(docx_paragraph, paragraph_actions)
@@ -178,7 +293,14 @@ def _apply_clean_corrections(paragraph: Any, actions: list[ReviewAction]) -> Non
     actions = _align_locators_to_visible_text(segments, actions)
     revision_id = 1
     for action in _trackable_actions_in_application_order(actions):
-        segments, revision_id = _track_action(segments, action, revision_id)
+        segments, revision_id, tracked = _track_action(segments, action, revision_id)
+        if not tracked:
+            # Every action here is APPLIED (should_apply_to_corrected filtered): a miss
+            # means corrected.docx would ship without an edit the report claims.
+            raise RenderIntegrityError(
+                "corrected.docx would silently drop an APPLIED edit that fails to anchor "
+                "in its paragraph: " + _describe_action(action)
+            )
 
     parent = paragraph._p
     for child in list(parent):
@@ -247,8 +369,33 @@ def _add_reviewed_runs(
 
     segments = _paragraph_segments(paragraph)
     actions = _align_locators_to_visible_text(segments, actions)
+    pristine_text = _visible_text(segments)
+    first_revision_id = revision_id
     for action in _trackable_actions_in_application_order(actions):
-        segments, revision_id = _track_action(segments, action, revision_id)
+        segments, revision_id, tracked = _track_action(segments, action, revision_id)
+        if not tracked and (
+            action.status == ActionStatus.APPLIED
+            or not _anchored_in_text(pristine_text, action)
+        ):
+            # An APPLIED edit must ALWAYS appear as a tracked change (it is what
+            # corrected.docx applies), and any edit that cannot even anchor in the
+            # paragraph's pristine text is an internal inconsistency. Only a
+            # non-APPLIED suggestion whose anchor was consumed by an earlier
+            # overlapping tracked change keeps the documented degrade to a labelled
+            # comment below.
+            raise RenderIntegrityError(
+                "reviewed.docx would silently drop a tracked edit that fails to anchor "
+                "in its paragraph: " + _describe_action(action)
+            )
+
+    # Tracking assigns ids in APPLICATION order (right-to-left, inserts first), not
+    # document order. Renumber in document order so revision ids read monotonically
+    # left to right, keeping reviewed.docx deterministic and diff-friendly.
+    revision_id = first_revision_id
+    for segment in segments:
+        if segment.kind in ("ins", "del"):
+            segment.revision_id = revision_id
+            revision_id += 1
 
     for action in actions:
         if not _comment_text(action):
@@ -278,14 +425,24 @@ def _trackable_actions_in_application_order(actions: list[ReviewAction]) -> list
         start, end = action_range
         locator_actions.append((start, end, index, action))
     locator_actions.sort(key=lambda item: (-item[0], -item[1], item[2]))
-    return [item[3] for item in locator_actions] + other_actions
+    # Find-based actions re-anchor against the evolving visible text, so order them the
+    # same way the string path does (zero-width inserts first, APPLIED before
+    # suggestions) or a tracked replace/delete consumes another prepare-approved
+    # APPLIED action's anchor and the render aborts.
+    return [item[3] for item in locator_actions] + _find_anchor_application_order(other_actions)
 
 
 def _track_action(
     segments: list[_Segment],
     action: ReviewAction,
     revision_id: int,
-) -> tuple[list[_Segment], int]:
+) -> tuple[list[_Segment], int, bool]:
+    """Apply one trackable edit; the third element reports whether it left a trace.
+
+    ``False`` means the action anchored nowhere (or its range produced no revision
+    segments at all) and the segments are unchanged - the caller decides whether
+    that miss is a hard :class:`RenderIntegrityError` or a documented degrade.
+    """
     if action.action_type in {
         ReviewActionType.REPLACE_TEXT,
         ReviewActionType.DELETE_TEXT,
@@ -294,9 +451,25 @@ def _track_action(
     }:
         action_range = _action_range(segments, action)
         if action_range is None:
-            return segments, revision_id
+            return segments, revision_id, False
         start, end = action_range
         deleted = _visible_slice(segments, start, end, "del", action.id)
+        # The revision must cover EXACTLY the text the action targets. A shorter (or
+        # different) selection means part of the range is opaque inline content
+        # (tab/break/hyperlink/field/...) or the text drifted: marking only the
+        # editable remainder would ship a wrong edit, so report a miss and let the
+        # caller fail closed.
+        selected_text = "".join(segment.text for segment in deleted)
+        expected = (
+            (action.locator.original_text if action.locator else None)
+            or action.original_text
+            or None
+        )
+        if expected is not None:
+            if selected_text != expected:
+                return segments, revision_id, False
+        elif len(selected_text) != end - start:
+            return segments, revision_id, False
         replacement: list[_Segment] = deleted
         if action.action_type in {
             ReviewActionType.REPLACE_TEXT,
@@ -305,8 +478,11 @@ def _track_action(
             replacement.append(
                 _Segment("ins", action.replacement_text, _rpr_at(segments, start), action.id)
             )
+        if not replacement:
+            # A zero-width range with no insertion either: nothing would mark this edit.
+            return segments, revision_id, False
         revision_id = _assign_revision_ids(replacement, revision_id)
-        return _replace_visible_range(segments, start, end, replacement), revision_id
+        return _replace_visible_range(segments, start, end, replacement), revision_id, True
 
     if action.action_type in {
         ReviewActionType.INSERT_TEXT,
@@ -327,7 +503,7 @@ def _track_action(
         elif action.original_text:
             start = _visible_text(segments).find(action.original_text)
             if start < 0:
-                return segments, revision_id
+                return segments, revision_id, False
             offset = start
             if action.action_type == ReviewActionType.INSERT_AFTER:
                 offset += len(action.original_text)
@@ -342,9 +518,9 @@ def _track_action(
             action.id,
             revision_id,
         )
-        return _insert_visible(segments, offset, insert), revision_id + 1
+        return _insert_visible(segments, offset, insert), revision_id + 1, True
 
-    return segments, revision_id
+    return segments, revision_id, True
 
 
 def _align_locators_to_visible_text(
@@ -474,7 +650,10 @@ def _replace_visible_range(
         result.append(segment)
         offset = next_offset
     if not inserted:
-        result.extend(segment for segment in replacement if segment.text)
+        # The range selected no editable text (zero-width range): land the replacement
+        # at the range's start position, never at the paragraph end.
+        index = _index_at_visible_offset(result, start)
+        result[index:index] = [segment for segment in replacement if segment.text]
     return result
 
 

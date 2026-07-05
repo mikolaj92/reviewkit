@@ -9,6 +9,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 from docx import Document as DocxDocument
+from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
@@ -66,7 +67,14 @@ def load_docx(path: str | Path) -> ReviewDocument:
             continue
 
         current.paragraphs.append(
-            _paragraph_node(f"p{next(paragraph_ids)}", text, current.id, locator, source)
+            _paragraph_node(
+                f"p{next(paragraph_ids)}",
+                text,
+                current.id,
+                locator,
+                source,
+                _opaque_ranges(docx_paragraph),
+            )
         )
 
     if current.title or current.paragraphs or not sections:
@@ -179,7 +187,12 @@ def _is_heading(docx_paragraph: object) -> bool:
 
 
 def _paragraph_node(
-    paragraph_id: str, text: str, section_id: str, locator: str, source: str
+    paragraph_id: str,
+    text: str,
+    section_id: str,
+    locator: str,
+    source: str,
+    opaque_ranges: list[tuple[int, int]] | None = None,
 ) -> ParagraphNode:
     sentences = [
         SentenceNode(
@@ -200,7 +213,71 @@ def _paragraph_node(
         locator=locator,
         metadata={"source": source},
         sentences=sentences,
+        opaque_ranges=opaque_ranges or [],
     )
+
+
+def _opaque_ranges(docx_paragraph: object) -> list[tuple[int, int]]:
+    """Spans of the paragraph's STRIPPED text contributed by non-editable content.
+
+    ``Paragraph.text`` includes visible characters the renderers treat as opaque:
+    tabs/breaks inside runs and the text of non-run inline children (hyperlinks,
+    fields, ...). Locators use the stripped node text, so the returned coordinates
+    are shifted by the leading whitespace and clipped to the stripped length.
+
+    Fail-open on any mismatch with python-docx's notion of the paragraph text
+    (unknown layouts): returning [] just skips the prepare-time demotion; the
+    renderers' own integrity guards still fail closed at render time.
+    """
+    p_element = getattr(docx_paragraph, "_p", None)
+    text = str(getattr(docx_paragraph, "text", ""))
+    if p_element is None:
+        return []
+
+    parts: list[tuple[str, bool]] = []  # (visible chunk, editable?)
+    for child in p_element:
+        tag = child.tag
+        if tag == qn("w:pPr"):
+            continue
+        if tag == qn("w:r"):
+            for run_child in child:
+                run_tag = run_child.tag
+                if run_tag == qn("w:t"):
+                    parts.append((run_child.text or "", True))
+                elif run_tag == qn("w:tab"):
+                    parts.append(("\t", False))
+                elif run_tag in (qn("w:br"), qn("w:cr")):
+                    parts.append(("\n", False))
+            continue
+        parts.append((_descendant_visible_text(child), False))
+
+    if "".join(chunk for chunk, _editable in parts) != text:
+        return []
+
+    lead = len(text) - len(text.lstrip())
+    stripped_length = len(text.strip())
+    ranges: list[tuple[int, int]] = []
+    offset = 0
+    for chunk, editable in parts:
+        if not editable and chunk:
+            start = max(offset - lead, 0)
+            end = min(offset + len(chunk) - lead, stripped_length)
+            if start < end:
+                ranges.append((start, end))
+        offset += len(chunk)
+    return ranges
+
+
+def _descendant_visible_text(element: object) -> str:
+    parts: list[str] = []
+    for node in element.iter():  # type: ignore[attr-defined]
+        if node.tag == qn("w:t"):
+            parts.append(node.text or "")
+        elif node.tag == qn("w:tab"):
+            parts.append("\t")
+        elif node.tag in (qn("w:br"), qn("w:cr")):
+            parts.append("\n")
+    return "".join(parts)
 
 
 def _iter_body_sources(docx: object) -> Iterator[tuple[object, str, str]]:
@@ -262,6 +339,7 @@ def _header_footer_sections(
                 section_id,
                 locator,
                 source,
+                _opaque_ranges(paragraph),
             )
             for paragraph, locator in non_empty
         ]

@@ -41,6 +41,7 @@ from reviewkit.models import (
 from reviewkit.pipeline import review_document
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
+from reviewkit.renderer_docx import RenderIntegrityError
 
 __all__ = [
     "ANCHOR_LAST",
@@ -58,6 +59,7 @@ __all__ = [
     "LLMClient",
     "PolicyGuard",
     "MockLLMClient",
+    "RenderIntegrityError",
     "ReviewAction",
     "ReviewActionType",
     "ReviewContext",
