@@ -6,7 +6,7 @@ import itertools
 import re
 from collections.abc import Iterator
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import BadZipFile
 
 from docx import Document as DocxDocument
 from docx.oxml.ns import qn
@@ -14,6 +14,7 @@ from docx.table import Table
 from docx.text.paragraph import Paragraph
 
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
+from reviewkit.markup_purity import has_tracked_revisions
 
 # Terminators span Latin (. ! ?) and common non-Latin sentence enders so the sentence
 # tier does not silently disappear for non-Latin-script documents: CJK (。！？), the
@@ -24,7 +25,6 @@ _SENTENCE_PUNCT_RE = re.compile(r"[.!?。！？…؟।]+", re.UNICODE)
 # sentence regardless of what follows, unlike the whitespace-gated Latin punctuation.
 _STRONG_TERMINATORS = frozenset("。！？…؟।")
 _TRAILING_WORD_RE = re.compile(r"(\w+)$", re.UNICODE)
-_REVISION_TAG_RE = re.compile(rb"<w:(ins|del)(?=[\s>/])")
 
 
 def load_docx(path: str | Path) -> ReviewDocument:
@@ -374,18 +374,12 @@ def _comment_count(docx: object) -> int:
 
 
 def _contains_tracked_revisions(path: Path) -> bool:
-    # Scan every content part under ``word/`` (document, comments, footnotes/endnotes,
-    # AND headers/footers), not a fixed allowlist: a tracked change living only in a
-    # header or footer must still surface so the pipeline can warn the human. ``w:ins``/
-    # ``w:del`` only appear in revised content, so this cannot false-positive on the
-    # ``w:trackChanges`` *setting* in settings.xml.
+    # Detection is delegated to the single public grammar in
+    # ``reviewkit.markup_purity`` -- no second copy of the OOXML markup grammar
+    # lives here. Fail-open: this only feeds the informational
+    # ``tracked_revisions_detected`` metadata flag, so an un-inspectable package
+    # degrades to "not detected" rather than breaking the parse.
     try:
-        with ZipFile(path) as archive:
-            for member in archive.namelist():
-                if not member.startswith("word/") or not member.endswith(".xml"):
-                    continue
-                if _REVISION_TAG_RE.search(archive.read(member)):
-                    return True
-    except OSError:
+        return has_tracked_revisions(path)
+    except (OSError, BadZipFile):
         return False
-    return False
