@@ -24,6 +24,12 @@ from reviewkit.insertions import (
     format_suggestion_text,
 )
 from reviewkit.llm import LLMClient, MockLLMClient
+from reviewkit.markup_purity import (
+    MarkupReport,
+    has_comments,
+    has_tracked_revisions,
+    inspect_markup,
+)
 from reviewkit.models import (
     ActionStatus,
     EvidenceRef,
@@ -57,6 +63,7 @@ __all__ = [
     "InsertionResult",
     "InsertionValidator",
     "LLMClient",
+    "MarkupReport",
     "PolicyGuard",
     "MockLLMClient",
     "RenderIntegrityError",
@@ -78,6 +85,9 @@ __all__ = [
     "find_paragraph_by_locator",
     "find_signature_block_start",
     "format_suggestion_text",
+    "has_comments",
+    "has_tracked_revisions",
+    "inspect_markup",
     "is_supported_anchor",
     "load_profile",
     "parse_body_anchor_index",
