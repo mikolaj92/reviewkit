@@ -1,6 +1,6 @@
 [project]
 name = "reviewkit"
-version = "0.4.0"
+version = "0.5.0"
 description = "Hierarchical human-like document review workflow engine"
 readme = "README.md"
 authors = [
