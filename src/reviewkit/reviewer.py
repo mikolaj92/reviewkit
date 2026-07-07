@@ -38,6 +38,8 @@ class HierarchicalReviewer:
         llm: LLMClient,
         context_provider: ReviewContextProvider | None = None,
         action_policy: ActionPolicy | None = None,
+        *,
+        propagate_llm_errors: bool = False,
     ) -> None:
         self.profile = profile
         self.llm = llm
@@ -46,6 +48,11 @@ class HierarchicalReviewer:
         # programmatic fail-closed guards, not just regex config. None => build the
         # config-only policy from the profile per node.
         self.action_policy = action_policy
+        # Opt-in fail-closed: when True, a client call that raises aborts the whole
+        # review (fail-fast on the first failing node) instead of skipping it. The
+        # default preserves the resilient, degrade-and-continue behavior every
+        # existing consumer relies on.
+        self.propagate_llm_errors = propagate_llm_errors
 
     def review(
         self, document: ReviewDocument
@@ -187,6 +194,11 @@ class HierarchicalReviewer:
         try:
             raw = self.llm.complete_json(messages=messages, schema=schema)
         except Exception as error:
+            if self.propagate_llm_errors:
+                # Fail-closed callers opt out of resilience: re-raise the original
+                # error (type/traceback/cause preserved) so the whole review aborts
+                # rather than shipping a partial result missing this node.
+                raise
             # Resilience: a failing client call (network/API error) must not abort the
             # whole review. Skip this node with an empty response and surface the failure
             # as a warning so callers can react.

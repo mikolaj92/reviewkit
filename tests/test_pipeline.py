@@ -3,6 +3,7 @@ from typing import Any
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
+import pytest
 from docx import Document as DocxDocument
 
 from reviewkit import ReviewResult, parser_docx, review_document
@@ -749,6 +750,78 @@ def test_one_failing_node_does_not_abort_the_review(tmp_path: Path) -> None:
     # The other nodes produced results: the paragraph edit was applied.
     assert result.stats.applied_count == 1
     assert _docx_text(result.corrected_docx) == "To jest błąd."
+
+
+def test_propagate_llm_errors_reraises_on_first_client_failure() -> None:
+    # Fail-closed opt-in (the peer of the resilient default above): a raising client
+    # aborts the whole review on the FIRST failing node instead of degrading to a
+    # partial result, and re-raises the original exception unchanged.
+    class _RaisingLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete_json(self, messages: list[dict[str, str]], schema: type[Any]) -> Any:
+            self.calls += 1
+            raise RuntimeError("simulated LLM failure")
+
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[
+                    ParagraphNode(id="p1", text="The cat sat.", section_id="s1"),
+                    ParagraphNode(id="p2", text="The dog ran.", section_id="s1"),
+                ],
+            )
+        ]
+    )
+    profile = ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        review_pipeline=[ReviewScope.PARAGRAPH],
+    )
+
+    llm = _RaisingLLM()
+    reviewer = HierarchicalReviewer(profile=profile, llm=llm, propagate_llm_errors=True)
+
+    with pytest.raises(RuntimeError, match="simulated LLM failure"):
+        reviewer.review(document)
+
+    # Fail-fast: it stopped at the first failing node, never visiting the second.
+    assert llm.calls == 1
+
+
+def test_propagate_llm_errors_default_false_still_degrades() -> None:
+    # The default (flag absent) keeps the resilient behavior: the same raising client
+    # surfaces a warning and completes rather than aborting.
+    class _RaisingLLM:
+        def complete_json(self, messages: list[dict[str, str]], schema: type[Any]) -> Any:
+            raise RuntimeError("simulated LLM failure")
+
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[ParagraphNode(id="p1", text="The cat sat.", section_id="s1")],
+            )
+        ]
+    )
+    profile = ReviewProfile(
+        name="generic",
+        language="en",
+        document_type="generic document",
+        reviewer_role="generic reviewer",
+        review_pipeline=[ReviewScope.PARAGRAPH],
+    )
+
+    findings, actions, state = HierarchicalReviewer(
+        profile=profile, llm=_RaisingLLM()
+    ).review(document)
+
+    assert actions == []
+    assert any("RuntimeError" in warning for warning in state.warnings)
 
 
 def test_identical_finding_surfaced_at_two_levels_appears_once(tmp_path: Path) -> None:
