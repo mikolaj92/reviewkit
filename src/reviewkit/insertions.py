@@ -36,10 +36,25 @@ from reviewkit.anchors import (
 
 InsertionKind = Literal["insert", "suggest"]
 
+# The literal prefix every ``suggest`` insertion carries. It is reviewkit's own marker
+# (produced just below), so any consumer that needs to detect a surviving suggestion --
+# e.g. a clean-copy purity gate -- matches against this constant / :func:`contains_suggestion_marker`
+# rather than hard-coding the string, and stays correct if the marker format ever changes.
+SUGGESTION_MARKER_PREFIX = "[SUGGESTION"
+
 
 def format_suggestion_text(reason: str, text: str) -> str:
     """Render the paragraph text a ``suggest`` action inserts into the document."""
-    return f"[SUGGESTION: {reason}]\n{text}"
+    return f"{SUGGESTION_MARKER_PREFIX}: {reason}]\n{text}"
+
+
+def contains_suggestion_marker(text: str) -> bool:
+    """Whether ``text`` carries a suggestion marker produced by :func:`format_suggestion_text`.
+
+    Accepts the visible document text or the raw ``word/document.xml`` -- the marker prefix
+    is emitted verbatim as run text, so it survives intact in both.
+    """
+    return SUGGESTION_MARKER_PREFIX in text
 
 
 @dataclass(frozen=True)

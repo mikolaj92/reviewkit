@@ -838,6 +838,37 @@ def test_reviewed_and_corrected_artifacts_are_byte_reproducible(tmp_path: Path) 
     assert first_json == second_json
 
 
+def test_rendered_docx_packages_are_byte_reproducible_whole_file(tmp_path: Path) -> None:
+    # The test above compares inner part XML, which stays identical regardless of the zip
+    # container's per-entry mtime. python-docx stamps that mtime with the wall clock, so the
+    # WHOLE-FILE bytes only match run-to-run once those timestamps are pinned. Assert both the
+    # pinned epoch (robust, timing-independent) and whole-file byte equality (the contract).
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("The quick brown fox jumps.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    actions = [
+        ReviewAction(
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.REPLACE_TEXT,
+            node_id="p1",
+            original_text="fox",
+            replacement_text="cat",
+            comment="Prefer cat.",
+            apply_hint=True,
+        ),
+    ]
+
+    for render in (render_reviewed_docx, render_corrected_docx):
+        first = render(document, actions, tmp_path / f"{render.__name__}-a.docx")
+        second = render(document, actions, tmp_path / f"{render.__name__}-b.docx")
+        with ZipFile(first) as archive:
+            assert all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist())
+        assert first.read_bytes() == second.read_bytes()
+
+
 def test_precise_comment_anchor_survives_opaque_segment_before_the_quote(tmp_path: Path) -> None:
     # A comment carrying original_text anchors to just the quoted span. When an opaque inline
     # object (here a line break) precedes the quote, _mark_text_comment must count its visible

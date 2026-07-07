@@ -3,7 +3,22 @@ from zipfile import ZipFile
 
 from docx import Document as DocxDocument
 
-from reviewkit.parser_docx import load_docx, split_sentences
+from reviewkit.parser_docx import DocxFootnote, load_docx, read_footnotes, split_sentences
+
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _write_footnotes_part(path: Path, body: str) -> Path:
+    docx = DocxDocument()
+    docx.add_paragraph("Body prose.")
+    docx.save(path)
+    part = (
+        "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+        f"<w:footnotes xmlns:w='{_W_NS}'>{body}</w:footnotes>"
+    )
+    with ZipFile(path, "a") as archive:
+        archive.writestr("word/footnotes.xml", part)
+    return path
 
 
 def test_document_is_split_into_sections_paragraphs_and_sentences(tmp_path: Path) -> None:
@@ -207,3 +222,51 @@ def test_merged_table_cells_are_walked_exactly_once(tmp_path: Path) -> None:
     assert len(texts) == len(set(texts))
     locators = [paragraph.locator for paragraph in table_paragraphs]
     assert len(locators) == len(set(locators))
+
+
+def test_read_footnotes_returns_only_content_notes(tmp_path: Path) -> None:
+    # Word seeds every document with two structural footnotes (the separator lines drawn
+    # above footnote text). They carry no authored content and must never surface.
+    path = _write_footnotes_part(
+        tmp_path / "notes.docx",
+        "<w:footnote w:type='separator' w:id='-1'><w:p><w:r><w:separator/></w:r></w:p></w:footnote>"
+        "<w:footnote w:type='continuationSeparator' w:id='0'>"
+        "<w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>"
+        "<w:footnote w:id='1'><w:p><w:r><w:t>First note.</w:t></w:r></w:p></w:footnote>"
+        "<w:footnote w:id='2'><w:p><w:r><w:t>Second note.</w:t></w:r></w:p></w:footnote>",
+    )
+
+    assert read_footnotes(path) == [
+        DocxFootnote(id="1", text="First note."),
+        DocxFootnote(id="2", text="Second note."),
+    ]
+
+
+def test_read_footnotes_joins_runs_and_renders_breaks_and_tabs(tmp_path: Path) -> None:
+    # Visible text spans multiple runs; tabs and line breaks are structural whitespace that
+    # must render as \t / \n so callers see the note as the reader sees it.
+    path = _write_footnotes_part(
+        tmp_path / "rich.docx",
+        "<w:footnote w:id='1'><w:p>"
+        "<w:r><w:t>See</w:t></w:r><w:r><w:tab/><w:t>clause</w:t></w:r>"
+        "<w:r><w:br/><w:t>below.</w:t></w:r>"
+        "</w:p></w:footnote>",
+    )
+
+    assert read_footnotes(path) == [DocxFootnote(id="1", text="See\tclause\nbelow.")]
+
+
+def test_read_footnotes_absent_part_returns_empty(tmp_path: Path) -> None:
+    path = tmp_path / "plain.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("No footnotes here.")
+    docx.save(path)
+
+    assert read_footnotes(path) == []
+
+
+def test_read_footnotes_missing_or_corrupt_file_returns_empty(tmp_path: Path) -> None:
+    assert read_footnotes(tmp_path / "does_not_exist.docx") == []
+    corrupt = tmp_path / "corrupt.docx"
+    corrupt.write_bytes(b"not a zip archive")
+    assert read_footnotes(corrupt) == []

@@ -21,6 +21,8 @@ from reviewkit.insertions import (
     InsertionReport,
     InsertionResult,
     InsertionValidator,
+    SUGGESTION_MARKER_PREFIX,
+    contains_suggestion_marker,
     format_suggestion_text,
 )
 from reviewkit.llm import LLMClient, MockLLMClient
@@ -44,6 +46,7 @@ from reviewkit.models import (
     ReviewScope,
     ReviewStats,
 )
+from reviewkit.parser_docx import DocxFootnote, read_footnotes
 from reviewkit.pipeline import review_document
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
@@ -61,6 +64,7 @@ __all__ = [
     "ActionPolicyConfig",
     "ActionStatus",
     "ClauseInserter",
+    "DocxFootnote",
     "EmptyReviewContextProvider",
     "EvidenceRef",
     "InsertionAction",
@@ -73,6 +77,7 @@ __all__ = [
     "PolicyGuard",
     "MockLLMClient",
     "RenderIntegrityError",
+    "SUGGESTION_MARKER_PREFIX",
     "ReviewAction",
     "ReviewActionType",
     "ReviewContext",
@@ -89,6 +94,7 @@ __all__ = [
     "ReviewStats",
     "accept_all_revisions",
     "apply_reviewed_markup",
+    "contains_suggestion_marker",
     "find_body_paragraph",
     "find_paragraph_by_locator",
     "find_signature_block_start",
@@ -99,5 +105,6 @@ __all__ = [
     "is_supported_anchor",
     "load_profile",
     "parse_body_anchor_index",
+    "read_footnotes",
     "review_document",
 ]

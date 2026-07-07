@@ -95,6 +95,33 @@ def test_accept_all_revisions_drops_deleted_text(tmp_path: Path) -> None:
     assert "beta" not in _body_paragraph_texts(corrected)[0]
 
 
+def test_accept_all_revisions_clean_copy_is_byte_reproducible(tmp_path: Path) -> None:
+    # The clean copy must hash identically for identical input, so downstream attestation /
+    # caching stays stable. accept_all_revisions used to copy the reviewed input's per-entry
+    # zip timestamps through, which carry the wall-clock mtime and defeat that. Assert both the
+    # pinned epoch and whole-file byte equality across two runs.
+    source = _saved_docx(tmp_path, "input.docx", "The quick brown fox jumps.")
+    document = load_docx(source)
+    paragraph = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id=paragraph.id,
+        original_text="fox",
+        replacement_text="cat",
+        locator=ReviewLocator(node_id=paragraph.id, char_start=16, char_end=19),
+        status=ActionStatus.APPLIED,
+    )
+    reviewed = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+
+    first = accept_all_revisions(reviewed, tmp_path / "corrected-a.docx")
+    second = accept_all_revisions(reviewed, tmp_path / "corrected-b.docx")
+
+    with ZipFile(first) as archive:
+        assert all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist())
+    assert first.read_bytes() == second.read_bytes()
+
+
 # --- the linchpin: a stand-alone clause survives as its own paragraph ------------------
 
 

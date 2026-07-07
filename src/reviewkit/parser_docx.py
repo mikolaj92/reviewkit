@@ -5,13 +5,15 @@ from __future__ import annotations
 import itertools
 import re
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZipFile
 
 from docx import Document as DocxDocument
 from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+from lxml import etree
 
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.markup_purity import has_tracked_revisions
@@ -92,6 +94,62 @@ def load_docx(path: str | Path) -> ReviewDocument:
         "tracked_revisions_detected": str(_contains_tracked_revisions(source_path)).lower(),
     }
     return ReviewDocument(source_path=source_path, sections=sections, metadata=metadata)
+
+
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_FOOTNOTES_PART = "word/footnotes.xml"
+# The two footnotes Word always stores alongside real notes: the horizontal rule that
+# separates footnotes from body text and its continuation variant. They carry the
+# separator glyph, never document prose, so they are not content footnotes.
+_STRUCTURAL_FOOTNOTE_TYPES = frozenset({"separator", "continuationSeparator"})
+
+
+@dataclass(frozen=True)
+class DocxFootnote:
+    """One content footnote read from a ``.docx`` package: its ``w:id`` and visible text."""
+
+    id: str
+    text: str
+
+
+def read_footnotes(path: str | Path) -> list[DocxFootnote]:
+    """Extract every content footnote's visible text from a ``.docx`` package, in order.
+
+    python-docx models no footnotes, so this reads ``word/footnotes.xml`` directly -- the
+    package-level read reviewkit owns so consumers never hand-roll OOXML. Text is assembled
+    the same way the renderer reads visible text (``w:t`` verbatim, ``w:tab`` -> tab,
+    ``w:br``/``w:cr`` -> newline). The structural separator footnotes Word stores next to
+    real notes are skipped. Returns an empty list when the package carries no footnotes part
+    (or cannot be opened as a zip).
+    """
+    try:
+        with ZipFile(str(path)) as bundle:
+            raw = bundle.read(_FOOTNOTES_PART)
+    except (KeyError, OSError, BadZipFile):
+        return []
+    root = etree.fromstring(raw)
+    footnotes: list[DocxFootnote] = []
+    for element in root.findall(f"{{{_W_NS}}}footnote"):
+        if element.get(f"{{{_W_NS}}}type") in _STRUCTURAL_FOOTNOTE_TYPES:
+            continue
+        note_id = element.get(f"{{{_W_NS}}}id")
+        if note_id is None:
+            continue
+        footnotes.append(DocxFootnote(id=note_id, text=_footnote_visible_text(element)))
+    return footnotes
+
+
+def _footnote_visible_text(element: object) -> str:
+    parts: list[str] = []
+    for node in element.iter():  # type: ignore[attr-defined]
+        tag = node.tag
+        if tag == f"{{{_W_NS}}}t":
+            parts.append(node.text or "")
+        elif tag == f"{{{_W_NS}}}tab":
+            parts.append("\t")
+        elif tag in (f"{{{_W_NS}}}br", f"{{{_W_NS}}}cr"):
+            parts.append("\n")
+    return "".join(parts)
 
 
 def split_sentences(text: str) -> list[str]:

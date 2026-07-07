@@ -24,6 +24,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 from lxml import etree
 
+from reviewkit.docx_package import _deterministic_zipinfo
 from reviewkit.markup_purity import _REVISION_TAG_RE, inspect_markup
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -224,9 +225,11 @@ def accept_all_revisions(
 
     with ZipFile(destination, "w", ZIP_DEFLATED) as out:
         for info, data in transformed:
-            # Reuse the original ZipInfo so filename, timestamp and per-part compression
-            # are preserved; only the transformed parts change their bytes.
-            out.writestr(info, data)
+            # Preserve filename and per-part compression, but pin the entry timestamp: the
+            # reviewed input carries the wall-clock mtime from whenever it was rendered, and
+            # copying it through would make an otherwise-identical clean copy differ byte-for-
+            # byte on every run.
+            out.writestr(_deterministic_zipinfo(info), data)
 
     report = inspect_markup(destination)
     if report.has_tracked_revisions or (drop_comments and report.has_comments):

@@ -9,9 +9,11 @@ from docx.oxml.ns import qn
 
 from reviewkit.anchors import ANCHOR_LAST
 from reviewkit.insertions import (
+    SUGGESTION_MARKER_PREFIX,
     ClauseInserter,
     InsertionAction,
     InsertionValidator,
+    contains_suggestion_marker,
     format_suggestion_text,
 )
 
@@ -170,6 +172,18 @@ def test_suggestion_action_inserts_formatted_text() -> None:
     )
     assert _texts(document) == ["A.", "[SUGGESTION: Missing clause]\nProposed wording."]
     assert format_suggestion_text("r", "t") == "[SUGGESTION: r]\nt"
+
+
+def test_contains_suggestion_marker_detects_formatted_text() -> None:
+    # The detector is the contract a clean-copy purity gate matches against, so anything
+    # format_suggestion_text produces must register -- prefix constant and all.
+    assert contains_suggestion_marker(format_suggestion_text("Missing clause", "Proposed."))
+    assert contains_suggestion_marker(f"prefix {SUGGESTION_MARKER_PREFIX}: r]\nt suffix")
+
+
+def test_contains_suggestion_marker_is_false_for_plain_text() -> None:
+    assert not contains_suggestion_marker("An ordinary paragraph with no marker.")
+    assert not contains_suggestion_marker("")
 
 
 def test_resolver_receives_raw_action_before_formatting() -> None:
