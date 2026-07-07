@@ -48,9 +48,15 @@ from reviewkit.pipeline import review_document
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 from reviewkit.renderer_docx import RenderIntegrityError
+from reviewkit.revisions import (
+    AcceptRevisionsError,
+    accept_all_revisions,
+    apply_reviewed_markup,
+)
 
 __all__ = [
     "ANCHOR_LAST",
+    "AcceptRevisionsError",
     "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
@@ -81,6 +87,8 @@ __all__ = [
     "ReviewResult",
     "ReviewScope",
     "ReviewStats",
+    "accept_all_revisions",
+    "apply_reviewed_markup",
     "find_body_paragraph",
     "find_paragraph_by_locator",
     "find_signature_block_start",

@@ -164,10 +164,22 @@ def render_reviewed_docx(
         author=comment_author, initials=comment_initials, revision_date=revision_date
     )
     revision_id = 1
+    # Stand-alone clause insertions (``new_paragraph``) splice NEW sibling paragraphs
+    # into the body. _paragraph_for_locator indexes ``docx.paragraphs`` positionally,
+    # so splicing mid-pass would shift every later paragraph's index and desync the
+    # remaining locators. We hold each resolved anchor element and splice against those
+    # stable references only after every locator has been resolved (just before save).
+    deferred_block_inserts: list[tuple[Any, ReviewAction]] = []
 
     for section in document.sections:
         for paragraph in section.paragraphs:
             paragraph_actions = actions_for_paragraph(document, paragraph, actions)
+            block_inserts: list[ReviewAction] = []
+            inline_actions: list[ReviewAction] = []
+            for action in paragraph_actions:
+                (block_inserts if _is_block_paragraph_insert(action) else inline_actions).append(
+                    action
+                )
             docx_paragraph = _paragraph_for_locator(docx, paragraph.locator)
             if docx_paragraph is None:
                 trackable = [a for a in paragraph_actions if _is_trackable_edit(a)]
@@ -185,10 +197,11 @@ def render_reviewed_docx(
             revision_id = _add_reviewed_runs(
                 docx,
                 docx_paragraph,
-                paragraph_actions,
+                inline_actions,
                 revision_id,
                 reviewer,
             )
+            deferred_block_inserts.extend((docx_paragraph, action) for action in block_inserts)
 
         section_comments = [
             _comment_text(action)
@@ -223,6 +236,13 @@ def render_reviewed_docx(
                     document_paragraph = docx.add_paragraph("Document-level review")
                 if not _add_comment(docx, document_paragraph, comment, reviewer):
                     docx.add_paragraph(comment)
+
+    # Every locator is resolved now; splice the stand-alone clause paragraphs against
+    # the anchor elements we held onto (see deferred_block_inserts above).
+    for anchor_paragraph, action in deferred_block_inserts:
+        revision_id = _insert_tracked_block_paragraphs(
+            anchor_paragraph, action, reviewer, revision_id
+        )
 
     docx.save(str(path))
     return path
@@ -355,6 +375,21 @@ def _is_trackable_edit(action: ReviewAction) -> bool:
         ReviewActionType.INSERT_BEFORE,
         ReviewActionType.INSERT_AFTER,
     }
+
+
+def _is_block_paragraph_insert(action: ReviewAction) -> bool:
+    # A stand-alone clause insert: a trackable INSERT_BEFORE/INSERT_AFTER explicitly
+    # flagged new_paragraph. It becomes a NEW tracked paragraph sibling of the anchor
+    # (not inline runs patched into the anchor's text), so that accepting the markup
+    # yields a real stand-alone paragraph. The flag is explicit rather than inferred
+    # from a missing locator because the degraded escalation path emits the same shape
+    # but must stay a comment.
+    return (
+        action.new_paragraph
+        and _is_trackable_edit(action)
+        and action.action_type
+        in {ReviewActionType.INSERT_BEFORE, ReviewActionType.INSERT_AFTER}
+    )
 
 
 def _add_reviewed_runs(
@@ -842,6 +877,69 @@ def _append_revision(
     run.append(text_element)
     revision.append(run)
     parent.append(revision)
+
+
+def _insert_tracked_block_paragraphs(
+    anchor_paragraph: Any,
+    action: ReviewAction,
+    reviewer: _ReviewerIdentity,
+    revision_id: int,
+) -> int:
+    # Materialise a new_paragraph insert as one or more NEW tracked paragraphs spliced
+    # next to the anchor. Each line of replacement_text becomes its own paragraph whose
+    # paragraph mark AND runs are wrapped in w:ins, so Word (and accept_all_revisions)
+    # treats it as a genuinely inserted stand-alone paragraph.
+    text = action.replacement_text
+    if not text:
+        raise RenderIntegrityError(
+            "reviewed.docx: new_paragraph insert carries no replacement_text: "
+            + _describe_action(action)
+        )
+    lines = text.split("\n")
+    if len(lines) > 1 and lines[-1] == "":
+        # Drop the empty tail a trailing newline produces; keep interior blank lines.
+        lines = lines[:-1]
+
+    new_paragraphs: list[Any] = []
+    for line in lines:
+        paragraph_element, revision_id = _build_tracked_paragraph(line, reviewer, revision_id)
+        new_paragraphs.append(paragraph_element)
+
+    anchor = anchor_paragraph._p
+    if action.action_type == ReviewActionType.INSERT_BEFORE:
+        # addprevious keeps each new paragraph immediately before the anchor, so the
+        # list stays in order: [line0, line1, ..., anchor].
+        for paragraph_element in new_paragraphs:
+            anchor.addprevious(paragraph_element)
+    else:
+        # addnext inserts after a moving cursor: anchor -> line0 -> line1 -> ...
+        cursor = anchor
+        for paragraph_element in new_paragraphs:
+            cursor.addnext(paragraph_element)
+            cursor = paragraph_element
+    return revision_id
+
+
+def _build_tracked_paragraph(
+    text: str, reviewer: _ReviewerIdentity, revision_id: int
+) -> tuple[Any, int]:
+    paragraph = OxmlElement("w:p")
+    properties = OxmlElement("w:pPr")
+    run_properties = OxmlElement("w:rPr")
+    # The paragraph mark itself is an insertion: <w:pPr><w:rPr><w:ins/></w:rPr></w:pPr>.
+    # Without this, accepting changes would merge this paragraph's text up into the
+    # previous one instead of keeping it stand-alone.
+    mark = OxmlElement("w:ins")
+    mark.set(qn("w:id"), str(revision_id))
+    mark.set(qn("w:author"), reviewer.author)
+    mark.set(qn("w:date"), reviewer.revision_date)
+    run_properties.append(mark)
+    properties.append(run_properties)
+    paragraph.append(properties)
+    revision_id += 1
+
+    _append_revision(paragraph, "ins", text, reviewer, None, revision_id)
+    return paragraph, revision_id + 1
 
 
 def _set_text(element: Any, text: str) -> None:

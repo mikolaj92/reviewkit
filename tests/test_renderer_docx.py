@@ -1304,3 +1304,126 @@ def test_applied_delete_tracks_before_listed_overlapping_suggestion(
     assert _revision_texts(reviewed_xml, "del", "delText") == ["fox"]
     assert any("Original: 'brown fox'" in text for text in _comment_texts(reviewed_path))
     assert DocxDocument(str(corrected_path)).paragraphs[0].text == "The quick brown  jumps."
+
+
+# --- new_paragraph: stand-alone clause inserts render as a NEW tracked paragraph ---
+
+
+def _body_paragraphs(xml: str) -> list[ElementTree.Element]:
+    root = ElementTree.fromstring(xml)
+    body = root.find(f"{_W}body")
+    assert body is not None
+    return [child for child in body if child.tag == f"{_W}p"]
+
+
+def _paragraph_visible_text(paragraph: ElementTree.Element) -> str:
+    # Text with every insertion accepted: w:t survives, w:delText does not.
+    return "".join(text.text or "" for text in paragraph.iter(f"{_W}t"))
+
+
+def _two_paragraph_document(tmp_path: Path) -> ReviewDocument:
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Anchor clause heading.")
+    docx.add_paragraph("Following paragraph.")
+    docx.save(input_path)
+    return load_docx(input_path)
+
+
+def test_new_paragraph_insert_after_renders_a_tracked_sibling_paragraph(tmp_path: Path) -> None:
+    # The linchpin: a stand-alone clause insert must become a NEW paragraph between the
+    # anchor and the next one - never glued inline onto the anchor's text - with both a
+    # paragraph-mark insertion (pPr/rPr/w:ins) and run-level w:ins so accepting the
+    # markup yields a real stand-alone paragraph.
+    document = _two_paragraph_document(tmp_path)
+    anchor = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
+        node_id=anchor.id,
+        replacement_text="§20a. The inserted clause.",
+        new_paragraph=True,
+        status=ActionStatus.APPLIED,
+        apply_to_corrected=True,
+    )
+
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    paragraphs = _body_paragraphs(_part_xml(reviewed_path, "word/document.xml"))
+
+    # A third body paragraph appeared, spliced between the anchor and the following one.
+    assert len(paragraphs) == 3
+    assert _paragraph_visible_text(paragraphs[0]) == "Anchor clause heading."
+    assert _paragraph_visible_text(paragraphs[2]) == "Following paragraph."
+
+    inserted = paragraphs[1]
+    # The anchor paragraph is untouched - the clause is NOT glued onto its text.
+    assert _paragraph_visible_text(paragraphs[0]) == "Anchor clause heading."
+    # The new paragraph's mark is an insertion: pPr/rPr/w:ins.
+    mark = inserted.find(f"{_W}pPr/{_W}rPr/{_W}ins")
+    assert mark is not None
+    # Its content is a run-level insertion carrying exactly the clause text.
+    run_ins = [ins for ins in inserted.findall(f"{_W}ins") if ins.find(f".//{_W}t") is not None]
+    assert [ins.find(f".//{_W}t").text for ins in run_ins] == ["§20a. The inserted clause."]
+
+
+def test_new_paragraph_insert_before_places_clause_ahead_of_anchor(tmp_path: Path) -> None:
+    document = _two_paragraph_document(tmp_path)
+    anchor = document.sections[0].paragraphs[1]  # the SECOND paragraph
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_BEFORE,
+        node_id=anchor.id,
+        replacement_text="Preamble clause.",
+        new_paragraph=True,
+        status=ActionStatus.APPLIED,
+    )
+
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    paragraphs = _body_paragraphs(_part_xml(reviewed_path, "word/document.xml"))
+
+    assert [_paragraph_visible_text(p) for p in paragraphs] == [
+        "Anchor clause heading.",
+        "Preamble clause.",
+        "Following paragraph.",
+    ]
+
+
+def test_new_paragraph_insert_splits_multiline_clause_into_paragraphs(tmp_path: Path) -> None:
+    document = _two_paragraph_document(tmp_path)
+    anchor = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
+        node_id=anchor.id,
+        replacement_text="First clause line.\nSecond clause line.\n",  # trailing newline dropped
+        new_paragraph=True,
+        status=ActionStatus.APPLIED,
+    )
+
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    paragraphs = _body_paragraphs(_part_xml(reviewed_path, "word/document.xml"))
+
+    assert [_paragraph_visible_text(p) for p in paragraphs] == [
+        "Anchor clause heading.",
+        "First clause line.",
+        "Second clause line.",
+        "Following paragraph.",
+    ]
+
+
+def test_new_paragraph_flag_ignored_without_replacement_text_raises(tmp_path: Path) -> None:
+    # A stand-alone insert with no text to insert is an internal inconsistency, not a
+    # silent no-op.
+    document = _two_paragraph_document(tmp_path)
+    anchor = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
+        node_id=anchor.id,
+        replacement_text=None,
+        new_paragraph=True,
+        status=ActionStatus.APPLIED,
+    )
+
+    with pytest.raises(RenderIntegrityError):
+        render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
