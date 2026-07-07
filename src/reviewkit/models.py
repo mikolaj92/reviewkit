@@ -142,6 +142,15 @@ class ReviewAction(BaseModel):
     requires_human_decision: bool = False
     apply_hint: bool | None = None
     apply_to_corrected: bool | None = None
+    # An INSERT_BEFORE/INSERT_AFTER whose replacement_text is a stand-alone
+    # block (a whole clause/paragraph), not inline text patched into the anchor
+    # paragraph. The reviewed renderer materialises it as a NEW tracked paragraph
+    # sibling of the anchor (run-level ``w:ins`` plus a paragraph-mark insertion)
+    # so ``accept_all_revisions`` flattens it into a real stand-alone paragraph
+    # rather than gluing the clause onto the end of the anchor's text. Ignored for
+    # non-insert action types. Defaults False so every existing inline insert is
+    # unchanged.
+    new_paragraph: bool = False
     locator: ReviewLocator | None = None
     policy_reason: str | None = None
     source_system: str | None = None
