@@ -64,7 +64,7 @@ class InsertionAction:
     ``insert`` actions insert ``text`` verbatim; ``suggest`` actions insert the
     :func:`format_suggestion_text` rendering of ``reason`` and ``text``.
     ``action_id`` is an opaque caller key used to correlate results (and
-    :class:`ClauseInserter`'s ``resolve_last_anchor`` calls) back to caller
+    :class:`ParagraphInserter`'s ``resolve_last_anchor`` calls) back to caller
     state.
     """
 
@@ -159,7 +159,7 @@ def _intended_anchor(
     return f"body:p:{index}"
 
 
-class ClauseInserter:
+class ParagraphInserter:
     """Applies one insertion batch to one document.
 
     Anchors resolve against the pristine document, so an instance supports a
@@ -199,7 +199,7 @@ class ClauseInserter:
         """
         if self._mutated:
             raise ValueError(
-                "ClauseInserter has already mutated the document; anchors "
+                "ParagraphInserter has already mutated the document; anchors "
                 "resolve against the pristine document, so further "
                 "insertions require a new inserter instance"
             )

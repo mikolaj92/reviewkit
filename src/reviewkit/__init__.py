@@ -16,12 +16,12 @@ from reviewkit.context import (
 )
 from reviewkit.document import ReviewDocument
 from reviewkit.insertions import (
-    ClauseInserter,
     InsertionAction,
     InsertionKind,
     InsertionReport,
     InsertionResult,
     InsertionValidator,
+    ParagraphInserter,
     SUGGESTION_MARKER_PREFIX,
     contains_suggestion_marker,
     format_suggestion_text,
@@ -66,7 +66,6 @@ __all__ = [
     "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
-    "ClauseInserter",
     "DocxComment",
     "DocxFootnote",
     "EmptyReviewContextProvider",
@@ -80,6 +79,7 @@ __all__ = [
     "MarkupReport",
     "PolicyGuard",
     "MockLLMClient",
+    "ParagraphInserter",
     "RenderIntegrityError",
     "SUGGESTION_MARKER_PREFIX",
     "ReviewAction",

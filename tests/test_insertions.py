@@ -9,7 +9,7 @@ from docx.oxml.ns import qn
 from reviewkit.anchors import ANCHOR_LAST
 from reviewkit.insertions import (
     SUGGESTION_MARKER_PREFIX,
-    ClauseInserter,
+    ParagraphInserter,
     InsertionAction,
     InsertionValidator,
     contains_suggestion_marker,
@@ -32,7 +32,7 @@ def _texts(document: DocxDocument) -> list[str]:
 
 def test_insert_places_clause_after_anchor() -> None:
     document = _make_document(["First.", "Second."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     report = inserter.apply_actions(
         [InsertionAction(action_id="a1", anchor="body:p:0", text="Inserted clause.")]
     )
@@ -43,7 +43,7 @@ def test_insert_places_clause_after_anchor() -> None:
 
 def test_batch_anchors_resolve_against_pristine_document() -> None:
     document = _make_document(["A.", "B.", "C."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     report = inserter.apply_actions(
         [
             InsertionAction(action_id="a1", anchor="body:p:0", text="X."),
@@ -58,7 +58,7 @@ def test_batch_anchors_resolve_against_pristine_document() -> None:
 
 def test_same_anchor_actions_chain_in_batch_order() -> None:
     document = _make_document(["A.", "B."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     report = inserter.apply_actions(
         [
             InsertionAction(action_id="a1", anchor="body:p:0", text="First insert."),
@@ -72,7 +72,7 @@ def test_same_anchor_actions_chain_in_batch_order() -> None:
 
 def test_out_of_range_and_unsupported_anchors_fail_in_order() -> None:
     document = _make_document(["Only paragraph."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     out_of_range = InsertionAction(action_id="a1", anchor="body:p:9", text="X.")
     unsupported = InsertionAction(action_id="a2", anchor="header:0:p:0", text="Y.")
     report = inserter.apply_actions([out_of_range, unsupported])
@@ -83,7 +83,7 @@ def test_out_of_range_and_unsupported_anchors_fail_in_order() -> None:
 
 def test_unicode_digit_anchor_fails_action_not_batch() -> None:
     document = _make_document(["A."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     bad = InsertionAction(action_id="a1", anchor="body:p:²", text="X.")
     good = InsertionAction(action_id="a2", anchor="body:p:0", text="Y.")
     report = inserter.apply_actions([bad, good])
@@ -93,7 +93,7 @@ def test_unicode_digit_anchor_fails_action_not_batch() -> None:
 
 def test_failed_only_batch_keeps_inserter_reusable() -> None:
     document = _make_document(["Only paragraph."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     first = inserter.apply_actions([InsertionAction(action_id="a1", anchor="body:p:9", text="X.")])
     assert first.applied == []
     second = inserter.apply_actions([InsertionAction(action_id="a2", anchor="body:p:0", text="Y.")])
@@ -103,7 +103,7 @@ def test_failed_only_batch_keeps_inserter_reusable() -> None:
 
 def test_second_apply_after_mutation_raises() -> None:
     document = _make_document(["Only paragraph."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     inserter.apply_actions([InsertionAction(action_id="a1", anchor="body:p:0", text="X.")])
     with pytest.raises(ValueError, match="pristine"):
         inserter.apply_actions([InsertionAction(action_id="a2", anchor="body:p:0", text="Y.")])
@@ -111,7 +111,7 @@ def test_second_apply_after_mutation_raises() -> None:
 
 def test_anchor_last_appends_without_signature_block() -> None:
     document = _make_document(["A.", "B."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     report = inserter.apply_actions(
         [InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="Appended clause.")]
     )
@@ -121,7 +121,7 @@ def test_anchor_last_appends_without_signature_block() -> None:
 
 def test_anchor_last_inserts_above_signature_block() -> None:
     document = _make_document(["Body clause.", "Signature: ____", "Date: ____"])
-    inserter = ClauseInserter(document, signature_keywords=_SIGNATURE_KEYWORDS)
+    inserter = ParagraphInserter(document, signature_keywords=_SIGNATURE_KEYWORDS)
     report = inserter.apply_actions(
         [InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="New clause.")]
     )
@@ -134,7 +134,7 @@ def test_end_insert_batch_keeps_order_even_when_clause_matches_signature_pattern
     # scan runs at resolve time against the pristine document, so a clause
     # inserted earlier in the batch must never be mistaken for the block.
     document = _make_document(["Body clause.", "Signature: ____"])
-    inserter = ClauseInserter(document, signature_keywords=_SIGNATURE_KEYWORDS)
+    inserter = ParagraphInserter(document, signature_keywords=_SIGNATURE_KEYWORDS)
     report = inserter.apply_actions(
         [
             InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="Valid until date X."),
@@ -153,7 +153,7 @@ def test_end_insert_batch_keeps_order_even_when_clause_matches_signature_pattern
 
 def test_suggestion_action_inserts_formatted_text() -> None:
     document = _make_document(["A."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     inserter.apply_actions(
         [
             InsertionAction(
@@ -189,7 +189,7 @@ def test_resolver_receives_raw_action_before_formatting() -> None:
         seen.append(action)
         return "body:p:0"
 
-    inserter = ClauseInserter(document, resolve_last_anchor=resolver)
+    inserter = ParagraphInserter(document, resolve_last_anchor=resolver)
     action = InsertionAction(
         action_id="a1",
         anchor=ANCHOR_LAST,
@@ -210,14 +210,14 @@ def test_resolver_is_not_called_for_concrete_anchors() -> None:
     def resolver(action: InsertionAction) -> str:
         raise AssertionError("resolver must only run for body:p:last anchors")
 
-    inserter = ClauseInserter(document, resolve_last_anchor=resolver)
+    inserter = ParagraphInserter(document, resolve_last_anchor=resolver)
     report = inserter.apply_actions([InsertionAction(action_id="a1", anchor="body:p:0", text="X.")])
     assert not report.failed
 
 
 def test_contextual_resolution_into_signature_block_falls_back_above_it() -> None:
     document = _make_document(["Body clause.", "Signature: ____", "Date: ____"])
-    inserter = ClauseInserter(
+    inserter = ParagraphInserter(
         document,
         signature_keywords=_SIGNATURE_KEYWORDS,
         resolve_last_anchor=lambda action: "body:p:1",
@@ -231,7 +231,7 @@ def test_contextual_resolution_into_signature_block_falls_back_above_it() -> Non
 
 def test_contextual_resolution_above_signature_block_is_honored() -> None:
     document = _make_document(["P0.", "P1.", "Signature: ____"])
-    inserter = ClauseInserter(
+    inserter = ParagraphInserter(
         document,
         signature_keywords=_SIGNATURE_KEYWORDS,
         resolve_last_anchor=lambda action: "body:p:0",
@@ -245,7 +245,7 @@ def test_contextual_resolution_above_signature_block_is_honored() -> None:
 
 def test_predecessor_remap_keeps_applied_anchors_adjacency_true() -> None:
     document = _make_document(["P0.", "P1.", "P2."])
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     appended = InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="Appended.")
     indexed = InsertionAction(action_id="a2", anchor="body:p:2", text="Indexed.")
     report = inserter.apply_actions([appended, indexed])
@@ -262,7 +262,7 @@ def test_table_leadin_insertion_lands_after_table() -> None:
     document = _make_document(["Lead-in."])
     document.add_table(rows=1, cols=1)
     document.add_paragraph("After.")
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     report = inserter.apply_actions(
         [InsertionAction(action_id="a1", anchor="body:p:0", text="Clause.")]
     )
@@ -283,7 +283,7 @@ def test_multi_table_leadin_insertion_lands_after_all_tables() -> None:
     document.add_table(rows=1, cols=1)
     document.add_table(rows=1, cols=1)
     document.add_paragraph("After.")
-    inserter = ClauseInserter(document)
+    inserter = ParagraphInserter(document)
     report = inserter.apply_actions(
         [InsertionAction(action_id="a1", anchor="body:p:0", text="Clause.")]
     )
@@ -300,7 +300,7 @@ def test_multi_table_leadin_insertion_lands_after_all_tables() -> None:
 def test_two_runs_produce_identical_document_xml() -> None:
     def run() -> bytes:
         document = _make_document(["Body clause.", "Signature: ____"])
-        inserter = ClauseInserter(document, signature_keywords=_SIGNATURE_KEYWORDS)
+        inserter = ParagraphInserter(document, signature_keywords=_SIGNATURE_KEYWORDS)
         inserter.apply_actions(
             [
                 InsertionAction(action_id="a1", anchor="body:p:0", text="Clause."),
