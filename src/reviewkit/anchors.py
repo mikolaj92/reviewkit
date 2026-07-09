@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass, field
 
 from docx.document import Document as DocxDocument
 from docx.oxml.text.paragraph import CT_P
@@ -25,18 +26,52 @@ ANCHOR_LAST = "body:p:last"
 _SIGNATURE_TAIL_WINDOW = 5
 
 
+def _compile_signature_keywords(keywords: Sequence[str]) -> tuple[re.Pattern[str], ...]:
+    patterns: list[re.Pattern[str]] = []
+    for keyword in keywords:
+        stem = keyword.endswith("*")
+        token = (keyword[:-1] if stem else keyword).lower()
+        if not token:
+            continue  # "" / "*" would match every word: skip, fail closed
+        escaped = re.escape(token)
+        patterns.append(re.compile(rf"\b{escaped}\w*" if stem else rf"\b{escaped}\b"))
+    return tuple(patterns)
+
+
+@dataclass(frozen=True, eq=False)
+class SignatureBlockStart:
+    """Opaque handle to the first body element of the trailing signature block.
+
+    Callers only get the paragraph's visible ``text``; the underlying OOXML
+    element stays in-package so all element plumbing remains reviewkit's.
+    Identity semantics (``eq=False``): two handles are equal only when they are
+    the same handle.
+    """
+
+    _element: CT_P = field(repr=False)
+
+    @property
+    def text(self) -> str:
+        """The visible text of the paragraph starting the signature block."""
+        return self._element.text or ""
+
+
 def find_signature_block_start(
     document: DocxDocument,
     ignore_texts: Sequence[str] = (),
     *,
-    signature_patterns: Sequence[re.Pattern[str]] = (),
-) -> CT_P | None:
-    """Return the body element starting the trailing signature block, or ``None``.
+    signature_keywords: Sequence[str] = (),
+) -> SignatureBlockStart | None:
+    """Return a handle to the start of the trailing signature block, or ``None``.
 
-    ``signature_patterns`` are caller-supplied compiled regexes matched against
-    lower-cased paragraph text (match on word boundaries in the pattern itself
-    so e.g. ``date`` does not match inside ``update``). With no patterns there
-    is no signature detection and the scan returns ``None``.
+    ``signature_keywords`` use the lib-owned keyword grammar: each keyword is
+    matched case-insensitively against paragraph text at a leading word
+    boundary; a trailing ``*`` marks a stem (``\\b<kw>\\w*``, matching any
+    inflection), otherwise the keyword matches as an exact word
+    (``\\b<kw>\\b``, so e.g. ``date`` never matches inside ``update``).
+    Keywords are ``re.escape``'d, so regex metacharacters are literal; empty
+    and ``*``-only keywords are skipped fail-closed. With no keywords there is
+    no signature detection and the scan returns ``None``.
 
     Insertion and validation should share one scan so insertion bounds and any
     post-insertion placement gate cannot drift apart. Paragraphs whose text
@@ -44,6 +79,18 @@ def find_signature_block_start(
     like whitespace: they neither start the block nor end the bottom-up scan,
     so a clause inserted into the tail cannot split the signature block.
     """
+    element = _find_signature_block_element(
+        document, ignore_texts, _compile_signature_keywords(signature_keywords)
+    )
+    return None if element is None else SignatureBlockStart(element)
+
+
+def _find_signature_block_element(
+    document: DocxDocument,
+    ignore_texts: Sequence[str],
+    signature_patterns: Sequence[re.Pattern[str]],
+) -> CT_P | None:
+    """Scan the body tail for the element starting the signature block, or ``None``."""
     body = document.element.body
     if body is None:
         # A document whose w:body is missing has no tail to scan; the

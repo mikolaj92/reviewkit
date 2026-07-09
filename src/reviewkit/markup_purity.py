@@ -13,7 +13,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
+
+from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
 
 # Full tracked-change / move / format / table-structure revision grammar Word can
 # emit under Track Changes (ISO/IEC 29500 §17.13): edits (w:ins/w:del), moves
@@ -52,6 +54,13 @@ _CONTENT_PART_SUFFIX = ".xml"
 _COMMENT_TAG_RE = re.compile(rb"<w:comment(?=[\s>/])")
 _COMMENTS_PART = "word/comments.xml"
 
+# The literal ``[SUGGESTION`` text marker reviewkit's own ``suggest`` insertions
+# emit (see :mod:`reviewkit.insertions`). It is written verbatim as run text, so
+# a byte scan over the same ``word/*.xml`` parts as the revision grammar finds
+# every surviving marker, wherever it landed.
+_SUGGESTION_MARKER_BYTES = SUGGESTION_MARKER_PREFIX.encode("ascii")
+_DOCUMENT_PART = "word/document.xml"
+
 
 @dataclass(frozen=True)
 class MarkupReport:
@@ -60,13 +69,15 @@ class MarkupReport:
     ``revision_parts`` are the package part names carrying tracked-change / move
     / format / table revision markup; ``revision_kinds`` are the distinct OOXML
     element local-names found (``ins``, ``del``, ``moveFrom``, ...);
-    ``comment_count`` is the number of populated ``w:comment`` elements. Every
-    field is empty / zero for a clean document.
+    ``comment_count`` is the number of populated ``w:comment`` elements;
+    ``suggestion_parts`` are the part names carrying the literal ``[SUGGESTION``
+    text marker. Every field is empty / zero for a clean document.
     """
 
     revision_parts: tuple[str, ...] = ()
     revision_kinds: tuple[str, ...] = ()
     comment_count: int = 0
+    suggestion_parts: tuple[str, ...] = ()
 
     @property
     def has_tracked_revisions(self) -> bool:
@@ -79,37 +90,53 @@ class MarkupReport:
         return self.comment_count > 0
 
     @property
+    def has_suggestion_marker(self) -> bool:
+        """True when any part carries the literal ``[SUGGESTION`` text marker."""
+        return bool(self.suggestion_parts)
+
+    @property
     def is_clean(self) -> bool:
-        """True when the package carries no revision markup and no comments."""
-        return not self.revision_parts and self.comment_count == 0
+        """True when the package carries no revision markup, no suggestion markers and no comments."""
+        return not self.revision_parts and not self.suggestion_parts and self.comment_count == 0
 
 
 def inspect_markup(path: str | Path) -> MarkupReport:
-    """Inspect a ``.docx`` package for tracked/move/format/table revisions and comments.
+    """Inspect a ``.docx`` package for revisions, comments and suggestion markers.
 
-    Returns a :class:`MarkupReport`. Propagates the underlying ``OSError`` /
+    Returns a :class:`MarkupReport` covering tracked/move/format/table revisions,
+    populated comments and the literal ``[SUGGESTION`` text markers reviewkit's
+    ``suggest`` insertions emit. A zip that lacks ``word/document.xml`` is not a
+    DOCX package at all and raises ``zipfile.BadZipFile`` instead of scanning
+    nothing and reporting clean. Propagates the underlying ``OSError`` /
     ``zipfile.BadZipFile`` if ``path`` cannot be opened as a ``.docx`` package --
     an un-inspectable file is never silently reported as clean; the caller's
     policy decides how to treat that.
     """
     revision_parts: list[str] = []
     revision_kinds: set[str] = set()
+    suggestion_parts: list[str] = []
     comment_count = 0
     with ZipFile(path) as bundle:
         names = bundle.namelist()
+        if _DOCUMENT_PART not in names:
+            raise BadZipFile(f"not a DOCX package: missing {_DOCUMENT_PART} in {path}")
         for name in names:
             if not (name.startswith(_CONTENT_PART_PREFIX) and name.endswith(_CONTENT_PART_SUFFIX)):
                 continue
-            found = _REVISION_TAG_RE.findall(bundle.read(name))
+            data = bundle.read(name)
+            found = _REVISION_TAG_RE.findall(data)
             if found:
                 revision_parts.append(name)
                 revision_kinds.update(kind.decode("ascii") for kind in found)
+            if _SUGGESTION_MARKER_BYTES in data:
+                suggestion_parts.append(name)
         if _COMMENTS_PART in names:
             comment_count = len(_COMMENT_TAG_RE.findall(bundle.read(_COMMENTS_PART)))
     return MarkupReport(
         revision_parts=tuple(sorted(revision_parts)),
         revision_kinds=tuple(sorted(revision_kinds)),
         comment_count=comment_count,
+        suggestion_parts=tuple(sorted(suggestion_parts)),
     )
 
 
@@ -121,3 +148,8 @@ def has_tracked_revisions(path: str | Path) -> bool:
 def has_comments(path: str | Path) -> bool:
     """True when the ``.docx`` at ``path`` carries any populated comment."""
     return inspect_markup(path).has_comments
+
+
+def has_suggestion_marker(path: str | Path) -> bool:
+    """True when any part of the ``.docx`` at ``path`` carries the ``[SUGGESTION`` text marker."""
+    return inspect_markup(path).has_suggestion_marker

@@ -2,8 +2,16 @@ from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
 import pytest
+from docx import Document
 
-from reviewkit import MarkupReport, has_comments, has_tracked_revisions, inspect_markup
+from reviewkit import (
+    MarkupReport,
+    has_comments,
+    has_suggestion_marker,
+    has_tracked_revisions,
+    inspect_markup,
+)
+from reviewkit.insertions import format_suggestion_text
 from reviewkit.parser_docx import _contains_tracked_revisions
 
 _XML_HEAD = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -63,8 +71,10 @@ def test_clean_document_has_no_markup(tmp_path: Path) -> None:
     assert report.revision_parts == ()
     assert report.revision_kinds == ()
     assert report.comment_count == 0
+    assert report.suggestion_parts == ()
     assert has_tracked_revisions(path) is False
     assert has_comments(path) is False
+    assert has_suggestion_marker(path) is False
 
 
 @pytest.mark.parametrize("kind", ["ins", "del"])
@@ -193,6 +203,75 @@ def test_unreadable_package_raises_rather_than_reporting_clean(tmp_path: Path) -
 def test_missing_file_raises(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         inspect_markup(tmp_path / "nope.docx")
+
+
+def test_suggestion_marker_in_document_detected(tmp_path: Path) -> None:
+    path = _docx(
+        tmp_path,
+        {
+            "word/document.xml": _document_xml(
+                b"<w:p><w:r><w:t>[SUGGESTION: add clause]</w:t></w:r></w:p>"
+            )
+        },
+    )
+    report = inspect_markup(path)
+    assert report.has_suggestion_marker
+    assert report.suggestion_parts == ("word/document.xml",)
+    assert not report.is_clean
+    assert has_suggestion_marker(path) is True
+    assert report.has_tracked_revisions is False
+
+
+def test_suggestion_marker_in_any_part_detected(tmp_path: Path) -> None:
+    # The marker can survive anywhere reviewkit inserted it (or a copy-paste
+    # dragged it), so the scan covers every word/*.xml part, not just the body.
+    path = _docx(
+        tmp_path,
+        {
+            "word/document.xml": _document_xml(b"<w:p><w:r><w:t>clean</w:t></w:r></w:p>"),
+            "word/footnotes.xml": _document_xml(
+                b"<w:p><w:r><w:t>[SUGGESTION: check note]</w:t></w:r></w:p>"
+            ),
+        },
+    )
+    report = inspect_markup(path)
+    assert report.has_suggestion_marker
+    assert "word/footnotes.xml" in report.suggestion_parts
+
+
+def test_suggestion_marker_round_trips_through_python_docx(tmp_path: Path) -> None:
+    # A real document carrying format_suggestion_text output must be detected:
+    # the constant and the byte scan may never drift apart.
+    path = tmp_path / "suggested.docx"
+    document = Document()
+    document.add_paragraph(format_suggestion_text("missing clause", "Add the clause."))
+    document.save(path)
+    report = inspect_markup(path)
+    assert report.has_suggestion_marker
+    assert "word/document.xml" in report.suggestion_parts
+    assert has_suggestion_marker(path) is True
+
+
+def test_zip_without_document_part_raises(tmp_path: Path) -> None:
+    # A zip that is not a DOCX package at all must fail closed, not scan zero
+    # parts and report clean.
+    path = _docx(tmp_path, {"word/styles.xml": _XML_HEAD + b"<w:styles " + _W_NS + b"/>"})
+    with pytest.raises(BadZipFile):
+        inspect_markup(path)
+    with pytest.raises(BadZipFile):
+        has_suggestion_marker(path)
+
+
+def test_suggestion_parts_are_sorted(tmp_path: Path) -> None:
+    path = _docx(
+        tmp_path,
+        {
+            "word/footnotes.xml": _document_xml(b"<w:p><w:r><w:t>[SUGGESTION: b]</w:t></w:r></w:p>"),
+            "word/document.xml": _document_xml(b"<w:p><w:r><w:t>[SUGGESTION: a]</w:t></w:r></w:p>"),
+        },
+    )
+    report = inspect_markup(path)
+    assert report.suggestion_parts == ("word/document.xml", "word/footnotes.xml")
 
 
 def test_parser_helper_uses_the_shared_full_grammar(tmp_path: Path) -> None:

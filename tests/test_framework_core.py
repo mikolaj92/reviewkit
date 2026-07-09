@@ -22,6 +22,7 @@ from reviewkit.models import (
     ReviewResult,
     ReviewScope,
     ReviewStats,
+    canonical_action_dump,
 )
 from reviewkit.profile import (
     ActionPolicyConfig,
@@ -1209,6 +1210,63 @@ def test_omitted_ids_are_derived_deterministically_from_content() -> None:
     assert (
         ReviewFinding(finding_id="fx", node_id="p1", title="T", description="D").finding_id == "fx"
     )
+
+
+def _dump_action(action_id: str, comment: str = "Note.") -> ReviewAction:
+    return ReviewAction(
+        id=action_id,
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1",
+        comment=comment,
+    )
+
+
+def test_canonical_action_dump_sorts_by_action_id() -> None:
+    actions = [_dump_action("c"), _dump_action("a"), _dump_action("b")]
+    dumped = canonical_action_dump(actions)
+    assert [item["action_id"] for item in dumped] == ["a", "b", "c"]
+
+
+def test_canonical_action_dump_uses_alias_keys() -> None:
+    dumped = canonical_action_dump([_dump_action("a", comment="Aliased.")])
+    item = dumped[0]
+    assert item["action_id"] == "a"
+    assert item["comment_text"] == "Aliased."
+    assert "id" not in item
+    assert "comment" not in item
+
+
+def test_canonical_action_dump_serializes_enums_as_plain_strings() -> None:
+    item = canonical_action_dump([_dump_action("a")])[0]
+    assert item["scope"] == "paragraph"
+    assert isinstance(item["scope"], str)
+    assert item["action_type"] == "comment"
+    assert isinstance(item["action_type"], str)
+    assert item["status"] == "not_applied"
+    assert isinstance(item["status"], str)
+
+
+def test_canonical_action_dump_is_deterministic_across_input_orders() -> None:
+    actions = [_dump_action("b"), _dump_action("a"), _dump_action("c")]
+    assert canonical_action_dump(actions) == canonical_action_dump(list(reversed(actions)))
+
+
+def test_canonical_action_dump_round_trips_through_model_validate() -> None:
+    original = _dump_action("a", comment="Round trip.")
+    dumped_item = canonical_action_dump([original])[0]
+    assert ReviewAction.model_validate(dumped_item) == original
+
+
+def test_canonical_action_dump_of_empty_list_is_empty() -> None:
+    assert canonical_action_dump([]) == []
+
+
+def test_canonical_action_dump_keeps_stable_order_for_duplicate_ids() -> None:
+    first = _dump_action("same", comment="First.")
+    second = _dump_action("same", comment="Second.")
+    dumped = canonical_action_dump([first, second])
+    assert [item["comment_text"] for item in dumped] == ["First.", "Second."]
 
 
 def test_richer_resurfacing_of_a_finding_is_merged_not_dropped() -> None:

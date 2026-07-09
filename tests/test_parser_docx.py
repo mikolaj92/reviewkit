@@ -3,7 +3,14 @@ from zipfile import ZipFile
 
 from docx import Document as DocxDocument
 
-from reviewkit.parser_docx import DocxFootnote, load_docx, read_footnotes, split_sentences
+from reviewkit.parser_docx import (
+    DocxComment,
+    DocxFootnote,
+    load_docx,
+    read_comments,
+    read_footnotes,
+    split_sentences,
+)
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
@@ -270,3 +277,59 @@ def test_read_footnotes_missing_or_corrupt_file_returns_empty(tmp_path: Path) ->
     corrupt = tmp_path / "corrupt.docx"
     corrupt.write_bytes(b"not a zip archive")
     assert read_footnotes(corrupt) == []
+
+
+def test_read_comments_returns_id_author_initials_and_text(tmp_path: Path) -> None:
+    path = tmp_path / "comments.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Commented prose.")
+    docx.comments.add_comment(text="First remark.", author="Alice", initials="AL")
+    docx.comments.add_comment(text="Second remark.", author="Bob", initials="B")
+    docx.save(path)
+
+    assert read_comments(path) == [
+        DocxComment(id="0", author="Alice", initials="AL", text="First remark."),
+        DocxComment(id="1", author="Bob", initials="B", text="Second remark."),
+    ]
+
+
+def test_read_comments_preserves_multi_paragraph_text(tmp_path: Path) -> None:
+    # python-docx joins a comment's paragraphs with newlines; the round-trip
+    # must surface the text exactly as python-docx renders it.
+    path = tmp_path / "multiline.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Prose.")
+    docx.comments.add_comment(text="Line one\nLine two", author="Alice", initials="AL")
+    docx.save(path)
+
+    comments = read_comments(path)
+    assert len(comments) == 1
+    assert comments[0].text == "Line one\nLine two"
+
+
+def test_read_comments_absent_initials_surface_as_empty_string(tmp_path: Path) -> None:
+    path = tmp_path / "noinitials.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Prose.")
+    docx.comments.add_comment(text="No initials.", author="Alice", initials=None)
+    docx.save(path)
+
+    comments = read_comments(path)
+    assert len(comments) == 1
+    assert comments[0].initials == ""
+
+
+def test_read_comments_no_comments_returns_empty(tmp_path: Path) -> None:
+    path = tmp_path / "plain.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("No comments here.")
+    docx.save(path)
+
+    assert read_comments(path) == []
+
+
+def test_read_comments_missing_or_corrupt_file_returns_empty(tmp_path: Path) -> None:
+    assert read_comments(tmp_path / "does_not_exist.docx") == []
+    corrupt = tmp_path / "corrupt.docx"
+    corrupt.write_bytes(b"not a zip archive")
+    assert read_comments(corrupt) == []

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import Counter
+from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -300,6 +301,20 @@ class ReviewResult(BaseModel):
             encoding="utf-8",
         )
         return output_path
+
+
+def canonical_action_dump(actions: Sequence[ReviewAction]) -> list[dict[str, Any]]:
+    """Canonical JSON-able form of an action list for attestation/content-addressing.
+
+    Each action is ``model_dump(mode="json", by_alias=True)`` (so the
+    ``action_id``/``comment_text`` aliases are used) and the list is sorted by
+    ``action_id`` (stable for ties): two semantically identical action lists in
+    any input order dump to identical payloads.
+    """
+    return sorted(
+        (action.model_dump(mode="json", by_alias=True) for action in actions),
+        key=lambda item: str(item.get("action_id", "")),
+    )
 
 
 def _dimension_key(dimension: str | ReviewDimension | None) -> str:

@@ -1,5 +1,4 @@
 import io
-import re
 import zipfile
 
 import pytest
@@ -17,11 +16,7 @@ from reviewkit.insertions import (
     format_suggestion_text,
 )
 
-_SIGNATURE_PATTERNS = (
-    re.compile(r"\bsignature\b"),
-    re.compile(r"\bdate\b"),
-    re.compile(r"\battachment\b"),
-)
+_SIGNATURE_KEYWORDS = ("signature", "date", "attachment")
 
 
 def _make_document(texts: list[str]) -> DocxDocument:
@@ -126,7 +121,7 @@ def test_anchor_last_appends_without_signature_block() -> None:
 
 def test_anchor_last_inserts_above_signature_block() -> None:
     document = _make_document(["Body clause.", "Signature: ____", "Date: ____"])
-    inserter = ClauseInserter(document, signature_patterns=_SIGNATURE_PATTERNS)
+    inserter = ClauseInserter(document, signature_keywords=_SIGNATURE_KEYWORDS)
     report = inserter.apply_actions(
         [InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="New clause.")]
     )
@@ -139,7 +134,7 @@ def test_end_insert_batch_keeps_order_even_when_clause_matches_signature_pattern
     # scan runs at resolve time against the pristine document, so a clause
     # inserted earlier in the batch must never be mistaken for the block.
     document = _make_document(["Body clause.", "Signature: ____"])
-    inserter = ClauseInserter(document, signature_patterns=_SIGNATURE_PATTERNS)
+    inserter = ClauseInserter(document, signature_keywords=_SIGNATURE_KEYWORDS)
     report = inserter.apply_actions(
         [
             InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="Valid until date X."),
@@ -224,7 +219,7 @@ def test_contextual_resolution_into_signature_block_falls_back_above_it() -> Non
     document = _make_document(["Body clause.", "Signature: ____", "Date: ____"])
     inserter = ClauseInserter(
         document,
-        signature_patterns=_SIGNATURE_PATTERNS,
+        signature_keywords=_SIGNATURE_KEYWORDS,
         resolve_last_anchor=lambda action: "body:p:1",
     )
     report = inserter.apply_actions(
@@ -238,7 +233,7 @@ def test_contextual_resolution_above_signature_block_is_honored() -> None:
     document = _make_document(["P0.", "P1.", "Signature: ____"])
     inserter = ClauseInserter(
         document,
-        signature_patterns=_SIGNATURE_PATTERNS,
+        signature_keywords=_SIGNATURE_KEYWORDS,
         resolve_last_anchor=lambda action: "body:p:0",
     )
     report = inserter.apply_actions(
@@ -305,7 +300,7 @@ def test_multi_table_leadin_insertion_lands_after_all_tables() -> None:
 def test_two_runs_produce_identical_document_xml() -> None:
     def run() -> bytes:
         document = _make_document(["Body clause.", "Signature: ____"])
-        inserter = ClauseInserter(document, signature_patterns=_SIGNATURE_PATTERNS)
+        inserter = ClauseInserter(document, signature_keywords=_SIGNATURE_KEYWORDS)
         inserter.apply_actions(
             [
                 InsertionAction(action_id="a1", anchor="body:p:0", text="Clause."),
@@ -393,7 +388,7 @@ def test_validator_flags_suggestion_below_signature_start() -> None:
     document = _make_document(
         ["Body clause.", "Signature: ____", "[SUGGESTION: Why]\nProposed.", "Date: ____"]
     )
-    validator = InsertionValidator(document, signature_patterns=_SIGNATURE_PATTERNS)
+    validator = InsertionValidator(document, signature_keywords=_SIGNATURE_KEYWORDS)
     misplaced = InsertionAction(
         action_id="a1", anchor=ANCHOR_LAST, text="Proposed.", kind="suggest", reason="Why"
     )
@@ -404,14 +399,14 @@ def test_validator_flags_clause_at_or_below_signature_start() -> None:
     document = _make_document(
         ["Body clause.", "Signature: ____", "Misplaced clause.", "Date: ____"]
     )
-    validator = InsertionValidator(document, signature_patterns=_SIGNATURE_PATTERNS)
+    validator = InsertionValidator(document, signature_keywords=_SIGNATURE_KEYWORDS)
     misplaced = InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="Misplaced clause.")
     assert validator.misplaced_actions([misplaced]) == [misplaced]
 
 
 def test_validator_accepts_clause_above_signature_block() -> None:
     document = _make_document(["Body clause.", "Placed clause.", "Signature: ____", "Date: ____"])
-    validator = InsertionValidator(document, signature_patterns=_SIGNATURE_PATTERNS)
+    validator = InsertionValidator(document, signature_keywords=_SIGNATURE_KEYWORDS)
     placed = InsertionAction(action_id="a1", anchor=ANCHOR_LAST, text="Placed clause.")
     assert validator.misplaced_actions([placed]) == []
     assert validator.misplaced_actions([]) == []
@@ -452,7 +447,7 @@ def test_misplaced_actions_missing_body_returns_empty() -> None:
     document = Document()
     root = document.element
     root.remove(root.find(qn("w:body")))
-    validator = InsertionValidator(document, signature_patterns=_SIGNATURE_PATTERNS)
+    validator = InsertionValidator(document, signature_keywords=_SIGNATURE_KEYWORDS)
     action = InsertionAction(action_id="a1", anchor="body:p:0", text="X.")
     assert validator.misplaced_actions([action]) == []
 

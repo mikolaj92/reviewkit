@@ -2,6 +2,7 @@
 
 from reviewkit.anchors import (
     ANCHOR_LAST,
+    SignatureBlockStart,
     find_body_paragraph,
     find_paragraph_by_locator,
     find_signature_block_start,
@@ -29,6 +30,7 @@ from reviewkit.llm import LLMClient, MockLLMClient
 from reviewkit.markup_purity import (
     MarkupReport,
     has_comments,
+    has_suggestion_marker,
     has_tracked_revisions,
     inspect_markup,
 )
@@ -45,8 +47,9 @@ from reviewkit.models import (
     ReviewResult,
     ReviewScope,
     ReviewStats,
+    canonical_action_dump,
 )
-from reviewkit.parser_docx import DocxFootnote, read_footnotes
+from reviewkit.parser_docx import DocxComment, DocxFootnote, read_comments, read_footnotes
 from reviewkit.pipeline import review_document
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
@@ -64,6 +67,7 @@ __all__ = [
     "ActionPolicyConfig",
     "ActionStatus",
     "ClauseInserter",
+    "DocxComment",
     "DocxFootnote",
     "EmptyReviewContextProvider",
     "EvidenceRef",
@@ -92,19 +96,23 @@ __all__ = [
     "ReviewResult",
     "ReviewScope",
     "ReviewStats",
+    "SignatureBlockStart",
     "accept_all_revisions",
     "apply_reviewed_markup",
+    "canonical_action_dump",
     "contains_suggestion_marker",
     "find_body_paragraph",
     "find_paragraph_by_locator",
     "find_signature_block_start",
     "format_suggestion_text",
     "has_comments",
+    "has_suggestion_marker",
     "has_tracked_revisions",
     "inspect_markup",
     "is_supported_anchor",
     "load_profile",
     "parse_body_anchor_index",
+    "read_comments",
     "read_footnotes",
     "review_document",
 ]

@@ -18,7 +18,6 @@ signature block are entirely caller decisions.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -30,7 +29,8 @@ from docx.text.paragraph import Paragraph
 
 from reviewkit.anchors import (
     ANCHOR_LAST,
-    find_signature_block_start,
+    _compile_signature_keywords,
+    _find_signature_block_element,
     parse_body_anchor_index,
 )
 
@@ -169,19 +169,21 @@ class ClauseInserter:
     ``resolve_last_anchor`` is called for actions requesting ``body:p:last``
     BEFORE any suggestion-text formatting, with the raw action; it may return
     a concrete ``body:p:<n>`` anchor (contextual placement) or ``body:p:last``
-    to keep the end-of-document insert. ``signature_patterns`` feed
-    :func:`reviewkit.anchors.find_signature_block_start`.
+    to keep the end-of-document insert. ``signature_keywords`` use the keyword
+    grammar of :func:`reviewkit.anchors.find_signature_block_start`
+    (case-insensitive whole words; trailing ``*`` marks a stem) and feed the
+    shared signature scan.
     """
 
     def __init__(
         self,
         document: DocxDocument,
         *,
-        signature_patterns: Sequence[re.Pattern[str]] = (),
+        signature_keywords: Sequence[str] = (),
         resolve_last_anchor: Callable[[InsertionAction], str] | None = None,
     ) -> None:
         self.document = document
-        self._signature_patterns = tuple(signature_patterns)
+        self._signature_patterns = _compile_signature_keywords(signature_keywords)
         self._resolve_last_anchor = resolve_last_anchor
         self._mutated = False
 
@@ -300,9 +302,7 @@ class ClauseInserter:
         inserted by earlier actions in the same batch are never mistaken for
         signature blocks.
         """
-        return find_signature_block_start(
-            self.document, signature_patterns=self._signature_patterns
-        )
+        return _find_signature_block_element(self.document, (), self._signature_patterns)
 
     def _precedes(self, element: CT_P, reference: CT_P) -> bool:
         """True when ``element`` appears strictly before ``reference`` in the body."""
@@ -365,13 +365,18 @@ class InsertionValidator:
     wording for those is a caller concern — while
     :meth:`check_document_integrity` returns a structural summary dict with
     fixed error strings.
+
+    ``signature_keywords`` use the keyword grammar of
+    :func:`reviewkit.anchors.find_signature_block_start` (case-insensitive
+    whole words; trailing ``*`` marks a stem) and feed the shared signature
+    scan.
     """
 
     def __init__(
         self,
         document: DocxDocument,
         *,
-        signature_patterns: Sequence[re.Pattern[str]] = (),
+        signature_keywords: Sequence[str] = (),
     ) -> None:
         self.document = document
         # Snapshot once: python-docx rebuilds the paragraph wrapper list on
@@ -383,7 +388,7 @@ class InsertionValidator:
             # validator constructible so check_document_integrity can report
             # the corruption instead of the constructor crashing.
             self._paragraphs = []
-        self._signature_patterns = tuple(signature_patterns)
+        self._signature_patterns = _compile_signature_keywords(signature_keywords)
 
     def action_applied(self, action: InsertionAction, applied_anchor: str | None = None) -> bool:
         """True when ``action``'s rendered text sits where the insertion claimed.
@@ -431,10 +436,10 @@ class InsertionValidator:
         if not inserted_texts:
             return []
 
-        signature_start = find_signature_block_start(
+        signature_start = _find_signature_block_element(
             self.document,
-            ignore_texts=[text for _, text in inserted_texts],
-            signature_patterns=self._signature_patterns,
+            [text for _, text in inserted_texts],
+            self._signature_patterns,
         )
         if signature_start is None:
             return []

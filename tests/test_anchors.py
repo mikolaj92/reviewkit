@@ -1,11 +1,10 @@
-import re
-
 import pytest
 from docx import Document
 from docx.document import Document as DocxDocument
 
 from reviewkit.anchors import (
     ANCHOR_LAST,
+    SignatureBlockStart,
     find_body_paragraph,
     find_paragraph_by_locator,
     find_signature_block_start,
@@ -13,10 +12,15 @@ from reviewkit.anchors import (
     parse_body_anchor_index,
 )
 
-_SIGNATURE_PATTERNS = (
-    re.compile(r"\bsignature\b"),
-    re.compile(r"\bdate\b"),
-    re.compile(r"\battachment\b"),
+_SIGNATURE_KEYWORDS = (
+    "signatur*",
+    "date",
+    "podpis*",
+    "załączn*",
+    "data",
+    "miejsce",
+    "attach*",
+    "place",
 )
 
 
@@ -122,19 +126,19 @@ def test_find_paragraph_by_locator_fails_closed(locator: str | None) -> None:
 
 def test_signature_scan_finds_topmost_matching_tail_paragraph() -> None:
     document = _make_document(["Body clause.", "Signature: ____", "Date: ____"])
-    start = find_signature_block_start(document, signature_patterns=_SIGNATURE_PATTERNS)
+    start = find_signature_block_start(document, signature_keywords=_SIGNATURE_KEYWORDS)
     assert start is not None
     assert "Signature" in start.text
 
 
-def test_signature_scan_without_patterns_finds_nothing() -> None:
+def test_signature_scan_without_keywords_finds_nothing() -> None:
     document = _make_document(["Body clause.", "Signature: ____"])
     assert find_signature_block_start(document) is None
 
 
 def test_signature_scan_skips_whitespace_paragraphs() -> None:
     document = _make_document(["Body clause.", "Signature: ____", "   ", ""])
-    start = find_signature_block_start(document, signature_patterns=_SIGNATURE_PATTERNS)
+    start = find_signature_block_start(document, signature_keywords=_SIGNATURE_KEYWORDS)
     assert start is not None
     assert "Signature" in start.text
 
@@ -143,14 +147,14 @@ def test_signature_scan_treats_ignored_texts_like_whitespace() -> None:
     document = _make_document(
         ["Body clause.", "Signature: ____", "Inserted clause text.", "Date: ____"]
     )
-    without_ignore = find_signature_block_start(document, signature_patterns=_SIGNATURE_PATTERNS)
+    without_ignore = find_signature_block_start(document, signature_keywords=_SIGNATURE_KEYWORDS)
     assert without_ignore is not None
     assert "Date" in without_ignore.text
 
     with_ignore = find_signature_block_start(
         document,
         ignore_texts=["Inserted clause text."],
-        signature_patterns=_SIGNATURE_PATTERNS,
+        signature_keywords=_SIGNATURE_KEYWORDS,
     )
     assert with_ignore is not None
     assert "Signature" in with_ignore.text
@@ -158,20 +162,66 @@ def test_signature_scan_treats_ignored_texts_like_whitespace() -> None:
 
 def test_signature_scan_respects_tail_window() -> None:
     document = _make_document(["Signature: ____"] + [f"Trailing clause {i}." for i in range(5)])
-    assert find_signature_block_start(document, signature_patterns=_SIGNATURE_PATTERNS) is None
+    assert find_signature_block_start(document, signature_keywords=_SIGNATURE_KEYWORDS) is None
 
 
 def test_signature_scan_whitespace_does_not_consume_tail_window() -> None:
     document = _make_document(
         ["Signature: ____", " ", "Trailing 1.", "Trailing 2.", "Trailing 3.", "Trailing 4."]
     )
-    start = find_signature_block_start(document, signature_patterns=_SIGNATURE_PATTERNS)
+    start = find_signature_block_start(document, signature_keywords=_SIGNATURE_KEYWORDS)
     assert start is not None
     assert "Signature" in start.text
 
 
 def test_signature_scan_stops_at_first_non_match_above_block() -> None:
     document = _make_document(["Date: ____", "Body clause.", "Signature: ____", "Date: ____"])
-    start = find_signature_block_start(document, signature_patterns=_SIGNATURE_PATTERNS)
+    start = find_signature_block_start(document, signature_keywords=_SIGNATURE_KEYWORDS)
     assert start is not None
-    assert start is document.paragraphs[2]._element
+    assert start.text == document.paragraphs[2].text
+    assert "Signature" in start.text
+
+
+def test_exact_keyword_matches_whole_word_only() -> None:
+    # "date" without a stem star must not match "Dated" or "update".
+    dated = _make_document(["Body clause.", "Dated 15 March ____"])
+    assert find_signature_block_start(dated, signature_keywords=("date",)) is None
+
+    exact = _make_document(["Body clause.", "Date: ____"])
+    start = find_signature_block_start(exact, signature_keywords=("date",))
+    assert start is not None
+    assert "Date" in start.text
+
+    update = _make_document(["Body clause.", "We update the register."])
+    assert find_signature_block_start(update, signature_keywords=("date",)) is None
+
+
+def test_stem_keyword_matches_inflections_and_case() -> None:
+    document = _make_document(["Body clause.", "Załączniki:"])
+    start = find_signature_block_start(document, signature_keywords=("załączn*",))
+    assert start is not None
+    assert "Załączniki" in start.text
+
+
+def test_keyword_metacharacters_are_escaped() -> None:
+    document = _make_document(["Body clause.", "cxv here"])
+    assert find_signature_block_start(document, signature_keywords=("c.v.",)) is None
+
+
+def test_empty_and_star_only_keywords_are_skipped_fail_closed() -> None:
+    document = _make_document(["Body clause.", "Plain trailing text."])
+    assert find_signature_block_start(document, signature_keywords=("", "*")) is None
+
+
+def test_empty_keyword_tuple_finds_nothing() -> None:
+    document = _make_document(["Body clause.", "Signature: ____"])
+    assert find_signature_block_start(document, signature_keywords=()) is None
+
+
+def test_signature_block_start_handle_is_opaque() -> None:
+    document = _make_document(["Body clause.", "Signature: ____"])
+    start = find_signature_block_start(document, signature_keywords=_SIGNATURE_KEYWORDS)
+    assert isinstance(start, SignatureBlockStart)
+    assert "Signature" in start.text
+    # No element plumbing leaks through the handle.
+    assert not hasattr(start, "addprevious")

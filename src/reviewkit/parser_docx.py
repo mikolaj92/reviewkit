@@ -10,6 +10,7 @@ from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
 from docx import Document as DocxDocument
+from docx.opc.exceptions import PackageNotFoundError
 from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
@@ -150,6 +151,41 @@ def _footnote_visible_text(element: object) -> str:
         elif tag in (f"{{{_W_NS}}}br", f"{{{_W_NS}}}cr"):
             parts.append("\n")
     return "".join(parts)
+
+
+@dataclass(frozen=True)
+class DocxComment:
+    """One comment read from a ``.docx`` package: its id, author identity and visible text."""
+
+    id: str
+    author: str
+    initials: str
+    text: str
+
+
+def read_comments(path: str | Path) -> list[DocxComment]:
+    """Extract every comment's id, author, initials and visible text, in document order.
+
+    python-docx (>= 1.2.0) models comments, so this reads through its public
+    ``Document.comments`` collection -- the same model the renderer writes
+    through -- rather than hand-rolling OOXML. ``text`` joins the comment's
+    paragraphs with newlines, exactly as python-docx renders it; ``initials``
+    is optional in the XML and surfaces as ``""`` when absent. Returns an empty
+    list when the package carries no comments (or cannot be opened as a package).
+    """
+    try:
+        docx = DocxDocument(str(path))
+    except (OSError, PackageNotFoundError):
+        return []
+    return [
+        DocxComment(
+            id=str(comment.comment_id),
+            author=comment.author or "",
+            initials=comment.initials or "",
+            text=comment.text,
+        )
+        for comment in docx.comments
+    ]
 
 
 def split_sentences(text: str) -> list[str]:
