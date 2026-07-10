@@ -7,18 +7,8 @@ from typing import Any
 
 from reviewkit.document import ParagraphNode, ReviewDocument, SentenceNode
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType, ReviewLocator
-from reviewkit.policy import ActionPolicy
+from reviewkit.policy import WRITING_ACTIONS, ActionPolicy
 from reviewkit.profile import ReviewProfile
-
-WRITING_ACTIONS = {
-    ReviewActionType.REPLACE_TEXT,
-    ReviewActionType.DELETE_TEXT,
-    ReviewActionType.INSERT_TEXT,
-    ReviewActionType.REPLACE,
-    ReviewActionType.DELETE,
-    ReviewActionType.INSERT_BEFORE,
-    ReviewActionType.INSERT_AFTER,
-}
 
 
 def prepare_actions(
@@ -31,14 +21,6 @@ def prepare_actions(
     prepared = [_prepare_action(document, resolved_policy, action) for action in actions]
     prepared = _demote_overlapping_actions(document, prepared)
     return _demote_edits_over_opaque_content(document, prepared)
-
-
-def apply_actions_to_text(text: str, actions: Iterable[ReviewAction]) -> str:
-    result = text
-    applicable = [action for action in actions if action.status == ActionStatus.APPLIED]
-    for action in _actions_in_text_application_order(applicable):
-        result = apply_action_to_text(result, action)
-    return result
 
 
 def apply_corrections_to_text(text: str, actions: Iterable[ReviewAction]) -> str:

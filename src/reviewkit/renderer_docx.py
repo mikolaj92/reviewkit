@@ -23,6 +23,7 @@ from reviewkit.actions import (
 from reviewkit.docx_package import normalize_docx_timestamps
 from reviewkit.document import ReviewDocument
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
+from reviewkit.policy import WRITING_ACTIONS
 
 _SegmentKind = Literal["text", "ins", "del", "opaque"]
 
@@ -374,15 +375,7 @@ def _is_trackable_edit(action: ReviewAction) -> bool:
         return False
     if action.metadata.get("blocked_from_corrected") is True:
         return False
-    return action.action_type in {
-        ReviewActionType.REPLACE_TEXT,
-        ReviewActionType.DELETE_TEXT,
-        ReviewActionType.INSERT_TEXT,
-        ReviewActionType.REPLACE,
-        ReviewActionType.DELETE,
-        ReviewActionType.INSERT_BEFORE,
-        ReviewActionType.INSERT_AFTER,
-    }
+    return action.action_type in WRITING_ACTIONS
 
 
 def _is_block_paragraph_insert(action: ReviewAction) -> bool:

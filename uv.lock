@@ -502,6 +502,7 @@ name = "reviewkit"
 version = "0.10.0"
 source = { editable = "." }
 dependencies = [
+    { name = "lxml" },
     { name = "pydantic" },
     { name = "python-docx" },
     { name = "pyyaml" },
@@ -518,6 +519,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "lxml", specifier = ">=4.9" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },

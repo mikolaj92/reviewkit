@@ -1,5 +1,9 @@
 # Ocena zastąpienia Dike przez ReviewKit
 
+> **NIEAKTUALNE (2026-07).** Migracja opisana niżej została wykonana: dike renderuje
+> brudnopis i czystopis przez reviewkit (#3319/#3339), a legacy pliki dike, do których
+> odwołuje się ta ocena, już nie istnieją. Dokument zostaje jako zapis historyczny.
+
 Data analizy: 2026-06-12
 
 Zakres lokalny:
