@@ -6,14 +6,14 @@ from pathlib import Path
 
 from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import ReviewContextProvider
+from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 from reviewkit.document import ReviewDocument
 from reviewkit.llm import LLMClient
 from reviewkit.models import ReviewAction, ReviewFinding, ReviewResult, ReviewStats
 from reviewkit.parser_docx import load_docx
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile, load_profile
-from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
-from reviewkit.reviewer import HierarchicalReviewer
+from reviewkit.takt_reviewer import TaktReviewer
 
 
 def review_document(
@@ -47,7 +47,7 @@ def review_document(
     # a ReviewProfile in memory shouldn't be forced to round-trip it through disk.
     profile = profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
     document = load_docx(input_path)
-    reviewer = HierarchicalReviewer(
+    reviewer = TaktReviewer(
         profile=profile,
         llm=llm,
         context_provider=context_provider,

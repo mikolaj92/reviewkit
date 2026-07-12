@@ -31,6 +31,7 @@ from reviewkit.prompts import (
 from reviewkit.state import ReviewState
 
 
+import warnings
 class HierarchicalReviewer:
     def __init__(
         self,
@@ -53,7 +54,12 @@ class HierarchicalReviewer:
         # default preserves the resilient, degrade-and-continue behavior every
         # existing consumer relies on.
         self.propagate_llm_errors = propagate_llm_errors
-
+        warnings.warn(
+            "HierarchicalReviewer is deprecated and will be removed. "
+            "Use review_document (powered by TaktReviewer) or TaktReviewer directly.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     def review(
         self, document: ReviewDocument
     ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:

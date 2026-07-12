@@ -5,11 +5,13 @@ It is not a legal checker, grammar checker or one-shot document correction tool.
 Applications provide review profiles, LLM clients and optional context; ReviewKit validates
 the resulting findings/actions and applies only safe deterministic edits.
 
-It reviews documents in layers:
+It reviews documents in layers (powered by the generic `takt` cascade engine):
 
 ```text
 sentence -> paragraph -> section -> document
 ```
+
+The control flow (cascaded regulation, homeostats, entropy reduction via splot, vertical waves) is provided by `takt`. ReviewKit supplies the document plant, LLM detectors, and deterministic effectors.
 
 It can produce three outputs:
 
@@ -27,6 +29,44 @@ It can produce three outputs:
 6. Auto-apply is conservative by default and ambiguous edits become conflicts.
 7. DOCX and JSON reports are first-class outputs.
 
+## Architecture
+
+ReviewKit 0.10+ is built on the takt (0.1.1) cascade regulation engine and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
+
+Transport: fala (vertical and horizontal).
+Entropy reduction: splot.
+Layered control: kaskada (n-layer cascade with descending constraints and ascending telemetry).
+
+How ReviewKit maps onto the archetype:
+
+StateNode + ControlledPlant maps to ReviewDocumentPlant + _DocNode adapters over the sentence/paragraph/section/document tree.
+RawSignal maps to an LLM finding or action candidate turned into deviation + confidence + evidence.
+CascadeRegulator + TaktSequencer: one regulator per review scope (sentence to document); TaktReviewer wires the plant + detectors + homeostats.
+ProfilHomeostatyczny is derived from profile action policy + review dimensions; it controls aberration and per-dimension essential variables.
+SplotFusionUnit (splot) is the default entropy reducer inside takt before each tact (can be swapped).
+Actuation means "safe to apply" and becomes a ReviewAction with status APPLIED (subject to post-policy).
+SafetyInterlock means "too much entropy / too low confidence / policy violation" and produces NEEDS_HUMAN_DECISION or NOT_APPLIED.
+ErrorSignal / FalaWave carry ascending telemetry of residual entropy + contributing signals.
+EssentialVariable holds aberration (from severity/confidence) plus one per review dimension.
+Post-processing (overlap demotion, protected patterns, tracked-revision safety) stays in ReviewKit, outside takt.
+
+Flow (one document):
+
+- ReviewDocumentPlant yields nodes in post-order (deepest first).
+- Per-layer CascadeRegulator (with BaseLLMDetector) produces RawSignals from LLM responses.
+- ProfilHomeostatyczny + splot decide Actuation vs SafetyInterlock.
+- ReviewEffector turns the decision + stored LLM response into ReviewActions with status.
+- Deterministic post-pass (same as the old hierarchical code) preserves the public output contract.
+
+Public models (ReviewFinding, ReviewAction, ReviewResult), profiles, review_document, and CLI are unchanged.
+
+Requires Python >= 3.13 (takt 0.1.1 requirement).
+
+References (same as Fala / Splot):
+
+Marian Mazur, Cybernetyczna teoria układów samodzielnych (1966), Jakościowa teoria informacji (1970).
+Józef Kossecki on multi-level autonomous systems (wielopoziomowe układy samodzielne).
+takt README, splot CONCEPTUAL_MODEL.md, Fala CYBERNETIC_MAPPING.md.
 ## Install and Run
 
 ```bash
@@ -207,7 +247,7 @@ Existing extension points include:
 - protected-pattern guards for corrected output safety,
 - `ReviewContextProvider` for grounding, classifier results or external evidence,
 - an injectable `ActionPolicy` (peer of `ReviewContextProvider`) passed to
-  `review_document(..., action_policy=...)` or `HierarchicalReviewer`, carrying programmatic
+  `review_document(..., action_policy=...)`, carrying programmatic
   `PolicyGuard` callables — `(action, node_text) -> reason | None` — for fail-closed rules that
   regex config cannot express.
 
