@@ -1,4 +1,4 @@
-"""Map ReviewProfile to takt 0.1.1 ProfilHomeostatyczny.
+"""Map ReviewProfile to takt 0.1.2 ProfilHomeostatyczny.
 
 Each review scope becomes one layer in the cascade.
 We derive EssentialVariables and thresholds from the profile's action policy,

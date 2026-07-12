@@ -1,4 +1,4 @@
-"""Detectors for takt 0.1.1.
+"""Detectors for takt 0.1.2.
 
 These objects have a .detect(node: StateNode) -> list[RawSignal] method.
 They are registered on CascadeRegulator per layer.

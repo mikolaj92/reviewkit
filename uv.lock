@@ -85,18 +85,11 @@ wheels = [
 [[package]]
 name = "fala-runtime"
 version = "0.2.1"
-source = { editable = "../Fala" }
+source = { git = "https://github.com/mikolaj92/fala.git#b5f8085f418010a9290613b86671d435551411a9" }
 dependencies = [
     { name = "jsonschema" },
     { name = "pydantic" },
     { name = "pyyaml" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "jsonschema", specifier = ">=4.23.0" },
-    { name = "pydantic", specifier = ">=2.7.0" },
-    { name = "pyyaml", specifier = ">=6.0.0" },
 ]
 
 [[package]]
@@ -498,7 +491,7 @@ wheels = [
 
 [[package]]
 name = "reviewkit"
-version = "0.10.0"
+version = "0.11.0"
 source = { editable = "." }
 dependencies = [
     { name = "lxml" },
@@ -524,7 +517,7 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=15.0.0" },
-    { name = "takt", editable = "../takt" },
+    { name = "takt", git = "https://github.com/mikolaj92/takt.git?rev=0.1.2" },
     { name = "typer", specifier = ">=0.26.7" },
 ]
 
@@ -665,26 +658,13 @@ wheels = [
 
 [[package]]
 name = "takt"
-version = "0.1.1"
-source = { editable = "../takt" }
+version = "0.1.2"
+source = { git = "https://github.com/mikolaj92/takt.git?rev=0.1.2#bfafb18e51c582fc865b9a2df1304cd8f8d3019d" }
 dependencies = [
     { name = "fala-runtime" },
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "fala-runtime", editable = "../Fala" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
-    { name = "pydantic", specifier = ">=2.13.4" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.1.1" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
-    { name = "splot-runtime", marker = "extra == 'splot'", editable = "../splot" },
-    { name = "typing-extensions", specifier = ">=4" },
-]
-provides-extras = ["splot", "dev"]
 
 [[package]]
 name = "typer"

@@ -1,4 +1,4 @@
-"""Takt-specific smoke tests for the ReviewKit + takt 0.1.1 integration.
+"""Takt-specific smoke tests for the ReviewKit + takt 0.1.2 integration.
 
 These tests exercise the plant, cascade, and TaktReviewer path.
 They are intentionally small and do not duplicate all old hierarchical tests.

@@ -1,4 +1,4 @@
-"""Effector adapters for takt 0.1.1 in ReviewKit.
+"""Effector adapters for takt 0.1.2 in ReviewKit.
 
 When a CascadeRegulator emits Actuation or SafetyInterlock for a node,
 these adapters turn that decision + the rich LLM response (stored during detection)

@@ -31,7 +31,7 @@ from reviewkit.state import ReviewState
 
 
 class TaktReviewer:
-    """Full takt 0.1.1 driven reviewer.
+    """Full takt 0.1.2 driven reviewer.
 
     Replaces the manual for-loop hierarchy.
     """

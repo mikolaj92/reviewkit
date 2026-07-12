@@ -1,4 +1,4 @@
-"""ReviewKit as ControlledPlant for takt 0.1.1.
+"""ReviewKit as ControlledPlant for takt 0.1.2.
 
 Provides StateNode adapters and ControlledPlant over the existing
 ReviewDocument / Section / Paragraph / Sentence tree.

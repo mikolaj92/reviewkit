@@ -31,7 +31,7 @@ It can produce three outputs:
 
 ## Architecture
 
-ReviewKit 0.10+ is built on the takt (0.1.1) cascade regulation engine and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
+ReviewKit 0.10+ is built on the takt (0.1.2) cascade regulation engine and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
 
 Transport: fala (vertical and horizontal).
 Entropy reduction: splot.
@@ -60,7 +60,7 @@ Flow (one document):
 
 Public models (ReviewFinding, ReviewAction, ReviewResult), profiles, review_document, and CLI are unchanged.
 
-Requires Python >= 3.13 (takt 0.1.1 requirement).
+Requires Python >= 3.13 (takt 0.1.2 requirement).
 
 References (same as Fala / Splot):
 
