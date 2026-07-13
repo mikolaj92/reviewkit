@@ -24,6 +24,51 @@ from reviewkit.docx_package import normalize_docx_timestamps
 from reviewkit.document import ReviewDocument
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 from reviewkit.policy import WRITING_ACTIONS
+from doctotext import (
+    InlineSegment as _InlineSegment,  # base mechanical only (text/opaque + rpr/element)
+    paragraph_to_inline_segments,
+    _advances_offset as _base_advances_offset,
+    _visible_text as _base_visible_text,
+    _visible_len as _base_visible_len,
+    _split_visible_offset as _base_split_visible_offset,
+    _insert_visible as _base_insert_visible,
+    _replace_visible_range as _base_replace_visible_range,
+    _rpr_at as _base_rpr_at,
+    _index_at_visible_offset as _base_index_at_visible_offset,
+    _copy_segment as _base_copy_segment,
+)
+# ------------------------------------------------------------------
+# Delegation to DocToText for pure mechanical DOCX (addressing, run splitting,
+# visible offset math, rPr/opaque preservation). reviewkit owns only the
+# review overlay (ins/del markup as decision trace, comments, revision ids,
+# apply_to_corrected, integrity, policy).
+# ------------------------------------------------------------------
+def _inline_to_review(seg: _InlineSegment, **review_fields: Any) -> _Segment:
+    """Lift a base mechanical InlineSegment to a review _Segment, attaching review metadata."""
+    return _Segment(
+        kind=seg.kind,  # type: ignore[arg-type]
+        text=seg.text,
+        rpr=seg.rpr,
+        element=seg.element,
+        **review_fields,
+    )
+
+
+def _review_to_inline(seg: _Segment) -> _InlineSegment:
+    return _InlineSegment(
+        kind=seg.kind,  # type: ignore[arg-type]
+        text=seg.text,
+        rpr=seg.rpr,
+        element=seg.element,
+    )
+
+
+def _lift_list(base_list: list[_InlineSegment]) -> list[_Segment]:
+    return [_inline_to_review(s) for s in base_list]
+
+
+def _to_base_list(review_list: list[_Segment]) -> list[_InlineSegment]:
+    return [_review_to_inline(s) for s in review_list]
 
 _SegmentKind = Literal["text", "ins", "del", "opaque"]
 
@@ -133,13 +178,7 @@ class _Segment:
 
 
 def _advances_offset(segment: _Segment) -> bool:
-    """Whether ``segment`` occupies visible characters in the parser's offset space.
-
-    Original content (kept text and preserved inline objects) advances offsets;
-    tracked-change markup we introduce (``ins``/``del``) is zero-width so that
-    later, left-ward edits keep their original-text coordinates.
-    """
-    return segment.kind in ("text", "opaque")
+    return _base_advances_offset(_review_to_inline(segment))
 
 
 def render_reviewed_docx(
@@ -595,74 +634,9 @@ def _align_locators_to_visible_text(
 
 
 def _paragraph_segments(paragraph: Any) -> list[_Segment]:
-    """Decompose a paragraph into ordered segments, preserving non-text content.
+    base = paragraph_to_inline_segments(paragraph)
+    return _lift_list(base)
 
-    Editable text becomes ``text`` segments; every other inline object (images,
-    hyperlinks, tabs, breaks, fields, bookmarks, pre-existing tracked revisions,
-    math, ...) is kept verbatim as an ``opaque`` segment so an edited paragraph
-    never loses that content when it is rebuilt.
-    """
-    segments: list[_Segment] = []
-    for child in paragraph._p:
-        tag = child.tag
-        if tag == qn("w:pPr"):
-            continue
-        if tag == qn("w:r"):
-            segments.extend(_run_segments(child))
-            continue
-        segments.append(
-            _Segment("opaque", _descendant_visible_text(child), element=deepcopy(child))
-        )
-    return segments or [_Segment("text", paragraph.text)]
-
-
-def _run_segments(run: Any) -> list[_Segment]:
-    rpr = run.find(qn("w:rPr"))
-    result: list[_Segment] = []
-    for child in run:
-        tag = child.tag
-        if tag == qn("w:rPr"):
-            continue
-        if tag == qn("w:t"):
-            if child.text:
-                result.append(_Segment("text", child.text, deepcopy(rpr)))
-            continue
-        # Non-text run content (tab, break, drawing/image, symbol, field char, ...)
-        # is re-wrapped into its own run so run properties survive, and kept opaque
-        # with the visible width it contributes to the paragraph text.
-        result.append(
-            _Segment("opaque", _inline_width(child), element=_wrap_run_child(rpr, child))
-        )
-    return result
-
-
-def _wrap_run_child(rpr: Any | None, child: Any) -> Any:
-    run = OxmlElement("w:r")
-    if rpr is not None:
-        run.append(deepcopy(rpr))
-    run.append(deepcopy(child))
-    return run
-
-
-def _inline_width(child: Any) -> str:
-    if child.tag == qn("w:tab"):
-        return "\t"
-    if child.tag in (qn("w:br"), qn("w:cr")):
-        return "\n"
-    return ""
-
-
-def _descendant_visible_text(element: Any) -> str:
-    """Visible characters an opaque element contributes, mirroring ``paragraph.text``."""
-    parts: list[str] = []
-    for node in element.iter():
-        if node.tag == qn("w:t") and node.text:
-            parts.append(node.text)
-        elif node.tag == qn("w:tab"):
-            parts.append("\t")
-        elif node.tag in (qn("w:br"), qn("w:cr")):
-            parts.append("\n")
-    return "".join(parts)
 
 
 def _replace_visible_range(
@@ -671,70 +645,24 @@ def _replace_visible_range(
     end: int,
     replacement: list[_Segment],
 ) -> list[_Segment]:
-    segments = _split_visible_offset(_split_visible_offset(segments, end), start)
-    result: list[_Segment] = []
-    inserted = False
-    offset = 0
-    for segment in segments:
-        next_offset = offset + (len(segment.text) if _advances_offset(segment) else 0)
-        if segment.kind == "text" and start <= offset and next_offset <= end:
-            if not inserted:
-                result.extend(segment for segment in replacement if segment.text)
-                inserted = True
-            offset = next_offset
-            continue
-        result.append(segment)
-        offset = next_offset
-    if not inserted:
-        # The range selected no editable text (zero-width range): land the replacement
-        # at the range's start position, never at the paragraph end.
-        index = _index_at_visible_offset(result, start)
-        result[index:index] = [segment for segment in replacement if segment.text]
-    return result
+    base_rep = _to_base_list(replacement)
+    base = _base_replace_visible_range(_to_base_list(segments), start, end, base_rep)
+    return _lift_list(base)
 
 
 def _insert_visible(segments: list[_Segment], offset: int, insert: _Segment) -> list[_Segment]:
-    segments = _split_visible_offset(segments, offset)
-    index = _index_at_visible_offset(segments, offset)
-    return [*segments[:index], insert, *segments[index:]]
+    base_ins = _review_to_inline(insert)
+    base = _base_insert_visible(_to_base_list(segments), offset, base_ins)
+    return _lift_list(base)
 
 
 def _split_visible_offset(segments: list[_Segment], offset: int) -> list[_Segment]:
-    if offset <= 0:
-        return segments
-
-    result: list[_Segment] = []
-    cursor = 0
-    split_done = False
-    for segment in segments:
-        if segment.kind != "text":
-            result.append(segment)
-            if _advances_offset(segment):
-                cursor += len(segment.text)
-            continue
-        next_cursor = cursor + len(segment.text)
-        if not split_done and cursor < offset < next_cursor:
-            split_at = offset - cursor
-            result.append(_copy_segment(segment, segment.text[:split_at]))
-            result.append(_copy_segment(segment, segment.text[split_at:]))
-            split_done = True
-        else:
-            result.append(segment)
-        cursor = next_cursor
-    return result
+    base = _base_split_visible_offset(_to_base_list(segments), offset)
+    return _lift_list(base)
 
 
 def _index_at_visible_offset(segments: list[_Segment], offset: int) -> int:
-    cursor = 0
-    for index, segment in enumerate(segments):
-        if not _advances_offset(segment):
-            continue
-        if cursor >= offset:
-            return index
-        cursor += len(segment.text)
-        if cursor >= offset:
-            return index + 1
-    return len(segments)
+    return _base_index_at_visible_offset(_to_base_list(segments), offset)
 
 
 def _visible_slice(
@@ -764,7 +692,7 @@ def _assign_revision_ids(segments: list[_Segment], revision_id: int) -> int:
 
 
 def _visible_text(segments: list[_Segment]) -> str:
-    return "".join(segment.text for segment in segments if _advances_offset(segment))
+    return _base_visible_text(_to_base_list(segments))
 
 
 def _action_range(segments: list[_Segment], action: ReviewAction) -> tuple[int, int] | None:
@@ -788,35 +716,21 @@ def _locator_action_range(action: ReviewAction) -> tuple[int, int] | None:
 
 
 def _visible_len(segments: list[_Segment]) -> int:
-    return len(_visible_text(segments))
+    return _base_visible_len(_to_base_list(segments))
 
 
 def _rpr_at(segments: list[_Segment], offset: int) -> Any | None:
-    cursor = 0
-    previous: Any | None = None
-    for segment in segments:
-        if segment.kind != "text":
-            if _advances_offset(segment):
-                cursor += len(segment.text)
-            continue
-        next_cursor = cursor + len(segment.text)
-        if cursor <= offset <= next_cursor:
-            return deepcopy(segment.rpr)
-        previous = segment.rpr
-        cursor = next_cursor
-    return deepcopy(previous)
+    return _base_rpr_at(_to_base_list(segments), offset)
 
 
 def _copy_segment(segment: _Segment, text: str) -> _Segment:
-    return _Segment(
-        kind=segment.kind,
-        text=text,
-        rpr=deepcopy(segment.rpr),
+    base = _base_copy_segment(_review_to_inline(segment), text)
+    return _inline_to_review(
+        base,
         action_id=segment.action_id,
         revision_id=segment.revision_id,
         start_comments=list(segment.start_comments),
         end_comments=list(segment.end_comments),
-        element=deepcopy(segment.element) if segment.element is not None else None,
     )
 
 
