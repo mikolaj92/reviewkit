@@ -27,7 +27,7 @@ dependencies = [
     "rich>=15.0.0",
     "typer>=0.26.7",
     "takt @ git+https://github.com/mikolaj92/takt.git@0.1.2",
-    "doctotext @ git+https://github.com/mikolaj92/DocToText.git@v0.4.0",
+    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@main",
 ]
 
 [project.scripts]

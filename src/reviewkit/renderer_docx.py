@@ -24,7 +24,7 @@ from reviewkit.docx_package import normalize_docx_timestamps
 from reviewkit.document import ReviewDocument
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 from reviewkit.policy import WRITING_ACTIONS
-from doctotext import (
+from docxtor import (
     InlineSegment as _InlineSegment,  # base mechanical only (text/opaque + rpr/element)
     paragraph_to_inline_segments,
     _advances_offset as _base_advances_offset,
@@ -38,11 +38,10 @@ from doctotext import (
     _copy_segment as _base_copy_segment,
 )
 # ------------------------------------------------------------------
-# Delegation to DocToText for pure mechanical DOCX (addressing, run splitting,
+# Delegation to docxtor for pure mechanical DOCX (addressing, run splitting,
 # visible offset math, rPr/opaque preservation). reviewkit owns only the
 # review overlay (ins/del markup as decision trace, comments, revision ids,
 # apply_to_corrected, integrity, policy).
-# ------------------------------------------------------------------
 def _inline_to_review(seg: _InlineSegment, **review_fields: Any) -> _Segment:
     """Lift a base mechanical InlineSegment to a review _Segment, attaching review metadata."""
     return _Segment(
