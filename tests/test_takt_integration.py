@@ -1,6 +1,6 @@
-"""Takt-specific smoke tests for the ReviewKit + takt 0.1.2 integration.
+"""Takt-specific smoke tests for the ReviewKit + takt 0.2.0 host integration.
 
-These tests exercise the plant, cascade, and TaktReviewer path.
+These tests exercise the plant, local cascade client, and TaktReviewer path.
 They are intentionally small and do not duplicate all old hierarchical tests.
 """
 
@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from docx import Document as DocxDocument
-import pytest
 
 from reviewkit import review_document
 from reviewkit.llm import MockLLMClient

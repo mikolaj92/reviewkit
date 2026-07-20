@@ -1,19 +1,13 @@
-"""Effector adapters for takt 0.1.2 in ReviewKit.
+"""Effector adapters for takt 0.2.0 decisions in ReviewKit.
 
-When a CascadeRegulator emits Actuation or SafetyInterlock for a node,
-these adapters turn that decision + the rich LLM response (stored during detection)
-into ReviewAction objects with correct status, and feed findings into ReviewState.
-
-This preserves the existing rich ReviewAction model (locators, original_text,
-replacement, comments, etc.) while the control flow (when to act, when to
-escalate, entropy reduction) is driven by takt + splot + homeostat.
+When a cascade evaluate returns actuation / interlock / stable for a node,
+these adapters turn that decision + the stored LLM response into ReviewAction
+objects with correct status, and feed findings into ReviewState.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-from takt import Actuation, OutgoingSignals, SafetyInterlock
 
 from reviewkit.models import (
     ActionStatus,
@@ -22,10 +16,11 @@ from reviewkit.models import (
     ReviewScope,
 )
 from reviewkit.state import ReviewState
+from reviewkit.takt_types import TaktDecision
 
 
 class ReviewEffector:
-    """Collects decisions from takt tacts and materializes ReviewActions + findings."""
+    """Collects takt decisions and materializes ReviewActions + findings."""
 
     def __init__(self, state: ReviewState) -> None:
         self.state = state
@@ -43,11 +38,9 @@ class ReviewEffector:
         self._responses[node_id] = response
         self._scopes[node_id] = scope
 
-        # Immediately absorb findings into state (like old code did)
         if hasattr(response, "findings"):
             self.state._add_findings(response.findings)  # type: ignore[attr-defined]
             self.findings.extend(response.findings)
-        # Replicate old absorb_response side effects for summaries etc.
         if hasattr(response, "summary") and response.summary:
             if scope == ReviewScope.DOCUMENT:
                 self.state.document_summary = response.summary
@@ -65,7 +58,7 @@ class ReviewEffector:
             _extend_unique(self.state.missing_elements, response.missing_elements)
 
     def apply_takt_decision(
-        self, node_id: str, signals: OutgoingSignals
+        self, node_id: str, decision: TaktDecision
     ) -> list[ReviewAction]:
         """Turn one takt decision into zero or more ReviewActions with status."""
         if node_id not in self._responses:
@@ -75,7 +68,12 @@ class ReviewEffector:
         candidate_actions: list[ReviewAction] = getattr(response, "actions", []) or []
         produced: list[ReviewAction] = []
 
-        if signals.interlock:
+        if decision.has_interlock:
+            reason = (
+                decision.interlock.reason
+                if decision.interlock
+                else "takt interlock"
+            )
             for ca in candidate_actions:
                 status = (
                     ActionStatus.NEEDS_HUMAN_DECISION
@@ -86,11 +84,11 @@ class ReviewEffector:
                     ca.model_copy(
                         update={
                             "status": status,
-                            "policy_reason": signals.interlock.reason or "takt interlock",
+                            "policy_reason": reason,
                         }
                     )
                 )
-        elif signals.actuation:
+        elif decision.has_actuation:
             for ca in candidate_actions:
                 produced.append(
                     ca.model_copy(
@@ -115,8 +113,10 @@ class ReviewEffector:
         return produced
 
 
-__all__ = ["ReviewEffector"]
 def _extend_unique(target: list[str], values: list[str]) -> None:
     for v in values or []:
         if v and v not in target:
             target.append(v)
+
+
+__all__ = ["ReviewEffector"]

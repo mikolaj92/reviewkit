@@ -1,6 +1,6 @@
 [project]
 name = "reviewkit"
-version = "0.12.0"
+version = "0.13.0"
 description = "Hierarchical human-like document review workflow engine"
 readme = "README.md"
 authors = [
@@ -26,8 +26,9 @@ dependencies = [
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
     "typer>=0.26.7",
-    "takt @ git+https://github.com/mikolaj92/takt.git@0.1.2",
-    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@main",
+    # takt 0.2.0 is Mojo-only (no Python package). Host boundary: TAKT_HOME +
+    # tools/takt_step.sh, or the local 0.2.0-compatible fusion/homeostat fallback.
+    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@d1254296dc3bf4ff40f98f1186c441bb91d41bc3",
 ]
 
 [project.scripts]

@@ -1,13 +1,9 @@
-"""ReviewKit as ControlledPlant for takt 0.1.2.
+"""ReviewKit document plant for takt 0.2.0 host integration.
 
-Provides StateNode adapters and ControlledPlant over the existing
-ReviewDocument / Section / Paragraph / Sentence tree.
+Builds a domain tree (sentence → paragraph → section → document) and exposes
+post-order scan plus JSON plant_nodes for the Mojo cascade step.
 
-Scan order: post-order (children before parents) so that when a parent
-node is tacted, all its subtree children have already been processed.
-This matches the old hierarchical roll-up (sentences -> paragraph -> ...).
-
-value is the inner node object (default numeric detector is skipped safely).
+Takt has no document parser — the host owns plant construction.
 """
 
 from __future__ import annotations
@@ -15,26 +11,33 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterator, Sequence
 
-from takt import ControlledPlant, StateNode
-
 from reviewkit.document import (
     ParagraphNode,
     ReviewDocument,
     SectionNode,
     SentenceNode,
 )
+from reviewkit.models import ReviewScope
+from reviewkit.takt_types import PlantNode
 
 
-class _DocNode(StateNode[Any]):
-    """Wrapper making any review node satisfy takt StateNode protocol."""
+class DocNode:
+    """Wrapper around a review node with children for hierarchical scan."""
 
     def __init__(
         self,
         inner: SentenceNode | ParagraphNode | SectionNode | ReviewDocument,
-        children: list[_DocNode],
+        children: list[DocNode],
+        *,
+        parent_id: str = "",
+        layer: int = 0,
+        kind: str = "node",
     ) -> None:
         self.inner = inner
         self._children = children
+        self.parent_id = parent_id
+        self.layer = layer
+        self.kind = kind
 
     @property
     def id(self) -> str:
@@ -42,73 +45,133 @@ class _DocNode(StateNode[Any]):
 
     @property
     def value(self) -> Any:
-        # Return the inner object. The fallback numeric detector in takt
-        # will catch the TypeError and skip. Real detectors ignore .value.
         return self.inner
 
-    def get_children(self) -> Sequence[StateNode[Any]]:
+    def get_children(self) -> Sequence[DocNode]:
         return self._children
 
     def has_children(self) -> bool:
-        # Always return True so that the takt CascadeRegulator child_loop descent
-        # reaches the matching layer's detector for every node we tact.
-        # Layer selection (sentence layer only acts on sentence nodes etc.) is done
-        # by the strict guards inside the detectors. The document tree structure
-        # still controls get_children() for the actual StateNode children.
-        return True
+        return bool(self._children)
+
+    def scope(self) -> ReviewScope | None:
+        if isinstance(self.inner, SentenceNode):
+            return ReviewScope.SENTENCE
+        if isinstance(self.inner, ParagraphNode):
+            return ReviewScope.PARAGRAPH
+        if isinstance(self.inner, SectionNode):
+            return ReviewScope.SECTION
+        if isinstance(self.inner, ReviewDocument):
+            return ReviewScope.DOCUMENT
+        return None
+
+    def to_plant_node(self, *, value: float = 0.0) -> PlantNode:
+        return PlantNode(
+            id=self.id,
+            value=value,
+            has_children=self.has_children(),
+            parent_id=self.parent_id,
+            layer=self.layer,
+            kind=self.kind,
+        )
+
     def __repr__(self) -> str:
         kind = type(self.inner).__name__
-        return f"_DocNode({kind}, {self.id!r})"
+        return f"DocNode({kind}, {self.id!r})"
+
+
+# Backward-compatible alias used by tests / older imports
+_DocNode = DocNode
 
 
 @dataclass
-class ReviewDocumentPlant(ControlledPlant[Any]):
-    """ControlledPlant for a ReviewDocument.
+class ReviewDocumentPlant:
+    """Host plant over a ReviewDocument.
 
-    sequential_scan yields nodes in post-order (deepest first).
-    This ensures lower-scope tacts happen before their containing higher-scope node.
+    sequential_scan yields nodes in post-order (deepest first) so lower-scope
+    tacts finish before their containing higher-scope node.
     """
 
     document: ReviewDocument
-    root: _DocNode = field(init=False)
-    _index: dict[str, _DocNode] = field(init=False, repr=False)
+    scope_layers: dict[ReviewScope, int] = field(default_factory=dict)
+    root: DocNode = field(init=False)
+    _index: dict[str, DocNode] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if not self.scope_layers:
+            # Default pipeline order as layer indices
+            self.scope_layers = {
+                ReviewScope.SENTENCE: 0,
+                ReviewScope.PARAGRAPH: 1,
+                ReviewScope.SECTION: 2,
+                ReviewScope.DOCUMENT: 3,
+            }
         self.root = self._build_tree(self.document)
         self._index = {}
         self._build_index(self.root)
 
-    def _build_tree(self, doc: ReviewDocument) -> _DocNode:
-        def wrap_sentence(s: SentenceNode) -> _DocNode:
-            return _DocNode(s, [])
+    def _layer_for(self, scope: ReviewScope) -> int:
+        return self.scope_layers.get(scope, 0)
 
-        def wrap_paragraph(p: ParagraphNode) -> _DocNode:
-            sents = [wrap_sentence(s) for s in p.sentences]
-            return _DocNode(p, sents)
+    def _build_tree(self, doc: ReviewDocument) -> DocNode:
+        def wrap_sentence(s: SentenceNode, parent_id: str) -> DocNode:
+            return DocNode(
+                s,
+                [],
+                parent_id=parent_id,
+                layer=self._layer_for(ReviewScope.SENTENCE),
+                kind="sentence",
+            )
 
-        def wrap_section(sec: SectionNode) -> _DocNode:
-            paras = [wrap_paragraph(p) for p in sec.paragraphs]
-            return _DocNode(sec, paras)
+        def wrap_paragraph(p: ParagraphNode, parent_id: str) -> DocNode:
+            sents = [wrap_sentence(s, p.id) for s in p.sentences]
+            return DocNode(
+                p,
+                sents,
+                parent_id=parent_id,
+                layer=self._layer_for(ReviewScope.PARAGRAPH),
+                kind="paragraph",
+            )
 
-        sections = [wrap_section(sec) for sec in doc.sections]
-        return _DocNode(doc, sections)
+        def wrap_section(sec: SectionNode, parent_id: str) -> DocNode:
+            paras = [wrap_paragraph(p, sec.id) for p in sec.paragraphs]
+            return DocNode(
+                sec,
+                paras,
+                parent_id=parent_id,
+                layer=self._layer_for(ReviewScope.SECTION),
+                kind="section",
+            )
 
-    def _build_index(self, node: _DocNode) -> None:
+        sections = [wrap_section(sec, doc.id) for sec in doc.sections]
+        return DocNode(
+            doc,
+            sections,
+            parent_id="",
+            layer=self._layer_for(ReviewScope.DOCUMENT),
+            kind="document",
+        )
+
+    def _build_index(self, node: DocNode) -> None:
         self._index[node.id] = node
         for ch in node.get_children():
             self._build_index(ch)
 
-    def sequential_scan(self) -> Iterator[StateNode[Any]]:
-        """Post-order: children before parent. Matches old bottom-up review."""
-        def post(n: _DocNode) -> Iterator[StateNode[Any]]:
+    def sequential_scan(self) -> Iterator[DocNode]:
+        """Post-order: children before parent."""
+
+        def post(n: DocNode) -> Iterator[DocNode]:
             for c in n.get_children():
                 yield from post(c)
             yield n
 
         return post(self.root)
 
-    def get_node(self, node_id: str) -> _DocNode | None:
+    def get_node(self, node_id: str) -> DocNode | None:
         return self._index.get(node_id)
 
+    def to_plant_nodes(self) -> list[PlantNode]:
+        """Full plant in DFS/post-order as takt plant_nodes JSON."""
+        return [n.to_plant_node() for n in self.sequential_scan()]
 
-__all__ = ["ReviewDocumentPlant", "_DocNode"]
+
+__all__ = ["ReviewDocumentPlant", "DocNode", "_DocNode"]

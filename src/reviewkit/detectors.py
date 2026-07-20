@@ -1,20 +1,12 @@
-"""Detectors for takt 0.1.2.
+"""Host-side LLM detectors for takt 0.2.0.
 
-These objects have a .detect(node: StateNode) -> list[RawSignal] method.
-They are registered on CascadeRegulator per layer.
-
-We map ReviewScope to layers.
-Each detector runs the appropriate LLM prompt for the node type and
-turns ReviewFinding / ReviewAction candidates into RawSignal(s).
-
-The actual decision (Actuation vs Interlock) is made by the homeostat + splot.
+Detectors produce ``RawSignal`` lists that ReviewKit ships to the Mojo
+cascade step (or local fusion). Takt itself does not run LLMs.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-from takt import RawSignal
 
 from reviewkit.context import ReviewContextProvider
 from reviewkit.document import (
@@ -25,6 +17,7 @@ from reviewkit.document import (
 )
 from reviewkit.llm import LLMClient
 from reviewkit.models import (
+    ReviewAction,
     ReviewScope,
     SentenceReviewResponse,
     ParagraphReviewResponse,
@@ -39,6 +32,8 @@ from reviewkit.prompts import (
     sentence_review_prompt,
 )
 from reviewkit.state import ReviewState
+from reviewkit.takt_types import RawSignal
+
 
 def _rollup_actions_for_prompt(
     scope: ReviewScope,
@@ -86,7 +81,11 @@ def _rollup_actions_for_prompt(
         for a in actions:
             if a.scope == ReviewScope.SECTION and a.node_id in section_ids:
                 rolled_doc.append(a)
-            elif ReviewScope.SECTION not in enabled and a.scope == ReviewScope.PARAGRAPH and a.node_id in para_ids:
+            elif (
+                ReviewScope.SECTION not in enabled
+                and a.scope == ReviewScope.PARAGRAPH
+                and a.node_id in para_ids
+            ):
                 rolled_doc.append(a)
             elif (
                 ReviewScope.SECTION not in enabled
@@ -126,9 +125,7 @@ class BaseLLMDetector:
         inner = getattr(node, "inner", node)
         node_id = getattr(inner, "id", str(id(inner)))
 
-        # Strict guard: this layer only produces signals (and calls LLM) for nodes of its own scope type.
-        # This is required because the cascade walks every node through every regulator,
-        # but ReviewKit semantics require "sentence layer only talks to sentence nodes".
+        # Strict guard: this layer only produces signals for its own node type.
         if self.scope == ReviewScope.SENTENCE and not isinstance(inner, SentenceNode):
             return []
         if self.scope == ReviewScope.PARAGRAPH and not isinstance(inner, ParagraphNode):
@@ -241,4 +238,4 @@ def _severity_to_deviation(severity: str) -> float:
     return mapping.get(str(severity).lower(), 0.6)
 
 
-__all__ = ["BaseLLMDetector", "_response_to_signals"]
+__all__ = ["BaseLLMDetector", "_response_to_signals", "_rollup_actions_for_prompt"]

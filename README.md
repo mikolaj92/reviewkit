@@ -31,42 +31,48 @@ It can produce three outputs:
 
 ## Architecture
 
-ReviewKit 0.10+ is built on the takt (0.1.2) cascade regulation engine and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
+ReviewKit 0.13+ is built on the **takt 0.2.0 Mojo-only** cascade regulation engine and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
 
-Transport: fala (vertical and horizontal).
-Entropy reduction: splot.
-Layered control: kaskada (n-layer cascade with descending constraints and ascending telemetry).
+Takt 0.2.0 ships **no Python runtime**. ReviewKit is the host:
+
+- builds the document plant and runs LLM detectors
+- sends `plant_nodes` + `layers` + `raw_signals` over the JSON boundary
+- maps `actuation` / `interlock` / `stable` back to `ReviewAction` status
+
+Default engine is a **local 0.2.0-compatible** fusion/homeostat (no Mojo required for tests). To use the real Mojo step:
+
+```bash
+export TAKT_HOME=/path/to/takt   # git clone --branch v0.2.0 https://github.com/mikolaj92/takt.git
+export REVIEWKIT_TAKT_ENGINE=mojo
+```
 
 How ReviewKit maps onto the archetype:
 
-StateNode + ControlledPlant maps to ReviewDocumentPlant + _DocNode adapters over the sentence/paragraph/section/document tree.
-RawSignal maps to an LLM finding or action candidate turned into deviation + confidence + evidence.
-CascadeRegulator + TaktSequencer: one regulator per review scope (sentence to document); TaktReviewer wires the plant + detectors + homeostats.
-ProfilHomeostatyczny is derived from profile action policy + review dimensions; it controls aberration and per-dimension essential variables.
-SplotFusionUnit (splot) is the default entropy reducer inside takt before each tact (can be swapped).
-Actuation means "safe to apply" and becomes a ReviewAction with status APPLIED (subject to post-policy).
-SafetyInterlock means "too much entropy / too low confidence / policy violation" and produces NEEDS_HUMAN_DECISION or NOT_APPLIED.
-ErrorSignal / FalaWave carry ascending telemetry of residual entropy + contributing signals.
-EssentialVariable holds aberration (from severity/confidence) plus one per review dimension.
-Post-processing (overlap demotion, protected patterns, tracked-revision safety) stays in ReviewKit, outside takt.
+- `ReviewDocumentPlant` + `DocNode` — host plant over sentence/paragraph/section/document (post-order scan).
+- `RawSignal` — LLM finding/action candidate → deviation + confidence (+ evidence on the host).
+- `LayerSpec` — per-scope homeostat thresholds derived from profile action policy.
+- `TaktClient.evaluate` — fusion + homeostat (Mojo `takt_step.sh` or local fallback).
+- Actuation → `ReviewAction` status `APPLIED` (subject to post-policy).
+- SafetyInterlock → `NEEDS_HUMAN_DECISION` / `CONFLICT`.
+- Post-processing (overlap demotion, protected patterns, tracked-revision safety) stays in ReviewKit.
 
 Flow (one document):
 
-- ReviewDocumentPlant yields nodes in post-order (deepest first).
-- Per-layer CascadeRegulator (with BaseLLMDetector) produces RawSignals from LLM responses.
-- ProfilHomeostatyczny + splot decide Actuation vs SafetyInterlock.
-- ReviewEffector turns the decision + stored LLM response into ReviewActions with status.
-- Deterministic post-pass (same as the old hierarchical code) preserves the public output contract.
+- `ReviewDocumentPlant` yields nodes in post-order (deepest first).
+- Scope-matched `BaseLLMDetector` produces `RawSignal`s from LLM responses.
+- `TaktClient` decides actuation vs interlock vs stable.
+- `ReviewEffector` turns the decision + stored LLM response into `ReviewAction`s.
+- Deterministic post-pass preserves the public output contract.
 
-Public models (ReviewFinding, ReviewAction, ReviewResult), profiles, review_document, and CLI are unchanged.
+Public models (`ReviewFinding`, `ReviewAction`, `ReviewResult`), profiles, `review_document`, and CLI are unchanged.
 
-Requires Python >= 3.13 (takt 0.1.2 requirement).
+Requires Python >= 3.13. Optional: Mojo toolchain + takt v0.2.0 checkout for the real cascade step.
 
 References (same as Fala / Splot):
 
 Marian Mazur, Cybernetyczna teoria układów samodzielnych (1966), Jakościowa teoria informacji (1970).
 Józef Kossecki on multi-level autonomous systems (wielopoziomowe układy samodzielne).
-takt README, splot CONCEPTUAL_MODEL.md, Fala CYBERNETIC_MAPPING.md.
+takt README / docs/FALA_INTEGRATION.md, splot CONCEPTUAL_MODEL.md, Fala CYBERNETIC_MAPPING.md.
 ## Install and Run
 
 ```bash
