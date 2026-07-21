@@ -1,7 +1,13 @@
-"""Human-editable profile loading."""
+"""Human-editable profile loading.
+
+Profiles are authored as ``profile.toml`` in a folder (plus optional ``*.md``
+instruction files). YAML ``profile.yaml`` remains a one-release compatibility
+fallback (#3568 / reviewkit 0.15).
+"""
 
 from __future__ import annotations
 
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +15,9 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from reviewkit.models import ReviewActionType, ReviewDimension, ReviewScope
+
+_PROFILE_TOML = "profile.toml"
+_PROFILE_YAML = "profile.yaml"
 
 
 class OutputConfig(BaseModel):
@@ -127,25 +136,37 @@ class ReviewProfile(BaseModel):
 
 
 def load_profile(profile_path: str | Path) -> ReviewProfile:
+    """Load a review profile folder.
+
+    Preference order (fail-closed if neither exists)::
+
+        profile.toml  (authoritative)
+        profile.yaml  (compat fallback for one release)
+
+    When both files exist, TOML wins.
+    """
     folder = Path(profile_path)
-    yaml_path = folder / "profile.yaml"
     if not folder.is_dir():
         msg = f"Review profile folder does not exist: {folder}"
         raise FileNotFoundError(msg)
-    if not yaml_path.is_file():
-        msg = f"Review profile is missing profile.yaml: {yaml_path}"
+
+    toml_path = folder / _PROFILE_TOML
+    yaml_path = folder / _PROFILE_YAML
+    if toml_path.is_file():
+        raw = _load_toml_mapping(toml_path)
+        source_path = toml_path
+    elif yaml_path.is_file():
+        raw = _load_yaml_mapping(yaml_path)
+        source_path = yaml_path
+    else:
+        msg = (
+            f"Review profile is missing {_PROFILE_TOML} "
+            f"(and no {_PROFILE_YAML} fallback): {folder}"
+        )
         raise FileNotFoundError(msg)
 
-    try:
-        raw = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-    except yaml.YAMLError as error:
-        # Profiles are hand-edited by domain experts; surface a syntax error with the same
-        # path-carrying ValueError style as the missing-file/non-mapping cases instead of
-        # leaking a bare yaml.YAMLError with no profile context.
-        msg = f"profile.yaml is not valid YAML: {yaml_path}: {error}"
-        raise ValueError(msg) from error
     if not isinstance(raw, dict):
-        msg = f"profile.yaml must contain a mapping: {yaml_path}"
+        msg = f"{source_path.name} must contain a mapping: {source_path}"
         raise ValueError(msg)
 
     markdown_files = _read_markdown_files(folder)
@@ -155,6 +176,35 @@ def load_profile(profile_path: str | Path) -> ReviewProfile:
         "markdown_files": markdown_files,
     }
     return ReviewProfile.model_validate(payload)
+
+
+def _load_toml_mapping(path: Path) -> dict[str, Any]:
+    try:
+        loaded = tomllib.loads(path.read_text(encoding="utf-8"))
+    except tomllib.TOMLDecodeError as error:
+        msg = f"profile.toml is not valid TOML: {path}: {error}"
+        raise ValueError(msg) from error
+    if loaded is None:
+        return {}
+    if not isinstance(loaded, dict):
+        msg = f"profile.toml must contain a mapping: {path}"
+        raise ValueError(msg)
+    return loaded
+
+
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
+    try:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError as error:
+        # Profiles are hand-edited by domain experts; surface a syntax error with the same
+        # path-carrying ValueError style as the missing-file/non-mapping cases instead of
+        # leaking a bare yaml.YAMLError with no profile context.
+        msg = f"profile.yaml is not valid YAML: {path}: {error}"
+        raise ValueError(msg) from error
+    if not isinstance(raw, dict):
+        msg = f"profile.yaml must contain a mapping: {path}"
+        raise ValueError(msg)
+    return raw
 
 
 def _read_markdown_files(folder: Path) -> dict[str, str]:

@@ -140,41 +140,41 @@ Profiles are folders, not Python objects:
 
 ```text
 profiles/employment-contract.lawyer/
-  profile.yaml
+  profile.toml
   instructions.md
   required-clauses.md
   risky-clauses.md
 ```
 
-`profile.yaml` defines role, language, document type, pipeline, dimensions and action policy.
+`profile.toml` defines role, language, document type, pipeline, dimensions and action policy
+(preferred). A one-release `profile.yaml` fallback is still accepted when TOML is absent.
 Markdown files contain reviewer instructions that can be edited by domain experts.
 
 Profiles are intentionally generic:
 
-```yaml
-profile_id: internal-policy-review
-name: internal-policy-review
-display_name: Internal policy review
-language: en
-document_type: policy memo
-reviewer_role: compliance reviewer
-review_dimensions:
-  - clarity
-  - id: internal_policy
-    label: Internal policy
-    metadata:
-      owner: ops
-review_instructions: |
-  Review only against the caller-provided criteria.
-action_policy:
-  apply_policy:
-    typo: apply
-  require_llm_apply_hint: true
-  min_confidence_for_auto_apply: 0.85
-  max_severity_for_auto_apply: medium
-outputs:
-  reviewed_docx: true
-  corrected_docx: true
+```toml
+profile_id = "internal-policy-review"
+name = "internal-policy-review"
+display_name = "Internal policy review"
+language = "en"
+document_type = "policy memo"
+reviewer_role = "compliance reviewer"
+review_dimensions = ["clarity"]
+review_instructions = """
+Review only against the caller-provided criteria.
+"""
+
+[action_policy]
+require_llm_apply_hint = true
+min_confidence_for_auto_apply = 0.85
+max_severity_for_auto_apply = "medium"
+
+[action_policy.apply_policy]
+typo = "apply"
+
+[outputs]
+reviewed_docx = true
+corrected_docx = true
 ```
 
 `outputs` toggles which DOCX artifacts the pipeline renders. Both default to `true`; set
