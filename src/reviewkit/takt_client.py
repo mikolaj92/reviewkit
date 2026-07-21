@@ -1,8 +1,13 @@
-"""Client for takt 0.2.0 Mojo cascade (JSON subprocess) + local fallback.
+"""Client for takt Mojo cascade: Python binding, subprocess, or local fallback.
 
-Primary path: ``tools/takt_step.sh`` under ``TAKT_HOME`` (or sibling checkout).
-Fallback: pure-Python fusion + homeostat mirroring takt 0.2.0 semantics so
-ReviewKit remains usable in tests and hosts without a Mojo toolchain.
+Order (``REVIEWKIT_TAKT_ENGINE``):
+  - ``auto`` (default): in-process ``import takt`` binding → local fallback
+  - ``binding`` / ``python``: force thin Python package (takt >= 0.3)
+  - ``mojo`` / ``subprocess``: ``tools/takt_step.sh`` under ``TAKT_HOME``
+  - ``local``: pure-Python fusion/homeostat (tests / no Mojo toolchain)
+
+No dual engine: binding and subprocess call the same Mojo cascade; local is a
+compatibility mirror only.
 """
 
 from __future__ import annotations
@@ -179,7 +184,7 @@ def evaluate_local(
     return decide_from_error(fused, layer, node.id)
 
 
-def _parse_mojo_result(payload: dict[str, Any]) -> TaktDecision:
+def _parse_mojo_result(payload: dict[str, Any], *, engine: str = "mojo") -> TaktDecision:
     if not payload.get("ok", True) and payload.get("error"):
         raise RuntimeError(f"takt mojo step failed: {payload.get('error')}")
 
@@ -227,8 +232,54 @@ def _parse_mojo_result(payload: dict[str, Any]) -> TaktDecision:
         actuation=actuation,
         interlock=interlock,
         telemetry_count=int(sig.get("telemetry_count") or 0),
-        engine="mojo",
+        engine=engine,
     )
+
+
+def _evaluate_request(
+    *,
+    plant_nodes: Sequence[PlantNode],
+    layers: Sequence[LayerSpec],
+    raw_signals: Sequence[RawSignal],
+    now: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "mode": "evaluate",
+        "now": now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "plant_nodes": [n.to_json() for n in plant_nodes],
+        "layers": [L.to_json() for L in layers],
+        "raw_signals": [s.to_json() for s in raw_signals],
+    }
+
+
+def evaluate_binding(
+    *,
+    plant_nodes: Sequence[PlantNode],
+    layers: Sequence[LayerSpec],
+    raw_signals: Sequence[RawSignal],
+    now: str | None = None,
+) -> TaktDecision:
+    """In-process Mojo via the official ``takt`` Python package (cascade_step)."""
+    try:
+        import takt as takt_pkg
+    except ImportError as exc:
+        raise ImportError(
+            "takt Python package not installed; pin takt@v0.3+ or use local/subprocess"
+        ) from exc
+
+    # Prefer checkout when present so the binding can JIT-compile Mojo sources.
+    home = resolve_takt_home()
+    if home is not None:
+        os.environ.setdefault("TAKT_HOME", str(home))
+
+    request = _evaluate_request(
+        plant_nodes=plant_nodes,
+        layers=layers,
+        raw_signals=raw_signals,
+        now=now,
+    )
+    payload = takt_pkg.cascade_step(request)
+    return _parse_mojo_result(payload, engine="binding")
 
 
 def evaluate_mojo(
@@ -249,19 +300,19 @@ def evaluate_mojo(
     if not step.is_file():
         raise FileNotFoundError(f"missing {step}")
 
-    request = {
-        "mode": "evaluate",
-        "now": now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "plant_nodes": [n.to_json() for n in plant_nodes],
-        "layers": [L.to_json() for L in layers],
-        "raw_signals": [s.to_json() for s in raw_signals],
-    }
+    request = _evaluate_request(
+        plant_nodes=plant_nodes,
+        layers=layers,
+        raw_signals=raw_signals,
+        now=now,
+    )
 
     with tempfile.TemporaryDirectory(prefix="reviewkit-takt-") as tmp:
         req_path = Path(tmp) / "request.json"
         req_path.write_text(json.dumps(request), encoding="utf-8")
         env = os.environ.copy()
         env["TAKT_REQUEST_PATH"] = str(req_path)
+        env.setdefault("TAKT_HOME", str(home))
         proc = subprocess.run(
             ["bash", str(step)],
             cwd=str(home),
@@ -283,24 +334,37 @@ def evaluate_mojo(
         return _parse_mojo_result(payload)
 
 
-class TaktClient:
-    """Evaluate one tact: Mojo when requested, else local 0.2.0-compatible fallback.
+def _resolve_engine(prefer_mojo: bool | None) -> str:
+    if prefer_mojo is True:
+        return "mojo"
+    if prefer_mojo is False:
+        return "local"
+    raw = os.environ.get("REVIEWKIT_TAKT_ENGINE", "auto").strip().lower()
+    if raw in {"", "auto", "default"}:
+        return "auto"
+    if raw in {"binding", "python", "py"}:
+        return "binding"
+    if raw in {"mojo", "subprocess", "shell"}:
+        return "mojo"
+    if raw in {"local", "fallback"}:
+        return "local"
+    return "auto"
 
-    Default engine is ``local`` (fast, no Mojo toolchain). Set
-    ``REVIEWKIT_TAKT_ENGINE=mojo`` and ``TAKT_HOME`` (or a sibling ``takt``
-    checkout) to call ``tools/takt_step.sh``.
-    """
+
+class TaktClient:
+    """Evaluate one tact via binding / subprocess / local fallback."""
 
     def __init__(
         self,
         *,
         prefer_mojo: bool | None = None,
         takt_home: Path | None = None,
+        engine: str | None = None,
     ) -> None:
         self.takt_home = takt_home or resolve_takt_home()
-        if prefer_mojo is None:
-            prefer_mojo = os.environ.get("REVIEWKIT_TAKT_ENGINE", "local").lower() == "mojo"
-        self.prefer_mojo = prefer_mojo
+        self.engine = engine or _resolve_engine(prefer_mojo)
+        # Back-compat flag used by older call sites / tests.
+        self.prefer_mojo = self.engine == "mojo"
 
     def evaluate(
         self,
@@ -309,23 +373,45 @@ class TaktClient:
         layers: Sequence[LayerSpec],
         raw_signals: Sequence[RawSignal] = (),
     ) -> TaktDecision:
-        if self.prefer_mojo:
+        engine = self.engine
+        if engine == "binding":
+            return evaluate_binding(
+                plant_nodes=plant_nodes,
+                layers=layers,
+                raw_signals=raw_signals,
+            )
+        if engine == "mojo":
             return evaluate_mojo(
                 plant_nodes=plant_nodes,
                 layers=layers,
                 raw_signals=raw_signals,
                 takt_home=self.takt_home,
             )
-        return evaluate_local(
-            plant_nodes=plant_nodes,
-            layers=layers,
-            raw_signals=raw_signals,
-        )
+        if engine == "local":
+            return evaluate_local(
+                plant_nodes=plant_nodes,
+                layers=layers,
+                raw_signals=raw_signals,
+            )
+        # auto: binding when available, else local
+        try:
+            return evaluate_binding(
+                plant_nodes=plant_nodes,
+                layers=layers,
+                raw_signals=raw_signals,
+            )
+        except Exception:
+            return evaluate_local(
+                plant_nodes=plant_nodes,
+                layers=layers,
+                raw_signals=raw_signals,
+            )
 
 
 __all__ = [
     "TaktClient",
     "decide_from_error",
+    "evaluate_binding",
     "evaluate_local",
     "evaluate_mojo",
     "fuse_raw_signals",

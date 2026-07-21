@@ -596,7 +596,7 @@ wheels = [
 
 [[package]]
 name = "reviewkit"
-version = "0.13.0"
+version = "0.14.0"
 source = { editable = "." }
 dependencies = [
     { name = "docxtor" },
@@ -605,6 +605,7 @@ dependencies = [
     { name = "python-docx" },
     { name = "pyyaml" },
     { name = "rich" },
+    { name = "takt" },
     { name = "typer" },
 ]
 
@@ -623,6 +624,7 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rich", specifier = ">=15.0.0" },
+    { name = "takt", git = "https://github.com/mikolaj92/takt.git?rev=v0.3.0" },
     { name = "typer", specifier = ">=0.26.7" },
 ]
 
@@ -679,6 +681,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/58/15/8b3609fd3830ef7b2
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl", hash = "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686", size = 9755, upload-time = "2023-10-24T04:13:38.866Z" },
 ]
+
+[[package]]
+name = "takt"
+version = "0.3.0"
+source = { git = "https://github.com/mikolaj92/takt.git?rev=v0.3.0#3f9eafb79bfd401440d5aa27af5fcd8109177239" }
 
 [[package]]
 name = "typer"

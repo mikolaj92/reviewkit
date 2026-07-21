@@ -31,7 +31,7 @@ It can produce three outputs:
 
 ## Architecture
 
-ReviewKit 0.13+ is built on the **takt 0.2.0 Mojo-only** cascade regulation engine and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
+ReviewKit 0.14+ uses the **takt ≥0.3** Mojo cascade (thin Python binding when available) and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
 
 Takt 0.2.0 ships **no Python runtime**. ReviewKit is the host:
 
@@ -39,11 +39,13 @@ Takt 0.2.0 ships **no Python runtime**. ReviewKit is the host:
 - sends `plant_nodes` + `layers` + `raw_signals` over the JSON boundary
 - maps `actuation` / `interlock` / `stable` back to `ReviewAction` status
 
-Default engine is a **local 0.2.0-compatible** fusion/homeostat (no Mojo required for tests). To use the real Mojo step:
+Default engine is **`auto``**: try the official `takt` Python binding (in-process Mojo),
+else a local compatible fusion/homeostat (tests without toolchain).
 
 ```bash
-export TAKT_HOME=/path/to/takt   # git clone --branch v0.2.0 https://github.com/mikolaj92/takt.git
-export REVIEWKIT_TAKT_ENGINE=mojo
+export TAKT_HOME=/path/to/takt          # checkout with mojo/takt (for JIT compile)
+export REVIEWKIT_TAKT_ENGINE=auto       # auto | binding | mojo | local
+# binding = import takt.cascade_step; mojo = tools/takt_step.sh subprocess
 ```
 
 How ReviewKit maps onto the archetype:
