@@ -46,53 +46,60 @@ def _rollup_actions_for_prompt(
     if scope == ReviewScope.PARAGRAPH:
         if not isinstance(inner, ParagraphNode):
             return []
-        sent_ids = {s.id for s in inner.sentences}
+        paragraph_sentence_ids = {sentence.id for sentence in inner.sentences}
         return [
-            a
-            for a in actions
-            if a.scope == ReviewScope.SENTENCE and a.node_id in sent_ids
+            action
+            for action in actions
+            if action.scope == ReviewScope.SENTENCE
+            and action.node_id in paragraph_sentence_ids
         ]
     if scope == ReviewScope.SECTION:
         if not isinstance(inner, SectionNode):
             return []
-        para_ids = {p.id for p in inner.paragraphs}
-        sent_ids: set[str] = set()
-        for p in inner.paragraphs:
-            sent_ids.update(s.id for s in p.sentences)
+        section_paragraph_ids = {paragraph.id for paragraph in inner.paragraphs}
+        section_sentence_ids: set[str] = set()
+        for paragraph in inner.paragraphs:
+            section_sentence_ids.update(sentence.id for sentence in paragraph.sentences)
         rolled: list[ReviewAction] = []
-        for a in actions:
-            if a.scope == ReviewScope.PARAGRAPH and a.node_id in para_ids:
-                rolled.append(a)
+        for action in actions:
+            if (
+                action.scope == ReviewScope.PARAGRAPH
+                and action.node_id in section_paragraph_ids
+            ):
+                rolled.append(action)
             elif (
                 ReviewScope.PARAGRAPH not in enabled
-                and a.scope == ReviewScope.SENTENCE
-                and a.node_id in sent_ids
+                and action.scope == ReviewScope.SENTENCE
+                and action.node_id in section_sentence_ids
             ):
-                rolled.append(a)
+                rolled.append(action)
         return rolled
     if scope == ReviewScope.DOCUMENT:
         if not isinstance(inner, ReviewDocument):
             return []
-        section_ids = {s.id for s in inner.sections}
-        para_ids: set[str] = set()
-        for sec in inner.sections:
-            para_ids.update(p.id for p in sec.paragraphs)
+        document_section_ids = {section.id for section in inner.sections}
+        document_paragraph_ids: set[str] = set()
+        for section in inner.sections:
+            document_paragraph_ids.update(paragraph.id for paragraph in section.paragraphs)
         rolled_doc: list[ReviewAction] = []
-        for a in actions:
-            if a.scope == ReviewScope.SECTION and a.node_id in section_ids:
-                rolled_doc.append(a)
+        for action in actions:
+            if (
+                action.scope == ReviewScope.SECTION
+                and action.node_id in document_section_ids
+            ):
+                rolled_doc.append(action)
             elif (
                 ReviewScope.SECTION not in enabled
-                and a.scope == ReviewScope.PARAGRAPH
-                and a.node_id in para_ids
+                and action.scope == ReviewScope.PARAGRAPH
+                and action.node_id in document_paragraph_ids
             ):
-                rolled_doc.append(a)
+                rolled_doc.append(action)
             elif (
                 ReviewScope.SECTION not in enabled
                 and ReviewScope.PARAGRAPH not in enabled
-                and a.scope == ReviewScope.SENTENCE
+                and action.scope == ReviewScope.SENTENCE
             ):
-                rolled_doc.append(a)
+                rolled_doc.append(action)
         return rolled_doc
     return []
 
@@ -136,6 +143,8 @@ class BaseLLMDetector:
             return []
 
         doc_for_context = self._document
+        if doc_for_context is None:
+            return []
         context = self.context_provider.context_for(
             profile=self.profile,
             document=doc_for_context,
