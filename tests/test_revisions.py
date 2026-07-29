@@ -201,9 +201,17 @@ def test_accept_all_revisions_drops_comments_by_default(tmp_path: Path) -> None:
     report = inspect_markup(corrected)
     assert report.is_clean
     assert report.comment_count == 0
-    # No dangling comment anchors left in the body either.
+    # The clean package contains no comment payload, relationship, content-type entry,
+    # or dangling body anchors. Keeping an empty comments.xml still exposes reviewer-only
+    # metadata to clients and makes the primary artifact structurally unclean.
     with ZipFile(corrected) as archive:
+        names = set(archive.namelist())
         document_xml = archive.read("word/document.xml")
+        relationships = archive.read("word/_rels/document.xml.rels")
+        content_types = archive.read("[Content_Types].xml")
+    assert not any(name.startswith(("word/comments", "word/people.xml")) for name in names)
+    assert b"comments" not in relationships
+    assert b"comments" not in content_types
     assert b"commentReference" not in document_xml
     assert b"commentRangeStart" not in document_xml
 

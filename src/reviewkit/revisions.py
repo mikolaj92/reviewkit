@@ -31,8 +31,9 @@ _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
-_COMMENTS_PART = "word/comments.xml"
-
+_COMMENT_PART_PREFIXES = ("word/comments", "word/people.xml")
+_RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 # The in-document comment anchors (they live in document.xml / headers / footers, not
 # in comments.xml). ``inspect_markup`` counts comments only in comments.xml, but a
 # clean copy must not leave dangling anchors pointing at an emptied comments part.
@@ -159,12 +160,44 @@ def _serialize(root: Any) -> bytes:
     return (_XML_DECLARATION + etree.tostring(root, encoding="unicode")).encode("utf-8")
 
 
+def _is_comment_part(name: str) -> bool:
+    return name.startswith(_COMMENT_PART_PREFIXES)
+
+
+def _strip_comment_relationships(data: bytes) -> bytes:
+    root = etree.fromstring(data)
+    changed = False
+    for relationship in list(root):
+        if relationship.tag != f"{{{_RELATIONSHIPS_NS}}}Relationship":
+            continue
+        target = relationship.get("Target", "").removeprefix("/")
+        relationship_type = relationship.get("Type", "")
+        if "comment" in relationship_type.lower() or target.startswith(
+            ("comments", "word/comments", "people.xml", "word/people.xml")
+        ):
+            root.remove(relationship)
+            changed = True
+    return _serialize(root) if changed else data
+
+
+def _strip_comment_content_types(data: bytes) -> bytes:
+    root = etree.fromstring(data)
+    changed = False
+    for override in list(root):
+        if override.tag != f"{{{_CONTENT_TYPES_NS}}}Override":
+            continue
+        part_name = override.get("PartName", "").removeprefix("/")
+        if _is_comment_part(part_name):
+            root.remove(override)
+            changed = True
+    return _serialize(root) if changed else data
+
+
 def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
-    if name == _COMMENTS_PART and drop_comments:
-        root = etree.fromstring(data)
-        for child in list(root):
-            root.remove(child)  # empty the comments part, preserving its namespaces
-        return _serialize(root)
+    if drop_comments and name.endswith(".rels"):
+        return _strip_comment_relationships(data)
+    if drop_comments and name == "[Content_Types].xml":
+        return _strip_comment_content_types(data)
 
     needs_revisions = bool(_REVISION_TAG_RE.search(data))
     needs_comment_strip = drop_comments and bool(_COMMENT_ANCHOR_RE.search(data))
@@ -213,13 +246,19 @@ def accept_all_revisions(
     with ZipFile(source) as bundle:
         entries = [(info, bundle.read(info.filename)) for info in bundle.infolist()]
 
+    if drop_comments:
+        entries = [
+            (info, data) for info, data in entries if not _is_comment_part(info.filename)
+        ]
+
     # Transform every part BEFORE opening the output: a fail-closed raise then leaves no
     # half-written .docx behind.
     transformed: list[tuple[Any, bytes]] = []
     for info, data in entries:
-        if info.filename.startswith(_CONTENT_PART_PREFIX) and info.filename.endswith(
-            _CONTENT_PART_SUFFIX
-        ):
+        if (
+            info.filename.startswith(_CONTENT_PART_PREFIX)
+            and info.filename.endswith(_CONTENT_PART_SUFFIX)
+        ) or info.filename.endswith(".rels") or info.filename == "[Content_Types].xml":
             data = _transform_part(info.filename, data, drop_comments=drop_comments)
         transformed.append((info, data))
 
