@@ -201,11 +201,18 @@ def test_accept_all_revisions_drops_comments_by_default(tmp_path: Path) -> None:
     report = inspect_markup(corrected)
     assert report.is_clean
     assert report.comment_count == 0
-    # No dangling comment anchors left in the body either.
+    # No residual comment package shell, relationships, or content-type overrides.
     with ZipFile(corrected) as archive:
+        names = archive.namelist()
+        assert "word/comments.xml" not in names
+        assert not any(name.startswith("word/comments") for name in names)
         document_xml = archive.read("word/document.xml")
+        rels = archive.read("word/_rels/document.xml.rels").decode("utf-8")
+        content_types = archive.read("[Content_Types].xml").decode("utf-8")
     assert b"commentReference" not in document_xml
     assert b"commentRangeStart" not in document_xml
+    assert "comments" not in rels
+    assert "comments.xml" not in content_types
 
 
 def test_accept_all_revisions_keeps_comments_when_asked(tmp_path: Path) -> None:

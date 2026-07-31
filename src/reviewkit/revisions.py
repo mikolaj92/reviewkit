@@ -32,13 +32,45 @@ _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
 _COMMENTS_PART = "word/comments.xml"
+_DOCUMENT_RELS_PART = "word/_rels/document.xml.rels"
+_CONTENT_TYPES_PART = "[Content_Types].xml"
+
+# Review-only comment package parts (core comments.xml plus Word 2012+/2016+
+# companions). Dropped entirely from the clean package when ``drop_comments``.
+_COMMENT_PART_NAMES = frozenset(
+    {
+        _COMMENTS_PART,
+        "word/commentsExtended.xml",
+        "word/commentsIds.xml",
+        "word/commentsExtensible.xml",
+        "word/commentsExtensible.xml.rels",
+    }
+)
+_COMMENT_PART_BASENAMES = frozenset(
+    {
+        "comments.xml",
+        "commentsExtended.xml",
+        "commentsIds.xml",
+        "commentsExtensible.xml",
+    }
+)
+
+# Relationship Type values that point at a comments package part.
+_COMMENT_RELATIONSHIP_TYPE_MARKERS = (
+    "/relationships/comments",
+    "/relationships/commentsExtended",
+    "/relationships/commentsIds",
+    "/relationships/commentsExtensible",
+)
 
 # The in-document comment anchors (they live in document.xml / headers / footers, not
 # in comments.xml). ``inspect_markup`` counts comments only in comments.xml, but a
-# clean copy must not leave dangling anchors pointing at an emptied comments part.
+# clean copy must not leave dangling anchors pointing at a removed comments part.
 _COMMENT_ANCHOR_RE = re.compile(rb"<w:comment(Reference|RangeStart|RangeEnd)(?=[\s>/])")
 
 _XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+_PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 
 
 class AcceptRevisionsError(RuntimeError):
@@ -159,24 +191,66 @@ def _serialize(root: Any) -> bytes:
     return (_XML_DECLARATION + etree.tostring(root, encoding="unicode")).encode("utf-8")
 
 
-def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
-    if name == _COMMENTS_PART and drop_comments:
+def _is_comment_package_part(name: str) -> bool:
+    """True for comments.xml and Word's companion comment package parts."""
+    if name in _COMMENT_PART_NAMES:
+        return True
+    # Defensive: catch any future word/comments*.xml sibling without hardcoding.
+    return name.startswith("word/comments") and name.endswith((".xml", ".xml.rels"))
+
+
+def _strip_comment_relationships(data: bytes) -> bytes:
+    """Drop Relationship entries whose Type targets a comments package part."""
+    root = etree.fromstring(data)
+    rel_tag = f"{{{_PKG_REL_NS}}}Relationship"
+    for element in list(root.findall(rel_tag)):
+        rel_type = element.get("Type") or ""
+        target = (element.get("Target") or "").rsplit("/", 1)[-1]
+        if any(marker in rel_type for marker in _COMMENT_RELATIONSHIP_TYPE_MARKERS):
+            _remove(element)
+            continue
+        if target in _COMMENT_PART_BASENAMES:
+            _remove(element)
+    return _serialize(root)
+
+
+def _strip_comment_content_types(data: bytes) -> bytes:
+    """Drop Content_Types Override entries for comment package parts."""
+    root = etree.fromstring(data)
+    override_tag = f"{{{_CONTENT_TYPES_NS}}}Override"
+    for element in list(root.findall(override_tag)):
+        part_name = element.get("PartName") or ""
+        basename = part_name.rsplit("/", 1)[-1]
+        if basename in _COMMENT_PART_BASENAMES or part_name.startswith("/word/comments"):
+            _remove(element)
+    return _serialize(root)
+
+
+def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes | None:
+    """Transform one package part. Return ``None`` to omit the part entirely."""
+    if drop_comments and _is_comment_package_part(name):
+        return None
+
+    if drop_comments and name == _DOCUMENT_RELS_PART:
+        return _strip_comment_relationships(data)
+
+    if drop_comments and name == _CONTENT_TYPES_PART:
+        return _strip_comment_content_types(data)
+
+    # Content XML under word/ (document, headers, footers, ...).
+    if name.startswith(_CONTENT_PART_PREFIX) and name.endswith(_CONTENT_PART_SUFFIX):
+        needs_revisions = bool(_REVISION_TAG_RE.search(data))
+        needs_comment_strip = drop_comments and bool(_COMMENT_ANCHOR_RE.search(data))
+        if not (needs_revisions or needs_comment_strip):
+            return data
         root = etree.fromstring(data)
-        for child in list(root):
-            root.remove(child)  # empty the comments part, preserving its namespaces
+        if needs_revisions:
+            _accept_revisions_in_tree(root, name)
+        if needs_comment_strip:
+            _strip_comment_anchors(root)
         return _serialize(root)
 
-    needs_revisions = bool(_REVISION_TAG_RE.search(data))
-    needs_comment_strip = drop_comments and bool(_COMMENT_ANCHOR_RE.search(data))
-    if not (needs_revisions or needs_comment_strip):
-        return data  # nothing to accept in this part; copy it through verbatim
-
-    root = etree.fromstring(data)
-    if needs_revisions:
-        _accept_revisions_in_tree(root, name)
-    if needs_comment_strip:
-        _strip_comment_anchors(root)
-    return _serialize(root)
+    return data
 
 
 def accept_all_revisions(
@@ -190,9 +264,11 @@ def accept_all_revisions(
     Equivalent to Word's "Accept All Changes": every insertion is kept, every deletion
     is dropped, every move is realised, and every format-change record is discarded,
     leaving the *current* (post-review) content. ``drop_comments`` (default ``True``)
-    also removes all comments and their in-document anchors. The single input is the
-    reviewed document itself -- the corrected text is never re-derived from an original
-    or a plan, so whatever a human accepted, rejected or edited in the reviewed copy is
+    also removes all comments, their in-document anchors, the comments package part(s),
+    and the matching relationship / content-type registrations so the clean package
+    carries no residual review-only annotation shell. The single input is the reviewed
+    document itself -- the corrected text is never re-derived from an original or a
+    plan, so whatever a human accepted, rejected or edited in the reviewed copy is
     honoured exactly.
 
     Structural merges dike never emits are refused fail-closed via
@@ -214,14 +290,13 @@ def accept_all_revisions(
         entries = [(info, bundle.read(info.filename)) for info in bundle.infolist()]
 
     # Transform every part BEFORE opening the output: a fail-closed raise then leaves no
-    # half-written .docx behind.
+    # half-written .docx behind. Parts that return None are omitted (comments shell).
     transformed: list[tuple[Any, bytes]] = []
     for info, data in entries:
-        if info.filename.startswith(_CONTENT_PART_PREFIX) and info.filename.endswith(
-            _CONTENT_PART_SUFFIX
-        ):
-            data = _transform_part(info.filename, data, drop_comments=drop_comments)
-        transformed.append((info, data))
+        result = _transform_part(info.filename, data, drop_comments=drop_comments)
+        if result is None:
+            continue
+        transformed.append((info, result))
 
     with ZipFile(destination, "w", ZIP_DEFLATED) as out:
         for info, data in transformed:
@@ -237,6 +312,16 @@ def accept_all_revisions(
             f"accept_all_revisions left markup in {destination}: "
             f"revision parts={report.revision_parts}, comments={report.comment_count}"
         )
+    if drop_comments:
+        with ZipFile(destination) as bundle:
+            residual_comment_parts = [
+                name for name in bundle.namelist() if _is_comment_package_part(name)
+            ]
+        if residual_comment_parts:
+            raise AcceptRevisionsError(
+                f"accept_all_revisions left comment package parts in {destination}: "
+                + ", ".join(residual_comment_parts)
+            )
     return destination
 
 
