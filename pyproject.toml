@@ -29,7 +29,7 @@ dependencies = [
     # Thin Mojo binding (cascade_step). Needs Mojo toolchain + TAKT_HOME at call
     # time for JIT compile; local fallback remains when binding is unavailable.
     "takt @ git+https://github.com/mikolaj92/takt.git@v0.3.0",
-    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@b4ffe97facf978fc8c802363e53442cf3a8d72c0",
+    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@4bff41d0673e23582e308473a17b157fcd583970",
 ]
 
 [project.scripts]
