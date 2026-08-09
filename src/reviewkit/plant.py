@@ -1,7 +1,7 @@
-"""ReviewKit document plant for takt 0.2.0 host integration.
+"""ReviewKit document plant for the takt v0.3.0 binding.
 
 Builds a domain tree (sentence → paragraph → section → document) and exposes
-post-order scan plus JSON plant_nodes for the Mojo cascade step.
+post-order scan plus JSON ``plant_nodes`` for the in-process cascade binding.
 
 Takt has no document parser — the host owns plant construction.
 """

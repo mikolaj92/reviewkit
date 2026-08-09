@@ -1,4 +1,4 @@
-"""Takt-specific smoke tests for the ReviewKit + takt 0.2.0 host integration.
+"""Takt-specific smoke tests for the ReviewKit + takt v0.3.0 binding integration.
 
 These tests exercise the plant, canonical Takt binding, and TaktReviewer path.
 They are intentionally small and do not duplicate all old hierarchical tests.

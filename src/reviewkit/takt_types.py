@@ -1,8 +1,7 @@
-"""Host-side types for the takt 0.2.0 (Mojo-only) JSON boundary.
+"""Host-side types for the takt v0.3.0 binding's JSON boundary.
 
-Takt no longer ships a Python runtime. ReviewKit owns detectors and plant
-construction; takt receives plant_nodes + layers + raw_signals and returns
-actuation / interlock / stable.
+ReviewKit owns detectors and plant construction; the in-process takt binding receives
+``plant_nodes`` + ``layers`` + ``raw_signals`` and returns actuation / interlock / stable.
 """
 
 from __future__ import annotations
