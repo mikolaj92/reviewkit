@@ -1,7 +1,7 @@
 """Host-side LLM detectors for takt 0.2.0.
 
 Detectors produce ``RawSignal`` lists that ReviewKit ships to the Mojo
-cascade step (or local fusion). Takt itself does not run LLMs.
+cascade step. Takt itself does not run LLMs.
 """
 
 from __future__ import annotations

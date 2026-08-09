@@ -99,7 +99,7 @@ class InterlockView:
 
 @dataclass(frozen=True)
 class TaktDecision:
-    """Thin decision envelope from takt evaluate (Mojo or local fallback)."""
+    """Thin decision envelope returned by the Takt Mojo binding."""
 
     outcome: Outcome
     node_id: str
@@ -107,7 +107,7 @@ class TaktDecision:
     actuation: ActuationView | None = None
     interlock: InterlockView | None = None
     telemetry_count: int = 0
-    engine: str = "local"
+    engine: str = "binding"
 
     @property
     def has_interlock(self) -> bool:

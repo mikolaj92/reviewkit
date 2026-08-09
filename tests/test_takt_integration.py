@@ -1,6 +1,6 @@
 """Takt-specific smoke tests for the ReviewKit + takt 0.2.0 host integration.
 
-These tests exercise the plant, local cascade client, and TaktReviewer path.
+These tests exercise the plant, canonical Takt binding, and TaktReviewer path.
 They are intentionally small and do not duplicate all old hierarchical tests.
 """
 
@@ -9,6 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from docx import Document as DocxDocument
+import pytest
+
+from reviewkit.takt_client import TaktClient
+from reviewkit.takt_types import LayerSpec, PlantNode
 
 from reviewkit import review_document
 from reviewkit.llm import MockLLMClient
@@ -22,6 +26,19 @@ def _make_docx(tmp_path: Path, text: str) -> Path:
     d.add_paragraph(text)
     d.save(p)
     return p
+
+
+def test_takt_binding_failure_is_not_silently_downgraded(monkeypatch) -> None:
+    def fail(_request):
+        raise RuntimeError("binding unavailable")
+
+    monkeypatch.setattr("takt.cascade_step", fail)
+
+    with pytest.raises(RuntimeError, match="binding unavailable"):
+        TaktClient().evaluate(
+            plant_nodes=[PlantNode(id="node")],
+            layers=[LayerSpec(layer=0)],
+        )
 
 
 def test_review_document_plant_builds_correct_tree(tmp_path: Path) -> None:

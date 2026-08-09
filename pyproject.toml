@@ -26,8 +26,7 @@ dependencies = [
     "pyyaml>=6.0.3",
     "rich>=15.0.0",
     "typer>=0.26.7",
-    # Thin Mojo binding (cascade_step). Needs Mojo toolchain + TAKT_HOME at call
-    # time for JIT compile; local fallback remains when binding is unavailable.
+    # Canonical in-process Mojo binding; TAKT_HOME is used for JIT compilation.
     "takt @ git+https://github.com/mikolaj92/takt.git@v0.3.0",
     "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@4bff41d0673e23582e308473a17b157fcd583970",
 ]

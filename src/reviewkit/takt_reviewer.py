@@ -5,7 +5,7 @@ Host (ReviewKit) owns:
   - LLM detectors → RawSignal
   - mapping decisions back to ReviewAction / findings
 
-Takt (Mojo cascade, or local 0.2.0-compatible fallback) owns:
+Takt's Mojo cascade owns:
   - fusion of raw signals
   - homeostat → actuation / interlock / stable
 
