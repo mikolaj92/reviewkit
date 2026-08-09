@@ -41,12 +41,13 @@ ReviewKit is the document host:
 
 The pinned `takt` dependency is the only cascade engine. `TaktClient` calls its
 `cascade_step` Python binding in-process and propagates import or execution failures; there
-is no subprocess engine or local fallback. `TAKT_HOME` may point to a takt source checkout
-used by the binding for JIT compilation:
+is no subprocess engine or local fallback. Takt compiles its native module on first use and
+therefore requires the exact Mojo `1.0.0b3.dev2026071505` toolchain with the `mojo`
+executable on `PATH`.
 
-```bash
-export TAKT_HOME=/path/to/takt
-```
+The upstream Takt v0.3.0 manifest supports `osx-arm64` only. Install that exact Mojo build
+from Modular's nightly Conda channel with Pixi. `TAKT_HOME` may point to a separate takt
+v0.3.0 source checkout, but is normally unnecessary because the package includes the sources.
 
 How ReviewKit maps onto the archetype:
 
@@ -68,7 +69,8 @@ Flow (one document):
 
 Public models (`ReviewFinding`, `ReviewAction`, `ReviewResult`), profiles, `review_document`, and CLI are unchanged.
 
-Requires Python >= 3.13 and the pinned takt v0.3.0 dependency installed by `uv sync`.
+Requires Python >= 3.13, macOS on Apple silicon, and Mojo `1.0.0b3.dev2026071505`. `uv sync`
+installs the Python packages only; the first review compiles and caches Takt's native module.
 
 References (same as Fala / Splot):
 
@@ -78,6 +80,12 @@ takt README / docs/FALA_INTEGRATION.md, splot CONCEPTUAL_MODEL.md, Fala CYBERNET
 ## Install and Run
 
 ```bash
+# Supported platform: macOS on Apple silicon (osx-arm64)
+curl -fsSL https://pixi.sh/install.sh | sh  # skip if Pixi is already installed
+pixi global install -c https://conda.modular.com/max-nightly -c conda-forge \
+  mojo=1.0.0b3.dev2026071505
+mojo --version
+
 uv sync
 uv run reviewkit input.docx \
   --profile examples/profiles/story.teacher \
