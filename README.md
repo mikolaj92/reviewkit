@@ -31,29 +31,30 @@ It can produce three outputs:
 
 ## Architecture
 
-ReviewKit 0.14+ uses the **takt ≥0.3** Mojo cascade (thin Python binding when available) and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
+ReviewKit 0.14+ uses the pinned **takt v0.3.0** in-process Mojo binding and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
 
-Takt 0.2.0 ships **no Python runtime**. ReviewKit is the host:
+ReviewKit is the document host:
 
 - builds the document plant and runs LLM detectors
 - sends `plant_nodes` + `layers` + `raw_signals` over the JSON boundary
 - maps `actuation` / `interlock` / `stable` back to `ReviewAction` status
 
-Default engine is **`auto``**: try the official `takt` Python binding (in-process Mojo),
-else a local compatible fusion/homeostat (tests without toolchain).
+The pinned `takt` dependency is the only cascade engine. `TaktClient` calls its
+`cascade_step` Python binding in-process and propagates import or execution failures; there
+is no subprocess engine or local fallback. Takt compiles its native module on first use and
+therefore requires the exact Mojo `1.0.0b3.dev2026071505` toolchain with the `mojo`
+executable on `PATH`.
 
-```bash
-export TAKT_HOME=/path/to/takt          # checkout with mojo/takt (for JIT compile)
-export REVIEWKIT_TAKT_ENGINE=auto       # auto | binding | mojo | local
-# binding = import takt.cascade_step; mojo = tools/takt_step.sh subprocess
-```
+The upstream Takt v0.3.0 manifest supports `osx-arm64` only. Install that exact Mojo build
+from Modular's nightly Conda channel with Pixi. `TAKT_HOME` may point to a separate takt
+v0.3.0 source checkout, but is normally unnecessary because the package includes the sources.
 
 How ReviewKit maps onto the archetype:
 
 - `ReviewDocumentPlant` + `DocNode` — host plant over sentence/paragraph/section/document (post-order scan).
 - `RawSignal` — LLM finding/action candidate → deviation + confidence (+ evidence on the host).
 - `LayerSpec` — per-scope homeostat thresholds derived from profile action policy.
-- `TaktClient.evaluate` — fusion + homeostat (Mojo `takt_step.sh` or local fallback).
+- `TaktClient.evaluate` — fusion + homeostat through the in-process `takt.cascade_step` binding.
 - Actuation → `ReviewAction` status `APPLIED` (subject to post-policy).
 - SafetyInterlock → `NEEDS_HUMAN_DECISION` / `CONFLICT`.
 - Post-processing (overlap demotion, protected patterns, tracked-revision safety) stays in ReviewKit.
@@ -68,7 +69,8 @@ Flow (one document):
 
 Public models (`ReviewFinding`, `ReviewAction`, `ReviewResult`), profiles, `review_document`, and CLI are unchanged.
 
-Requires Python >= 3.13. Optional: Mojo toolchain + takt v0.2.0 checkout for the real cascade step.
+Requires Python >= 3.13, macOS on Apple silicon, and Mojo `1.0.0b3.dev2026071505`. `uv sync`
+installs the Python packages only; the first review compiles and caches Takt's native module.
 
 References (same as Fala / Splot):
 
@@ -78,6 +80,12 @@ takt README / docs/FALA_INTEGRATION.md, splot CONCEPTUAL_MODEL.md, Fala CYBERNET
 ## Install and Run
 
 ```bash
+# Supported platform: macOS on Apple silicon (osx-arm64)
+curl -fsSL https://pixi.sh/install.sh | sh  # skip if Pixi is already installed
+pixi global install -c https://conda.modular.com/max-nightly -c conda-forge \
+  mojo=1.0.0b3.dev2026071505
+mojo --version
+
 uv sync
 uv run reviewkit input.docx \
   --profile examples/profiles/story.teacher \

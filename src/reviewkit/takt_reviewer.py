@@ -1,11 +1,11 @@
-"""Takt 0.2.0-based hierarchical review orchestration for ReviewKit.
+"""Takt v0.3.0-based hierarchical review orchestration for ReviewKit.
 
 Host (ReviewKit) owns:
   - document plant construction
   - LLM detectors → RawSignal
   - mapping decisions back to ReviewAction / findings
 
-Takt (Mojo cascade, or local 0.2.0-compatible fallback) owns:
+Takt's Mojo cascade owns:
   - fusion of raw signals
   - homeostat → actuation / interlock / stable
 
@@ -37,7 +37,7 @@ from reviewkit.takt_types import LayerSpec, RawSignal
 
 
 class TaktReviewer:
-    """Full takt 0.2.0 driven reviewer (Mojo cascade via host boundary)."""
+    """Full takt v0.3.0-driven reviewer using the in-process Mojo binding."""
 
     def __init__(
         self,

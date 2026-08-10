@@ -1,8 +1,7 @@
-"""Host-side types for the takt 0.2.0 (Mojo-only) JSON boundary.
+"""Host-side types for the takt v0.3.0 binding's JSON boundary.
 
-Takt no longer ships a Python runtime. ReviewKit owns detectors and plant
-construction; takt receives plant_nodes + layers + raw_signals and returns
-actuation / interlock / stable.
+ReviewKit owns detectors and plant construction; the in-process takt binding receives
+``plant_nodes`` + ``layers`` + ``raw_signals`` and returns actuation / interlock / stable.
 """
 
 from __future__ import annotations
@@ -99,7 +98,7 @@ class InterlockView:
 
 @dataclass(frozen=True)
 class TaktDecision:
-    """Thin decision envelope from takt evaluate (Mojo or local fallback)."""
+    """Thin decision envelope returned by the Takt Mojo binding."""
 
     outcome: Outcome
     node_id: str
@@ -107,7 +106,7 @@ class TaktDecision:
     actuation: ActuationView | None = None
     interlock: InterlockView | None = None
     telemetry_count: int = 0
-    engine: str = "local"
+    engine: str = "binding"
 
     @property
     def has_interlock(self) -> bool:
