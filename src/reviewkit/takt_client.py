@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Sequence
 
 from reviewkit.takt_types import (
@@ -17,33 +15,6 @@ from reviewkit.takt_types import (
     TaktDecision,
 )
 
-
-def _default_takt_homes() -> list[Path]:
-    candidates: list[Path] = []
-    env = os.environ.get("TAKT_HOME")
-    if env:
-        candidates.append(Path(env).expanduser())
-    # Sibling of reviewkit when developed in ~/Developer/OSS/*
-    here = Path(__file__).resolve()
-    for parent in here.parents:
-        sibling = parent / "takt"
-        if sibling.is_dir():
-            candidates.append(sibling)
-        # stop at OSS-ish depth; avoid walking to /
-        if parent.name in {"OSS", "Developer", "src"} or parent == Path.home():
-            break
-    # Common local layout
-    candidates.append(Path.home() / "Developer" / "OSS" / "takt")
-    return candidates
-
-
-def resolve_takt_home() -> Path | None:
-    """Return first takt checkout that has tools/takt_step.sh, or None."""
-    for home in _default_takt_homes():
-        step = home / "tools" / "takt_step.sh"
-        if step.is_file():
-            return home
-    return None
 
 def _parse_mojo_result(payload: dict[str, Any]) -> TaktDecision:
     if not payload.get("ok", True) and payload.get("error"):
@@ -124,12 +95,9 @@ def evaluate_binding(
     try:
         import takt as takt_pkg
     except ImportError as exc:
-        raise ImportError("takt Python package not installed; install the pinned dependency") from exc
-
-    # Prefer checkout when present so the binding can JIT-compile Mojo sources.
-    home = resolve_takt_home()
-    if home is not None:
-        os.environ.setdefault("TAKT_HOME", str(home))
+        raise ImportError(
+            "takt Python package not installed; install the pinned dependency"
+        ) from exc
 
     request = _evaluate_request(
         plant_nodes=plant_nodes,
@@ -139,6 +107,7 @@ def evaluate_binding(
     )
     payload = takt_pkg.cascade_step(request)
     return _parse_mojo_result(payload)
+
 
 class TaktClient:
     """Evaluate one tact through the official in-process Takt binding."""
@@ -157,4 +126,4 @@ class TaktClient:
         )
 
 
-__all__ = ["TaktClient", "evaluate_binding", "resolve_takt_home"]
+__all__ = ["TaktClient", "evaluate_binding"]

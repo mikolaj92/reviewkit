@@ -5,6 +5,7 @@ They are intentionally small and do not duplicate all old hierarchical tests.
 """
 
 from __future__ import annotations
+import os
 
 from pathlib import Path
 
@@ -39,6 +40,25 @@ def test_takt_binding_failure_is_not_silently_downgraded(monkeypatch) -> None:
             plant_nodes=[PlantNode(id="node")],
             layers=[LayerSpec(layer=0)],
         )
+
+
+def test_takt_binding_does_not_discover_local_checkout(monkeypatch, tmp_path: Path) -> None:
+    local_takt = tmp_path / "Developer" / "OSS" / "takt" / "tools"
+    local_takt.mkdir(parents=True)
+    (local_takt / "takt_step.sh").touch()
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv("TAKT_HOME", raising=False)
+
+    def evaluate(_request):
+        assert "TAKT_HOME" not in os.environ
+        return {"outcome": "stable"}
+
+    monkeypatch.setattr("takt.cascade_step", evaluate)
+
+    TaktClient().evaluate(
+        plant_nodes=[PlantNode(id="node")],
+        layers=[LayerSpec(layer=0)],
+    )
 
 
 def test_review_document_plant_builds_correct_tree(tmp_path: Path) -> None:
@@ -82,6 +102,7 @@ def test_takt_reviewer_basic_run(tmp_path: Path) -> None:
 
     assert isinstance(findings, list)
     assert isinstance(actions, list)
+
 
 def test_public_api_still_works_with_takt(tmp_path: Path) -> None:
     """The main user entrypoint must continue to work after the total migration."""
