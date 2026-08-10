@@ -19,7 +19,7 @@ jobs:
           -c https://conda.modular.com/max-nightly
           -c conda-forge
           mojo=1.0.0b3.dev2026071505
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@v8.3.2
         with:
           python-version: "3.13"
       - name: Exercise native Takt binding
