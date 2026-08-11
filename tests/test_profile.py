@@ -20,13 +20,20 @@ def test_profile_loads_from_folder() -> None:
 
     assert profile.name == "story.teacher"
     assert profile.language == "pl"
-    # The example carries its per-category policy under the nested action_policy, and no
-    # longer duplicates it into the legacy top-level apply_policy field: the example must
-    # not model that deprecated shape for the users who copy it.
     assert profile.action_policy.apply_policy["typo"] == "apply"
-    assert profile.apply_policy == {}
     assert "instructions.md" in profile.markdown_files
     assert "nauczyciel" in profile.instructions_text
+
+
+def test_profile_rejects_top_level_apply_policy(tmp_path: Path) -> None:
+    (tmp_path / "profile.toml").write_text(
+        'name = "legacy"\nlanguage = "en"\ndocument_type = "story"\n'
+        'reviewer_role = "reviewer"\napply_policy = { typo = "apply" }\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="apply_policy"):
+        load_profile(tmp_path)
 
 
 def test_profile_resolves_document_type_action_policy() -> None:
