@@ -116,7 +116,7 @@ def test_lookalike_elements_are_not_revisions(tmp_path: Path, lookalike: bytes) 
     assert has_tracked_revisions(path) is False
 
 
-def test_revision_detection_has_no_noncanonical_prefix_fallback(tmp_path: Path) -> None:
+def test_revision_detection_resolves_alternate_namespace_prefix(tmp_path: Path) -> None:
     path = _docx(
         tmp_path,
         {
@@ -125,7 +125,10 @@ def test_revision_detection_has_no_noncanonical_prefix_fallback(tmp_path: Path) 
             )
         },
     )
-    assert inspect_markup(path).is_clean
+    report = inspect_markup(path)
+    assert report.has_tracked_revisions
+    assert report.revision_kinds == ("ins",)
+    assert report.revision_parts == ("word/document.xml",)
 
 
 @pytest.mark.parametrize(

@@ -15,32 +15,51 @@ from dataclasses import dataclass
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
+from lxml import etree
+
 from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
 
 # Full tracked-change / move / format / table-structure revision grammar Word can
 # emit under Track Changes (ISO/IEC 29500 §17.13): edits (w:ins/w:del), moves
 # (w:moveFrom/w:moveTo), the property-change wrappers (w:*PrChange), the table
 # revision marks (w:cellIns/w:cellDel/w:cellMerge/w:tblGridChange/w:tblPrExChange)
-# and paragraph-numbering revisions (w:numberingChange). This regex is the one
-# canonical detection path; there is no secondary parser or compatibility fallback.
-# The trailing lookahead pins each element name to a delimiter so lookalikes never
-# match: <w:insideH>/<w:insideV> (table borders) are
-# not <w:ins>, <w:tblPrEx> (table property exceptions) is not <w:tblPrExChange>,
-# and the ubiquitous <w:sectPr>/<w:pPr>/<w:rPr>/<w:tcPr>/<w:trPr>/<w:tblPr>
-# property wrappers are not their *Change revisions -- so a clean document, which
-# is full of those wrappers, never trips the detector.
-#
-# The ``w:`` prefix is hard-coded: every mainstream producer (Word, python-docx,
-# LibreOffice, Google Docs export, the Open XML SDK) binds the WordprocessingML
-# namespace to ``w:`` in the parts scanned here, so pinning the prefix keeps the
-# grammar simple without missing real-world markup. A byte scan cannot resolve
-# namespace URIs anyway, and matching an arbitrary ``<*:ins>`` prefix would risk
-# false positives from unrelated namespaces that reuse these local names.
-_REVISION_TAG_RE = re.compile(
-    rb"<w:(ins|del|moveFrom|moveTo|rPrChange|pPrChange|sectPrChange|"
-    rb"tblPrChange|trPrChange|tcPrChange|cellIns|cellDel|cellMerge|"
-    rb"tblGridChange|tblPrExChange|numberingChange)(?=[\s>/])"
+# and paragraph-numbering revisions (w:numberingChange). Expanded XML names are
+# inspected so the conventional ``w`` prefix may be replaced without hiding markup.
+# Exact local-name matching means lookalikes such as insideH, tblPrEx and the ordinary
+# property wrappers do not trip the detector.
+_WORDPROCESSINGML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_REVISION_KINDS = frozenset(
+    {
+        "ins",
+        "del",
+        "moveFrom",
+        "moveTo",
+        "rPrChange",
+        "pPrChange",
+        "sectPrChange",
+        "tblPrChange",
+        "trPrChange",
+        "tcPrChange",
+        "cellIns",
+        "cellDel",
+        "cellMerge",
+        "tblGridChange",
+        "tblPrExChange",
+        "numberingChange",
+    }
 )
+
+
+def _revision_kinds(data: bytes) -> set[str]:
+    """Return revision local names, resolving arbitrary XML namespace prefixes."""
+    found: set[str] = set()
+    for element in etree.fromstring(data).iter():
+        if not isinstance(element.tag, str):
+            continue
+        name = etree.QName(element)
+        if name.namespace == _WORDPROCESSINGML_NS and name.localname in _REVISION_KINDS:
+            found.add(name.localname)
+    return found
 
 # Every revision element above appears ONLY in revised content, so there is no
 # need for a part allowlist: scan each ``.xml`` part under ``word/`` and revisions
@@ -126,10 +145,10 @@ def inspect_markup(path: str | Path) -> MarkupReport:
             if not (name.startswith(_CONTENT_PART_PREFIX) and name.endswith(_CONTENT_PART_SUFFIX)):
                 continue
             data = bundle.read(name)
-            found = _REVISION_TAG_RE.findall(data)
+            found = _revision_kinds(data)
             if found:
                 revision_parts.append(name)
-                revision_kinds.update(kind.decode("ascii") for kind in found)
+                revision_kinds.update(found)
             if _SUGGESTION_MARKER_BYTES in data:
                 suggestion_parts.append(name)
         if _COMMENTS_PART in names:
