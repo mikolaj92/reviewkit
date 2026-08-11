@@ -222,16 +222,16 @@ def render_reviewed_docx(
                 )
             docx_paragraph = _paragraph_for_locator(docx, paragraph.locator)
             if docx_paragraph is None:
-                trackable = [a for a in paragraph_actions if _is_trackable_edit(a)]
-                if trackable and document.source_path is not None:
-                    # With a source document every parsed locator must resolve; landing
-                    # tracked edits in an appended duplicate paragraph would leave the
-                    # real paragraph untouched.
+                if document.source_path is not None:
+                    trackable = [a for a in paragraph_actions if _is_trackable_edit(a)]
+                    details = (
+                        "; tracked edits: " + "; ".join(_describe_action(a) for a in trackable)
+                        if trackable
+                        else ""
+                    )
                     raise RenderIntegrityError(
                         f"reviewed.docx: paragraph locator {paragraph.locator!r} does not "
-                        "resolve in the source document; tracked edits would land in a "
-                        "detached paragraph: "
-                        + "; ".join(_describe_action(a) for a in trackable)
+                        f"resolve in the source document{details}"
                     )
                 docx_paragraph = docx.add_paragraph(paragraph.text)
             revision_id = _add_reviewed_runs(
@@ -319,15 +319,16 @@ def render_corrected_docx(
             ]
             docx_paragraph = _paragraph_for_locator(docx, paragraph.locator) if has_source else None
             if docx_paragraph is None:
-                if has_source and paragraph_actions:
-                    # With a source document every parsed locator must resolve; applying
-                    # the edits to an appended duplicate paragraph would leave the real
-                    # paragraph uncorrected.
+                if has_source:
+                    details = (
+                        "; APPLIED edits: "
+                        + "; ".join(_describe_action(a) for a in paragraph_actions)
+                        if paragraph_actions
+                        else ""
+                    )
                     raise RenderIntegrityError(
                         f"corrected.docx: paragraph locator {paragraph.locator!r} does not "
-                        "resolve in the source document; APPLIED edits would land in a "
-                        "detached paragraph: "
-                        + "; ".join(_describe_action(a) for a in paragraph_actions)
+                        f"resolve in the source document{details}"
                     )
                 # Check each anchor against the EVOLVING text right before applying, in
                 # the exact application order: an earlier APPLIED edit can consume a
