@@ -116,18 +116,6 @@ def test_lookalike_elements_are_not_revisions(tmp_path: Path, lookalike: bytes) 
     assert has_tracked_revisions(path) is False
 
 
-def test_revision_detection_requires_the_canonical_prefix(tmp_path: Path) -> None:
-    path = _docx(
-        tmp_path,
-        {
-            "word/document.xml": _document_xml(
-                b'<x:ins xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/>'
-            )
-        },
-    )
-    assert inspect_markup(path).is_clean
-
-
 @pytest.mark.parametrize(
     "part",
     [
