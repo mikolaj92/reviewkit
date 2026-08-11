@@ -22,7 +22,7 @@ It can produce three outputs:
 ## Principles
 
 1. The LLM is replaceable.
-2. Profiles are YAML/Markdown folders and can define arbitrary review dimensions.
+2. Profiles are TOML/Markdown folders and can define arbitrary review dimensions.
 3. Review is hierarchical, not one-shot.
 4. Findings describe observations; actions describe what might be done about them.
 5. The library validates and applies actions deterministically.
@@ -154,8 +154,7 @@ profiles/employment-contract.lawyer/
   risky-clauses.md
 ```
 
-`profile.toml` defines role, language, document type, pipeline, dimensions and action policy
-(preferred). A one-release `profile.yaml` fallback is still accepted when TOML is absent.
+`profile.toml` defines role, language, document type, pipeline, dimensions and action policy.
 Markdown files contain reviewer instructions that can be edited by domain experts.
 
 Profiles are intentionally generic:
@@ -258,7 +257,7 @@ ReviewKit keeps domain logic outside the core. Legal, editorial, educational or 
 policy behavior belongs in profiles, context providers or adapters, not in the framework.
 Existing extension points include:
 
-- per-document-type `action_policy` / `action_policies` in profile YAML,
+- per-document-type `action_policy` / `action_policies` in profile TOML,
 - policy reasons, source-system tags, evidence refs and references on `ReviewAction`,
 - protected-pattern guards for corrected output safety,
 - `ReviewContextProvider` for grounding, classifier results or external evidence,
