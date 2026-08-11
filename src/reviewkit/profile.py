@@ -95,7 +95,6 @@ class ReviewProfile(BaseModel):
             ReviewScope.DOCUMENT,
         ]
     )
-    apply_policy: dict[str, str] = Field(default_factory=dict)
     action_policy: ActionPolicyConfig = Field(default_factory=ActionPolicyConfig)
     action_policies: dict[str, ActionPolicyConfig] = Field(default_factory=dict)
     outputs: OutputConfig = Field(default_factory=OutputConfig)
@@ -121,11 +120,9 @@ class ReviewProfile(BaseModel):
         return "\n\n".join(sections)
 
     def resolved_action_policy(self) -> ActionPolicyConfig:
-        legacy_policy = ActionPolicyConfig(apply_policy=self.apply_policy)
-        base = legacy_policy.merged(self.action_policy)
         document_override = self.action_policies.get(self.document_type)
         named_override = self.action_policies.get(self.name)
-        return base.merged(document_override).merged(named_override)
+        return self.action_policy.merged(document_override).merged(named_override)
 
 
 def load_profile(profile_path: str | Path) -> ReviewProfile:
