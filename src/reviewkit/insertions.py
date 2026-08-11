@@ -358,8 +358,7 @@ class InsertionValidator:
     """Structural post-insertion checks over a saved-and-reopened document.
 
     Validates per action that the inserted paragraph is actually present at
-    its recorded anchor (or, without one, at a position consistent with the
-    originally requested anchor), that no insertion landed at or below the
+    its recorded anchor, that no insertion landed at or below the
     trailing signature block, and that the document body is structurally
     sound. The per-action checks return booleans and action lists — error
     wording for those is a caller concern — while
@@ -390,35 +389,15 @@ class InsertionValidator:
             self._paragraphs = []
         self._signature_patterns = _compile_signature_keywords(signature_keywords)
 
-    def action_applied(self, action: InsertionAction, applied_anchor: str | None = None) -> bool:
-        """True when ``action``'s rendered text sits where the insertion claimed.
+    def action_applied(self, action: InsertionAction, applied_anchor: str | None) -> bool:
+        """True when ``action``'s rendered text sits directly after its recorded anchor.
 
-        With an ``applied_anchor`` the text must directly follow that
-        paragraph in the paragraph sequence. Without one, the check falls
-        back to the originally requested anchor: ``suggest`` actions and
-        ``body:p:last`` degrade to a document-wide text-exists check,
-        ``body:p:<n>`` to the same paragraph-sequence adjacency check.
+        ``None`` fails closed: insertions without a paragraph predecessor do
+        not have enough placement information for structural validation.
         """
-        text = action.rendered_text()
-
-        if applied_anchor is not None:
-            return self._text_follows_anchor(applied_anchor, text)
-
-        if action.kind == "suggest":
-            return self._text_exists_in_document(text)
-
-        anchor = action.anchor
-        if anchor == ANCHOR_LAST:
-            return self._text_exists_in_document(text)
-
-        if parse_body_anchor_index(anchor) is not None:
-            # Paragraph-sequence adjacency, same as the applied_anchor path:
-            # an XML-sibling check would falsely fail table lead-in
-            # placements, where the clause follows the anchor's table rather
-            # than the anchor element itself.
-            return self._text_follows_anchor(anchor, text)
-
-        return False
+        if applied_anchor is None:
+            return False
+        return self._text_follows_anchor(applied_anchor, action.rendered_text())
 
     def misplaced_actions(self, actions: Sequence[InsertionAction]) -> list[InsertionAction]:
         """Actions whose inserted text sits at/below the signature block start.
@@ -510,9 +489,3 @@ class InsertionValidator:
         if inserted_index >= len(paragraphs):
             return False
         return text in paragraphs[inserted_index].text
-
-    def _text_exists_in_document(self, text: str) -> bool:
-        for paragraph in self._paragraphs:
-            if text in paragraph.text:
-                return True
-        return False
