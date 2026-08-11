@@ -1021,17 +1021,12 @@ def test_corrected_docx_without_source_raises_when_applied_edit_fails_to_anchor(
 
 
 @pytest.mark.parametrize("renderer", [render_reviewed_docx, render_corrected_docx])
-def test_render_raises_when_paragraph_locator_does_not_resolve(tmp_path, renderer) -> None:
-    # With a source document every parsed locator must resolve; the old fallback landed
-    # the edit in a detached appended paragraph while the real one stayed untouched.
+def test_render_requires_every_source_paragraph_locator_to_resolve(tmp_path, renderer) -> None:
     document = load_docx(_saved_docx(tmp_path, "The quick brown fox jumps."))
     document.sections[0].paragraphs[0].locator = "body:p:99"
-    action = _writing_action(id="a-locator")
 
-    with pytest.raises(RenderIntegrityError) as excinfo:
-        renderer(document, [action], tmp_path / "out.docx")
-    assert "a-locator" in str(excinfo.value)
-    assert "body:p:99" in str(excinfo.value)
+    with pytest.raises(RenderIntegrityError, match="body:p:99"):
+        renderer(document, [], tmp_path / "out.docx")
 
 
 def test_overlap_consumed_suggestion_degrades_to_comment_not_error(tmp_path: Path) -> None:
