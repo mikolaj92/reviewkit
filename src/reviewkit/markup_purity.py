@@ -26,7 +26,12 @@ from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
 # XML names (namespace URI + local name), because the conventional ``w`` prefix may
 # be replaced by any prefix. Exact local-name matching keeps lookalikes such as
 # insideH, tblPrEx and the ordinary property wrappers from tripping the detector.
-_WORDPROCESSINGML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_WORDPROCESSINGML_NAMESPACES = frozenset(
+    {
+        "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        "http://purl.oclc.org/ooxml/wordprocessingml/main",
+    }
+)
 _REVISION_KINDS = frozenset(
     {
         "ins",
@@ -48,16 +53,19 @@ _REVISION_KINDS = frozenset(
     }
 )
 
+
 def _revision_kinds(data: bytes) -> set[str]:
     """Return revision local names after resolving XML namespace prefixes."""
-    namespace = f"{{{_WORDPROCESSINGML_NS}}}"
+    namespaces = tuple(f"{{{namespace}}}" for namespace in _WORDPROCESSINGML_NAMESPACES)
     return {
-        element.tag[len(namespace) :]
+        local_name
         for element in ElementTree.fromstring(data).iter()
         if isinstance(element.tag, str)
-        and element.tag.startswith(namespace)
-        and element.tag[len(namespace) :] in _REVISION_KINDS
+        for namespace in namespaces
+        if element.tag.startswith(namespace)
+        and (local_name := element.tag[len(namespace) :]) in _REVISION_KINDS
     }
+
 
 # Every revision element above appears ONLY in revised content, so there is no
 # need for a part allowlist: scan each ``.xml`` part under ``word/`` and revisions
