@@ -153,7 +153,7 @@ def actions_for_paragraph(
             selected.append(_rebase_sentence_action(paragraph, sentence, action))
             continue
         if action.node_id in section_or_document_ids and action.original_text:
-            if _scope_comment_anchor_id(document, action) == paragraph.id:
+            if _scope_anchor_id(document, action) == paragraph.id:
                 selected.append(_clear_locator_offsets(action))
     return selected
 
@@ -170,30 +170,15 @@ def _scope_paragraphs(
     return []
 
 
-def _scope_comment_anchor_id(
-    document: ReviewDocument, action: ReviewAction
-) -> str | None:
-    """Single paragraph a scoped comment attaches to.
-
-    A section/document-scoped comment carrying ``original_text`` used to attach to
-    every paragraph where the text matched once (duplicated) or vanish when it never
-    matched uniquely (dropped). Instead pick one well-defined anchor: the first
-    paragraph in scope whose text contains the quote; if none does, fall back to the
-    scope's first paragraph so the comment is surfaced rather than silently dropped.
-
-    CONFLICT actions are anchored too: the reviewed renderer only turns an APPLIED
-    edit into a tracked change, so a scoped conflict lands as a CONFLICT-labelled
-    comment. Returning None here previously dropped scope-level conflicts entirely,
-    silencing the very ambiguity that most needs human attention.
-    """
-    paragraphs = _scope_paragraphs(document, action)
-    if not paragraphs:
+def _scope_anchor_id(document: ReviewDocument, action: ReviewAction) -> str | None:
+    """Return the first paragraph in scope containing the action's quote."""
+    quote = action.original_text
+    if not quote:
         return None
-    quote = action.original_text or ""
-    for paragraph in paragraphs:
-        if quote and quote in paragraph.text:
+    for paragraph in _scope_paragraphs(document, action):
+        if quote in paragraph.text:
             return paragraph.id
-    return paragraphs[0].id
+    return None
 
 
 def _sentence_base_offset(paragraph: ParagraphNode, sentence: SentenceNode) -> int | None:
@@ -622,9 +607,8 @@ def _unanchorable_scope_edit_reason(
 def _missing_anchor_reason(node_text: str, action: ReviewAction) -> str | None:
     """Reason a writing action's ``original_text`` anchor is absent from the node.
 
-    Restricted to writing actions: a comment with an unmatched quote has a documented
-    fallback anchor (see ``_scope_comment_anchor_id``) and stays governed by the
-    ambiguity config, whereas an unmatched EDIT would be a silent no-op apply.
+    Restricted to writing actions: comments are advisory and are routed only when their
+    quote resolves to a paragraph, whereas an unmatched edit would be a silent no-op apply.
     """
     if action.action_type not in WRITING_ACTIONS:
         return None
