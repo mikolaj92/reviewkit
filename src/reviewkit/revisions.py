@@ -25,11 +25,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from lxml import etree
 
 from reviewkit.docx_package import _deterministic_zipinfo
-from reviewkit.markup_purity import (
-    _WORDPROCESSINGML_NAMESPACES,
-    _revision_kinds,
-    inspect_markup,
-)
+from reviewkit.markup_purity import _REVISION_TAG_RE, inspect_markup
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
@@ -56,10 +52,6 @@ class AcceptRevisionsError(RuntimeError):
 
 def _tag(name: str) -> str:
     return f"{{{_W}}}{name}"
-
-
-def _revision_tags(name: str) -> tuple[str, ...]:
-    return tuple(f"{{{namespace}}}{name}" for namespace in _WORDPROCESSINGML_NAMESPACES)
 
 
 def _remove(element: Any) -> None:
@@ -103,18 +95,18 @@ def _is_paragraph_mark(element: Any) -> bool:
     # A run-property revision (paragraph glyph mark or run-property change) lives inside
     # a ``w:rPr``; a content revision wraps runs directly under a block element.
     parent = element.getparent()
-    return parent is not None and parent.tag in _revision_tags("rPr")
+    return parent is not None and parent.tag == _tag("rPr")
 
 
 def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
     # Refuse the structural merges we do not implement before touching anything, so a
     # failure leaves no half-transformed tree.
-    for element in root.iter(*_revision_tags("cellDel")):
+    for element in root.iter(_tag("cellDel")):
         raise AcceptRevisionsError(
             f"{part_name}: accepting a tracked cell deletion would remove a table cell; "
             "unsupported (dike never emits table-structure revisions)."
         )
-    for element in root.iter(*_revision_tags("del"), *_revision_tags("moveFrom")):
+    for element in root.iter(_tag("del"), _tag("moveFrom")):
         if _is_paragraph_mark(element):
             raise AcceptRevisionsError(
                 f"{part_name}: accepting a tracked paragraph-mark deletion would merge two "
@@ -122,12 +114,12 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
             )
 
     # Deletions: the deleted content disappears when accepted.
-    for element in list(root.iter(*_revision_tags("del"), *_revision_tags("moveFrom"))):
+    for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
         _remove(element)
 
     # Insertions: the inserted content stays; a paragraph-mark insertion keeps the
     # paragraph (drop only the mark), a content insertion unwraps to its runs.
-    for element in list(root.iter(*_revision_tags("ins"), *_revision_tags("moveTo"))):
+    for element in list(root.iter(_tag("ins"), _tag("moveTo"))):
         if element.getparent() is None:
             continue  # already gone (was nested inside an accepted deletion)
         if _is_paragraph_mark(element):
@@ -150,7 +142,7 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
         "cellIns",
         "cellMerge",
     ):
-        for element in list(root.iter(*_revision_tags(name))):
+        for element in list(root.iter(_tag(name))):
             _remove(element)
 
 
@@ -207,7 +199,7 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
     if drop_comments and name == "[Content_Types].xml":
         return _strip_comment_content_types(data)
 
-    needs_revisions = bool(_revision_kinds(data))
+    needs_revisions = bool(_REVISION_TAG_RE.search(data))
     needs_comment_strip = drop_comments and bool(_COMMENT_ANCHOR_RE.search(data))
     if not (needs_revisions or needs_comment_strip):
         return data  # nothing to accept in this part; copy it through verbatim

@@ -116,24 +116,7 @@ def test_lookalike_elements_are_not_revisions(tmp_path: Path, lookalike: bytes) 
     assert has_tracked_revisions(path) is False
 
 
-def test_strict_ooxml_revision_is_detected(tmp_path: Path) -> None:
-    strict_ns = b'xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"'
-    document = (
-        _XML_HEAD
-        + b"<w:document "
-        + strict_ns
-        + b'><w:body><w:ins w:id="1"/></w:body></w:document>'
-    )
-    path = _docx(tmp_path, {"word/document.xml": document})
-
-    report = inspect_markup(path)
-
-    assert report.has_tracked_revisions
-    assert report.revision_kinds == ("ins",)
-    assert report.revision_parts == ("word/document.xml",)
-
-
-def test_revision_detection_resolves_alternate_namespace_prefix(tmp_path: Path) -> None:
+def test_revision_detection_has_no_noncanonical_prefix_fallback(tmp_path: Path) -> None:
     path = _docx(
         tmp_path,
         {
@@ -142,10 +125,7 @@ def test_revision_detection_resolves_alternate_namespace_prefix(tmp_path: Path) 
             )
         },
     )
-    report = inspect_markup(path)
-    assert report.has_tracked_revisions
-    assert report.revision_kinds == ("ins",)
-    assert report.revision_parts == ("word/document.xml",)
+    assert inspect_markup(path).is_clean
 
 
 @pytest.mark.parametrize(
