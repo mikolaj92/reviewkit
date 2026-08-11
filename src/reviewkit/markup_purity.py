@@ -27,7 +27,12 @@ from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
 # inspected so the conventional ``w`` prefix may be replaced without hiding markup.
 # Exact local-name matching means lookalikes such as insideH, tblPrEx and the ordinary
 # property wrappers do not trip the detector.
-_WORDPROCESSINGML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_WORDPROCESSINGML_NAMESPACES = frozenset(
+    {
+        "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        "http://purl.oclc.org/ooxml/wordprocessingml/main",
+    }
+)
 _REVISION_KINDS = frozenset(
     {
         "ins",
@@ -57,7 +62,7 @@ def _revision_kinds(data: bytes) -> set[str]:
         if not isinstance(element.tag, str):
             continue
         name = etree.QName(element)
-        if name.namespace == _WORDPROCESSINGML_NS and name.localname in _REVISION_KINDS:
+        if name.namespace in _WORDPROCESSINGML_NAMESPACES and name.localname in _REVISION_KINDS:
             found.add(name.localname)
     return found
 

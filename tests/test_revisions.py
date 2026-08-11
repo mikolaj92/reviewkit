@@ -24,6 +24,7 @@ from reviewkit.revisions import (
 )
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_STRICT_W = "{http://purl.oclc.org/ooxml/wordprocessingml/main}"
 
 
 # --- helpers --------------------------------------------------------------------------
@@ -74,6 +75,26 @@ def test_accept_all_revisions_applies_inline_replace_and_is_clean(tmp_path: Path
 
     assert inspect_markup(corrected).is_clean
     assert _body_paragraph_texts(corrected) == ["The quick brown cat jumps."]
+
+
+def test_accept_all_revisions_accepts_strict_ooxml_insertions(tmp_path: Path) -> None:
+    reviewed = tmp_path / "strict-reviewed.docx"
+    document_xml = (
+        b'<?xml version="1.0" encoding="UTF-8"?>'
+        b'<w:document xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main">'
+        b'<w:body><w:p><w:ins w:id="1"><w:r><w:t>strict text</w:t></w:r>'
+        b"</w:ins></w:p></w:body></w:document>"
+    )
+    with ZipFile(reviewed, "w") as archive:
+        archive.writestr("word/document.xml", document_xml)
+
+    corrected = accept_all_revisions(reviewed, tmp_path / "strict-corrected.docx")
+
+    assert inspect_markup(corrected).is_clean
+    with ZipFile(corrected) as archive:
+        root = ElementTree.fromstring(archive.read("word/document.xml"))
+    assert root.find(f".//{_STRICT_W}ins") is None
+    assert root.find(f".//{_STRICT_W}t").text == "strict text"
 
 
 def test_accept_all_revisions_drops_deleted_text(tmp_path: Path) -> None:
