@@ -15,7 +15,6 @@ from reviewkit.insertions import format_suggestion_text
 
 _XML_HEAD = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 _W_NS = b'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
-_STRICT_W_NS = b'xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"'
 
 # The complete non-insertion/deletion revision set in the canonical OOXML grammar.
 _NON_INS_DEL_REVISIONS = [
@@ -59,7 +58,8 @@ def test_clean_document_has_no_markup(tmp_path: Path) -> None:
         tmp_path,
         {
             "word/document.xml": _document_xml(
-                b"<w:p><w:pPr><w:sectPr/></w:pPr><w:r><w:rPr/><w:t>Ala ma kota.</w:t></w:r></w:p>"
+                b"<w:p><w:pPr><w:sectPr/></w:pPr>"
+                b"<w:r><w:rPr/><w:t>Ala ma kota.</w:t></w:r></w:p>"
             ),
             "word/styles.xml": _XML_HEAD + b"<w:styles " + _W_NS + b"><w:pPr/><w:rPr/></w:styles>",
         },
@@ -89,9 +89,7 @@ def test_tracked_change_ins_del_detected(tmp_path: Path, kind: str) -> None:
 
 @pytest.mark.parametrize("element", _NON_INS_DEL_REVISIONS)
 def test_move_format_table_revisions_detected(tmp_path: Path, element: str) -> None:
-    path = _docx(
-        tmp_path, {"word/document.xml": _document_xml(f'<w:{element} w:id="7"/>'.encode())}
-    )
+    path = _docx(tmp_path, {"word/document.xml": _document_xml(f'<w:{element} w:id="7"/>'.encode())})
     report = inspect_markup(path)
     assert report.has_tracked_revisions, element
     assert element in report.revision_kinds
@@ -118,25 +116,7 @@ def test_lookalike_elements_are_not_revisions(tmp_path: Path, lookalike: bytes) 
     assert has_tracked_revisions(path) is False
 
 
-def test_strict_ooxml_revision_is_detected(tmp_path: Path) -> None:
-    document = (
-        _XML_HEAD
-        + b"<w:document "
-        + _STRICT_W_NS
-        + b"><w:body><w:p><w:ins><w:r><w:t>strict</w:t></w:r></w:ins>"
-        + b"</w:p></w:body></w:document>"
-    )
-    path = _docx(tmp_path, {"word/document.xml": document})
-
-    report = inspect_markup(path)
-
-    assert report.has_tracked_revisions
-    assert report.revision_kinds == ("ins",)
-    assert report.revision_parts == ("word/document.xml",)
-    assert has_tracked_revisions(path) is True
-
-
-def test_revision_detection_resolves_alternate_namespace_prefix(tmp_path: Path) -> None:
+def test_revision_detection_requires_the_canonical_prefix(tmp_path: Path) -> None:
     path = _docx(
         tmp_path,
         {
@@ -145,10 +125,7 @@ def test_revision_detection_resolves_alternate_namespace_prefix(tmp_path: Path) 
             )
         },
     )
-    report = inspect_markup(path)
-    assert report.has_tracked_revisions
-    assert report.revision_kinds == ("ins",)
-    assert report.revision_parts == ("word/document.xml",)
+    assert inspect_markup(path).is_clean
 
 
 @pytest.mark.parametrize(
@@ -298,9 +275,7 @@ def test_suggestion_parts_are_sorted(tmp_path: Path) -> None:
     path = _docx(
         tmp_path,
         {
-            "word/footnotes.xml": _document_xml(
-                b"<w:p><w:r><w:t>[SUGGESTION: b]</w:t></w:r></w:p>"
-            ),
+            "word/footnotes.xml": _document_xml(b"<w:p><w:r><w:t>[SUGGESTION: b]</w:t></w:r></w:p>"),
             "word/document.xml": _document_xml(b"<w:p><w:r><w:t>[SUGGESTION: a]</w:t></w:r></w:p>"),
         },
     )

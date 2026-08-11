@@ -24,7 +24,6 @@ from reviewkit.revisions import (
 )
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
-_STRICT_W = "{http://purl.oclc.org/ooxml/wordprocessingml/main}"
 
 
 # --- helpers --------------------------------------------------------------------------
@@ -75,39 +74,6 @@ def test_accept_all_revisions_applies_inline_replace_and_is_clean(tmp_path: Path
 
     assert inspect_markup(corrected).is_clean
     assert _body_paragraph_texts(corrected) == ["The quick brown cat jumps."]
-
-
-def test_accept_all_revisions_accepts_strict_ooxml_markup(tmp_path: Path) -> None:
-    source = _saved_docx(tmp_path, "input.docx", "The quick brown fox jumps.")
-    document = load_docx(source)
-    paragraph = document.sections[0].paragraphs[0]
-    action = ReviewAction(
-        scope=ReviewScope.PARAGRAPH,
-        action_type=ReviewActionType.REPLACE_TEXT,
-        node_id=paragraph.id,
-        original_text="fox",
-        replacement_text="cat",
-        locator=ReviewLocator(node_id=paragraph.id, char_start=16, char_end=19),
-        status=ActionStatus.APPLIED,
-    )
-    reviewed = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
-    with ZipFile(reviewed) as archive:
-        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
-    transitional = b"http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-    strict = b"http://purl.oclc.org/ooxml/wordprocessingml/main"
-    with ZipFile(reviewed, "w") as archive:
-        for info, data in entries:
-            archive.writestr(info, data.replace(transitional, strict))
-
-    assert inspect_markup(reviewed).has_tracked_revisions
-    corrected = accept_all_revisions(reviewed, tmp_path / "corrected.docx")
-
-    assert inspect_markup(corrected).is_clean
-    with ZipFile(corrected) as archive:
-        root = ElementTree.fromstring(archive.read("word/document.xml"))
-    assert "".join(element.text or "" for element in root.iter(f"{_STRICT_W}t")) == (
-        "The quick brown cat jumps."
-    )
 
 
 def test_accept_all_revisions_drops_deleted_text(tmp_path: Path) -> None:
@@ -163,7 +129,9 @@ def test_accept_all_revisions_keeps_new_paragraph_standalone(tmp_path: Path) -> 
     # End-to-end proof that a stand-alone clause insert becomes a REAL separate
     # paragraph in the clean copy - not glued onto the anchor's text. This is exactly
     # what dike's czystopis relies on when it flattens an auto-applied catalogue clause.
-    source = _saved_docx(tmp_path, "input.docx", "Anchor clause heading.", "Following paragraph.")
+    source = _saved_docx(
+        tmp_path, "input.docx", "Anchor clause heading.", "Following paragraph."
+    )
     document = load_docx(source)
     anchor = document.sections[0].paragraphs[0]
     action = ReviewAction(
