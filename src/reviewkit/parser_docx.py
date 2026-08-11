@@ -272,12 +272,7 @@ def _is_heading(docx_paragraph: object) -> bool:
     # built-in styles ("Heading1", "Heading2", "Title", ...), so heading detection
     # stays domain- and language-agnostic regardless of the document's UI language.
     style_id = str(getattr(style, "style_id", "") or "")
-    if style_id.startswith("Heading") or style_id == "Title":
-        return True
-    # python-docx exposes built-in style names in canonical English ("heading 1"),
-    # so a name-based fallback remains language-neutral for built-in styles.
-    style_name = str(getattr(style, "name", "") or "").lower()
-    return style_name.startswith("heading") or style_name.startswith("title")
+    return style_id.startswith("Heading") or style_id == "Title"
 
 
 def _paragraph_node(
