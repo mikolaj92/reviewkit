@@ -21,7 +21,7 @@ from reviewkit.actions import (
     should_apply_to_corrected,
 )
 from reviewkit.docx_package import normalize_docx_timestamps
-from reviewkit.document import ReviewDocument
+from reviewkit.document import ParagraphNode, ReviewDocument
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 from reviewkit.policy import WRITING_ACTIONS
 from docxtor import (
@@ -110,9 +110,10 @@ def _assert_writing_actions_reach_a_paragraph(
     """Fail closed when a writing action's node_id routes to no paragraph.
 
     ``actions_for_paragraph`` silently ignores an action whose node_id names no
-    paragraph or sentence and is not a section/document scope that can anchor
-    (original_text present and the scope has at least one paragraph); such an
-    action would leave no trace in the artifact.
+    paragraph or sentence, or whose section/document quote occurs in no single
+    paragraph. Trackable edits in either category would leave no trace in the
+    artifact. Unanchorable advisory/conflict actions are handled separately by
+    ``_append_unanchored_scope_comments`` in reviewed.docx.
     """
     paragraph_ids = {paragraph.id for paragraph in document.iter_paragraphs()}
     sentence_ids = {sentence.id for sentence in document.iter_sentences()}
@@ -121,12 +122,15 @@ def _assert_writing_actions_reach_a_paragraph(
         node_id = action.node_id
         if node_id in paragraph_ids or node_id in sentence_ids:
             return True
-        if not action.original_text:
+        quote = action.original_text
+        if not quote:
             return False
         if node_id == document.id:
-            return bool(paragraph_ids)
-        section = next((s for s in document.sections if s.id == node_id), None)
-        return section is not None and bool(section.paragraphs)
+            paragraphs = document.iter_paragraphs()
+        else:
+            section = next((s for s in document.sections if s.id == node_id), None)
+            paragraphs = iter(section.paragraphs) if section is not None else iter(())
+        return any(quote in paragraph.text for paragraph in paragraphs)
 
     dropped = [action for action in actions if must_render(action) and not _routes(action)]
     if dropped:
@@ -258,6 +262,8 @@ def render_reviewed_docx(
                     section_paragraph = docx.add_paragraph(section.title or section.id)
                 if not _add_comment(docx, section_paragraph, comment, reviewer):
                     docx.add_paragraph(comment)
+
+    _append_unanchored_scope_comments(docx, document, actions, reviewer)
 
     document_comments = [
         _comment_text(action)
@@ -1001,6 +1007,42 @@ def _comment_label(action: ReviewAction) -> str:
     if action.action_type == ReviewActionType.SUMMARY:
         return "SUMMARY"
     return "COMMENT"
+
+
+def _append_unanchored_scope_comments(
+    docx: Any,
+    document: ReviewDocument,
+    actions: list[ReviewAction],
+    reviewer: _ReviewerIdentity,
+) -> None:
+    """Surface scoped actions whose quote has no honest paragraph anchor.
+
+    Word comments require a range in a paragraph. Rather than silently dropping
+    cross-paragraph conflicts or attaching unmatched advisory notes to unrelated
+    source text, append an explicit review-note paragraph and anchor the comment
+    there. This path is reviewed-artifact-only and never represents an edit to the
+    corrected document.
+    """
+    scope_ids = {document.id, *(section.id for section in document.sections)}
+    for action in actions:
+        quote = action.original_text
+        if action.node_id not in scope_ids or not quote:
+            continue
+        if any(quote in paragraph.text for paragraph in _scope_paragraphs(document, action)):
+            continue
+        marker = docx.add_paragraph(f"Unanchored review action — {_comment_label(action)}")
+        comment = _comment_text(action)
+        if comment and not _add_comment(docx, marker, comment, reviewer):
+            marker.add_run(f"\n{comment}")
+
+
+def _scope_paragraphs(
+    document: ReviewDocument, action: ReviewAction
+) -> list[ParagraphNode]:
+    if action.node_id == document.id:
+        return list(document.iter_paragraphs())
+    section = next((section for section in document.sections if section.id == action.node_id), None)
+    return list(section.paragraphs) if section is not None else []
 
 
 def _add_comment(

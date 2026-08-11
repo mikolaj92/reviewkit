@@ -137,12 +137,9 @@ def test_reviewed_docx_surfaces_unapplied_edits_as_labelled_comments(
     )
 
 
-def test_reviewed_docx_surfaces_scope_level_conflict_as_a_comment(tmp_path: Path) -> None:
-    # A section/document-scoped edit that ends up CONFLICT must still be surfaced. It used to
-    # vanish (anchor returned None, and the scope-comment loops skip original_text actions),
-    # losing the escalation for exactly the ambiguous, higher-scope case that needs a human.
-    from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
-
+def test_reviewed_docx_surfaces_cross_paragraph_conflict_as_a_comment(tmp_path: Path) -> None:
+    # A scoped edit whose quote spans paragraphs has no honest Word range. It must still
+    # remain visible through a dedicated review-note paragraph rather than disappear.
     document = ReviewDocument(
         sections=[
             SectionNode(
@@ -158,20 +155,47 @@ def test_reviewed_docx_surfaces_scope_level_conflict_as_a_comment(tmp_path: Path
         scope=ReviewScope.SECTION,
         action_type=ReviewActionType.REPLACE,
         node_id="s1",
-        original_text="fox",
-        replacement_text="cat",
-        reason="Ambiguous at section scope.",
+        original_text="jumps.\n\nAnother",
+        replacement_text="jumps; another",
+        reason="Cross-paragraph wording needs human review.",
         status=ActionStatus.CONFLICT,
     )
 
     reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    rendered = DocxDocument(reviewed_path)
     root = ElementTree.fromstring(_part_xml(reviewed_path, "word/document.xml"))
 
-    # Surfaced as a labelled comment, never a silent tracked change.
     assert root.find(f".//{_W}ins") is None
     assert root.find(f".//{_W}del") is None
+    assert any(p.text == "Unanchored review action — CONFLICT" for p in rendered.paragraphs)
     comments = _comment_texts(reviewed_path)
     assert any(text.startswith("CONFLICT:") for text in comments), comments
+    assert any("Original: 'jumps.\\n\\nAnother'" in text for text in comments)
+
+
+def test_reviewed_docx_surfaces_unmatched_scoped_advisory_comment(tmp_path: Path) -> None:
+    document = ReviewDocument(
+        sections=[
+            SectionNode(
+                id="s1",
+                paragraphs=[ParagraphNode(id="p1", text="Only source text.", section_id="s1")],
+            )
+        ]
+    )
+    action = ReviewAction(
+        scope=ReviewScope.SECTION,
+        action_type=ReviewActionType.COMMENT,
+        node_id="s1",
+        original_text="quote absent from the document",
+        comment="Verify this section against the source.",
+    )
+
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+    rendered = DocxDocument(reviewed_path)
+
+    assert any(p.text == "Unanchored review action — COMMENT" for p in rendered.paragraphs)
+    comments = _comment_texts(reviewed_path)
+    assert any("Verify this section against the source." in text for text in comments), comments
 
 
 def test_reviewed_docx_renders_delete_and_insert_text_revisions(tmp_path: Path) -> None:

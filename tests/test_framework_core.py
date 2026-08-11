@@ -659,7 +659,7 @@ def test_section_scoped_comment_attaches_to_a_single_paragraph() -> None:
     assert comment not in p2_actions
 
 
-def test_scoped_comment_without_a_match_is_surfaced_not_dropped() -> None:
+def test_scoped_comment_without_a_match_is_not_routed() -> None:
     document = ReviewDocument(
         sections=[
             SectionNode(
@@ -682,9 +682,8 @@ def test_scoped_comment_without_a_match_is_surfaced_not_dropped() -> None:
     p1_actions = actions_for_paragraph(document, document.sections[0].paragraphs[0], [comment])
     p2_actions = actions_for_paragraph(document, document.sections[0].paragraphs[1], [comment])
 
-    attachments = [a for a in (*p1_actions, *p2_actions) if a.node_id == "s1"]
-    assert len(attachments) == 1
-    assert comment in p1_actions
+    assert p1_actions == []
+    assert p2_actions == []
 
 
 def test_scope_level_edit_without_original_text_is_conflicted_not_falsely_applied() -> None:
@@ -795,14 +794,11 @@ def test_scope_edit_whose_quote_spans_paragraphs_is_conflicted() -> None:
     assert prepared[0].status == ActionStatus.CONFLICT
     assert "single paragraph" in (prepared[0].policy_reason or "")
     assert should_apply_to_corrected(prepared[0]) is False
-    # It still surfaces (as an advisory CONFLICT comment via the documented scope-comment
-    # fallback) but is never trackable, so neither renderer edits any paragraph for it.
-    routed = [
-        action
+    # Cross-paragraph quotes have no canonical paragraph anchor and are not routed.
+    assert all(
+        actions_for_paragraph(document, paragraph, prepared) == []
         for paragraph in document.sections[0].paragraphs
-        for action in actions_for_paragraph(document, paragraph, prepared)
-    ]
-    assert all(action.status == ActionStatus.CONFLICT for action in routed)
+    )
 
 
 def test_paragraph_level_insert_without_original_text_still_applies() -> None:
