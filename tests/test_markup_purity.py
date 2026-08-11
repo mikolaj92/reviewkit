@@ -12,12 +12,11 @@ from reviewkit import (
     inspect_markup,
 )
 from reviewkit.insertions import format_suggestion_text
-from reviewkit.parser_docx import _contains_tracked_revisions
 
 _XML_HEAD = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 _W_NS = b'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 
-# The drift set: revision kinds a legacy ``w:ins``/``w:del``-only detector misses.
+# The complete non-insertion/deletion revision set in the canonical OOXML grammar.
 _NON_INS_DEL_REVISIONS = [
     "moveFrom",
     "moveTo",
@@ -90,8 +89,6 @@ def test_tracked_change_ins_del_detected(tmp_path: Path, kind: str) -> None:
 
 @pytest.mark.parametrize("element", _NON_INS_DEL_REVISIONS)
 def test_move_format_table_revisions_detected(tmp_path: Path, element: str) -> None:
-    # These are exactly the revisions the old ins/del-only grammar would miss.
-    assert element not in {"ins", "del"}
     path = _docx(tmp_path, {"word/document.xml": _document_xml(f'<w:{element} w:id="7"/>'.encode())})
     report = inspect_markup(path)
     assert report.has_tracked_revisions, element
@@ -272,19 +269,3 @@ def test_suggestion_parts_are_sorted(tmp_path: Path) -> None:
     )
     report = inspect_markup(path)
     assert report.suggestion_parts == ("word/document.xml", "word/footnotes.xml")
-
-
-def test_parser_helper_uses_the_shared_full_grammar(tmp_path: Path) -> None:
-    # A move revision with no w:ins/w:del: the parser's old ins/del-only grammar
-    # would have reported False. It now delegates to the shared grammar.
-    path = _docx(
-        tmp_path,
-        {"word/document.xml": _document_xml(b'<w:moveFrom w:id="3"><w:r><w:t>x</w:t></w:r></w:moveFrom>')},
-    )
-    assert _contains_tracked_revisions(path) is True
-
-
-def test_parser_helper_fails_open_on_bad_package(tmp_path: Path) -> None:
-    broken = tmp_path / "broken.docx"
-    broken.write_bytes(b"not a zip")
-    assert _contains_tracked_revisions(broken) is False

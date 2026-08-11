@@ -495,7 +495,7 @@ def test_context_provider_is_included_in_prompts(tmp_path: Path) -> None:
 
 
 def test_tracked_revision_inputs_are_reported_as_warning(tmp_path: Path, monkeypatch) -> None:
-    monkeypatch.setattr(parser_docx, "_contains_tracked_revisions", lambda path: True)
+    monkeypatch.setattr(parser_docx, "has_tracked_revisions", lambda path: True)
 
     result = _run_with_single_sentence_action(
         tmp_path,

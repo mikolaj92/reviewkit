@@ -92,7 +92,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
         "paragraph_count": str(sum(len(section.paragraphs) for section in sections)),
         "table_count": str(len(docx.tables)),
         "comment_count": str(_comment_count(docx)),
-        "tracked_revisions_detected": str(_contains_tracked_revisions(source_path)).lower(),
+        "tracked_revisions_detected": str(has_tracked_revisions(source_path)).lower(),
     }
     return ReviewDocument(source_path=source_path, sections=sections, metadata=metadata)
 
@@ -465,15 +465,3 @@ def _comment_count(docx: object) -> int:
     if comments is None:
         return 0
     return sum(1 for _ in comments)
-
-
-def _contains_tracked_revisions(path: Path) -> bool:
-    # Detection is delegated to the single public grammar in
-    # ``reviewkit.markup_purity`` -- no second copy of the OOXML markup grammar
-    # lives here. Fail-open: this only feeds the informational
-    # ``tracked_revisions_detected`` metadata flag, so an un-inspectable package
-    # degrades to "not detected" rather than breaking the parse.
-    try:
-        return has_tracked_revisions(path)
-    except (OSError, BadZipFile):
-        return False
