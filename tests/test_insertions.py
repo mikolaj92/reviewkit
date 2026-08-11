@@ -335,43 +335,11 @@ def test_validator_rejects_wrong_or_missing_placement() -> None:
     assert not validator.action_applied(missing, "body:p:0")
 
 
-def test_validator_fallback_accepts_table_leadin_placement() -> None:
-    # The clause sits after the anchor's table, so it directly follows the
-    # anchor in the paragraph sequence even though it is not its XML sibling.
-    document = _make_document(["Lead-in."])
-    document.add_table(rows=1, cols=1)
-    document.add_paragraph("Inserted.")
+def test_validator_requires_recorded_applied_anchor() -> None:
+    document = _make_document(["A.", "Inserted."])
     validator = InsertionValidator(document)
     action = InsertionAction(action_id="a1", anchor="body:p:0", text="Inserted.")
-    assert validator.action_applied(action)
-
-
-def test_validator_fallbacks_without_applied_anchor() -> None:
-    document = _make_document(["A.", "Inserted.", "B."])
-    validator = InsertionValidator(document)
-    indexed = InsertionAction(action_id="a1", anchor="body:p:0", text="Inserted.")
-    assert validator.action_applied(indexed)
-    shifted = InsertionAction(action_id="a2", anchor="body:p:1", text="Inserted.")
-    assert not validator.action_applied(shifted)
-    out_of_range = InsertionAction(action_id="a3", anchor="body:p:9", text="Inserted.")
-    assert not validator.action_applied(out_of_range)
-    last = InsertionAction(action_id="a4", anchor=ANCHOR_LAST, text="Inserted.")
-    assert validator.action_applied(last)
-    absent_last = InsertionAction(action_id="a5", anchor=ANCHOR_LAST, text="Nonexistent.")
-    assert not validator.action_applied(absent_last)
-
-
-def test_validator_suggest_fallback_checks_formatted_text() -> None:
-    document = _make_document(["A.", "[SUGGESTION: Why]\nProposed."])
-    validator = InsertionValidator(document)
-    action = InsertionAction(
-        action_id="a1", anchor="body:p:0", text="Proposed.", kind="suggest", reason="Why"
-    )
-    assert validator.action_applied(action)
-    wrong_reason = InsertionAction(
-        action_id="a2", anchor="body:p:0", text="Proposed.", kind="suggest", reason="Other"
-    )
-    assert not validator.action_applied(wrong_reason)
+    assert not validator.action_applied(action, None)
 
 
 def test_validator_suggest_with_applied_anchor_checks_adjacency() -> None:
