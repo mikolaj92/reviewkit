@@ -21,8 +21,9 @@ from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
 # emit under Track Changes (ISO/IEC 29500 §17.13): edits (w:ins/w:del), moves
 # (w:moveFrom/w:moveTo), the property-change wrappers (w:*PrChange), the table
 # revision marks (w:cellIns/w:cellDel/w:cellMerge/w:tblGridChange/w:tblPrExChange)
-# and legacy numbering changes. The trailing lookahead pins each element name to a
-# delimiter so lookalikes never match: <w:insideH>/<w:insideV> (table borders) are
+# and paragraph-numbering revisions (w:numberingChange). The trailing lookahead pins
+# each element name to a delimiter so lookalikes never match:
+# <w:insideH>/<w:insideV> (table borders) are
 # not <w:ins>, <w:tblPrEx> (table property exceptions) is not <w:tblPrExChange>,
 # and the ubiquitous <w:sectPr>/<w:pPr>/<w:rPr>/<w:tcPr>/<w:trPr>/<w:tblPr>
 # property wrappers are not their *Change revisions -- so a clean document, which
