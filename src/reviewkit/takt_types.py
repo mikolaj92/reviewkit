@@ -106,7 +106,6 @@ class TaktDecision:
     actuation: ActuationView | None = None
     interlock: InterlockView | None = None
     telemetry_count: int = 0
-    engine: str = "binding"
 
     @property
     def has_interlock(self) -> bool:

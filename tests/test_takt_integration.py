@@ -5,8 +5,8 @@ They are intentionally small and do not duplicate all old hierarchical tests.
 """
 
 from __future__ import annotations
-import os
 
+import os
 from pathlib import Path
 
 from docx import Document as DocxDocument
@@ -55,10 +55,13 @@ def test_takt_binding_does_not_discover_local_checkout(monkeypatch, tmp_path: Pa
 
     monkeypatch.setattr("takt.cascade_step", evaluate)
 
-    TaktClient().evaluate(
+    decision = TaktClient().evaluate(
         plant_nodes=[PlantNode(id="node")],
         layers=[LayerSpec(layer=0)],
     )
+
+    assert decision.outcome == "stable"
+    assert not hasattr(decision, "engine")
 
 
 def test_review_document_plant_builds_correct_tree(tmp_path: Path) -> None:
