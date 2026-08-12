@@ -152,9 +152,11 @@ def actions_for_paragraph(
         if sentence is not None:
             selected.append(_rebase_sentence_action(paragraph, sentence, action))
             continue
-        if action.node_id in section_or_document_ids and action.original_text:
-            if _scope_anchor_id(document, action) == paragraph.id:
-                selected.append(_clear_locator_offsets(action))
+        if (
+            action.node_id in section_or_document_ids
+            and _scope_anchor_id(document, action) == paragraph.id
+        ):
+            selected.append(_clear_locator_offsets(action))
     return selected
 
 
@@ -171,7 +173,7 @@ def _scope_paragraphs(
 
 
 def _scope_anchor_id(document: ReviewDocument, action: ReviewAction) -> str | None:
-    """Return the first paragraph in scope containing the action's quote."""
+    """Return the canonical paragraph anchor, or None when the quote cannot be anchored."""
     quote = action.original_text
     if not quote:
         return None
