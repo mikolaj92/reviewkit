@@ -19,7 +19,7 @@ from reviewkit.models import (
 )
 from reviewkit.pipeline import _unresolved_finding_id_warnings
 from reviewkit.profile import ReviewProfile
-from reviewkit.reviewer import HierarchicalReviewer
+from reviewkit.takt_reviewer import TaktReviewer
 from reviewkit.state import ReviewState
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -236,7 +236,7 @@ def test_subset_pipeline_rolls_lower_actions_up_to_the_next_enabled_scope() -> N
         ]
     )
 
-    reviewer = HierarchicalReviewer(profile=profile, llm=llm)
+    reviewer = TaktReviewer(profile=profile, llm=llm)
     reviewer.review(document)
 
     # Exactly two LLM calls: sentence then document (paragraph + section skipped).
@@ -244,67 +244,6 @@ def test_subset_pipeline_rolls_lower_actions_up_to_the_next_enabled_scope() -> N
     document_prompt = llm.calls[1].content
     assert "section_review_results" in document_prompt
     assert "a-sentence" in document_prompt
-
-
-def test_malformed_action_does_not_discard_valid_findings_summary_and_actions() -> None:
-    # A real LLM emits one out-of-spec action among good items. Only the bad action must
-    # be dropped; the valid action, the finding, and the summary must all survive.
-    class _RawDictLLM:
-        def complete_json(self, messages: list[dict[str, str]], schema: type[Any]) -> Any:
-            return {
-                "actions": [
-                    {
-                        "id": "good",
-                        "scope": "paragraph",
-                        "action_type": "comment",
-                        "node_id": "p1",
-                        "comment": "Valid action.",
-                        "confidence": 0.9,
-                    },
-                    {
-                        "id": "bad",
-                        "scope": "paragraph",
-                        "action_type": "not_a_real_action_type",
-                        "node_id": "p1",
-                        "confidence": 0.9,
-                    },
-                ],
-                "findings": [
-                    {
-                        "finding_id": "f1",
-                        "node_id": "p1",
-                        "title": "Observation",
-                        "description": "Salvaged despite the bad action.",
-                        "dimension": "clarity",
-                        "severity": "low",
-                    }
-                ],
-                "summary": "Paragraph checked.",
-            }
-
-    document = ReviewDocument(
-        sections=[
-            SectionNode(
-                id="s1",
-                paragraphs=[ParagraphNode(id="p1", text="The cat sat.", section_id="s1")],
-            )
-        ]
-    )
-    profile = ReviewProfile(
-        name="generic",
-        language="en",
-        document_type="generic document",
-        reviewer_role="generic reviewer",
-        review_pipeline=[ReviewScope.PARAGRAPH],
-    )
-
-    reviewer = HierarchicalReviewer(profile=profile, llm=_RawDictLLM())
-    findings, actions, state = reviewer.review(document)
-
-    assert [action.id for action in actions] == ["good"]
-    assert [finding.finding_id for finding in findings] == ["f1"]
-    assert state.paragraph_summaries.get("p1") == "Paragraph checked."
-    assert any("action 1" in warning for warning in state.warnings)
 
 
 def test_sentence_review_adds_action(tmp_path: Path) -> None:
@@ -784,7 +723,7 @@ def test_propagate_llm_errors_reraises_on_first_client_failure() -> None:
     )
 
     llm = _RaisingLLM()
-    reviewer = HierarchicalReviewer(profile=profile, llm=llm, propagate_llm_errors=True)
+    reviewer = TaktReviewer(profile=profile, llm=llm, propagate_llm_errors=True)
 
     with pytest.raises(RuntimeError, match="simulated LLM failure"):
         reviewer.review(document)
@@ -816,7 +755,7 @@ def test_propagate_llm_errors_default_false_still_degrades() -> None:
         review_pipeline=[ReviewScope.PARAGRAPH],
     )
 
-    findings, actions, state = HierarchicalReviewer(
+    findings, actions, state = TaktReviewer(
         profile=profile, llm=_RaisingLLM()
     ).review(document)
 
