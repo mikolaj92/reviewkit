@@ -659,7 +659,7 @@ def test_section_scoped_comment_attaches_to_a_single_paragraph() -> None:
     assert comment not in p2_actions
 
 
-def test_scoped_comment_without_a_match_is_not_routed() -> None:
+def test_scoped_comments_without_a_canonical_anchor_are_not_routed() -> None:
     document = ReviewDocument(
         sections=[
             SectionNode(
@@ -671,19 +671,24 @@ def test_scoped_comment_without_a_match_is_not_routed() -> None:
             )
         ]
     )
-    comment = ReviewAction(
-        scope=ReviewScope.SECTION,
-        action_type=ReviewActionType.COMMENT,
-        node_id="s1",
-        original_text="gamma",
-        comment="Note that never quotes matching text.",
-    )
+    comments = [
+        ReviewAction(
+            scope=ReviewScope.SECTION,
+            action_type=ReviewActionType.COMMENT,
+            node_id="s1",
+            original_text="gamma",
+            comment="Note that never quotes matching text.",
+        ),
+        ReviewAction(
+            scope=ReviewScope.SECTION,
+            action_type=ReviewActionType.COMMENT,
+            node_id="s1",
+            comment="Note without a quote.",
+        ),
+    ]
 
-    p1_actions = actions_for_paragraph(document, document.sections[0].paragraphs[0], [comment])
-    p2_actions = actions_for_paragraph(document, document.sections[0].paragraphs[1], [comment])
-
-    assert p1_actions == []
-    assert p2_actions == []
+    for paragraph in document.sections[0].paragraphs:
+        assert actions_for_paragraph(document, paragraph, comments) == []
 
 
 def test_scope_level_edit_without_original_text_is_conflicted_not_falsely_applied() -> None:
