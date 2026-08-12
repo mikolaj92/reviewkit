@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from xml.etree import ElementTree
 from zipfile import ZipFile
 
@@ -22,6 +23,8 @@ from reviewkit.parser_docx import load_docx
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile
 from reviewkit.renderer_docx import (
     RenderIntegrityError,
+    _ReviewerIdentity,
+    _add_comment,
     render_corrected_docx,
     render_reviewed_docx,
 )
@@ -888,6 +891,18 @@ def test_rendered_docx_packages_are_byte_reproducible_whole_file(tmp_path: Path)
         with ZipFile(first) as archive:
             assert all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist())
         assert first.read_bytes() == second.read_bytes()
+
+
+def test_add_comment_failure_propagates() -> None:
+    class BrokenComments:
+        def add_comment(self, **_kwargs: object) -> None:
+            raise AttributeError("unsupported comment API")
+
+    docx = SimpleNamespace(comments=BrokenComments())
+    paragraph = SimpleNamespace(runs=[SimpleNamespace()])
+
+    with pytest.raises(AttributeError, match="unsupported comment API"):
+        _add_comment(docx, paragraph, "Review note.", _ReviewerIdentity())
 
 
 def test_precise_comment_anchor_survives_opaque_segment_before_the_quote(tmp_path: Path) -> None:

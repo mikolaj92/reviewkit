@@ -9,7 +9,9 @@ paths.
 | `homeostat.profile_to_homeostats` | **Delete** | Unused compatibility name superseded by `profile_to_layer_specs`. |
 | `homeostat.build_layered_homeostats` | **Delete** | Unused compatibility adapter superseded by `build_layer_specs`. |
 | `plant._DocNode` | **Delete** | Unused private compatibility alias; `DocNode` is the documented type. |
-| `renderer_docx._add_comment` plain-text degradation | **Delete** | A malformed/unsupported comment API must fail rendering rather than silently produce a different artifact. |
+| `renderer_docx._add_comment` plain-text degradation | **Delete** | A malformed/unsupported comment API must fail rendering rather than silently produce a different artifact. `test_add_comment_failure_propagates` locks in this fail-closed behavior. |
+| `parser_docx._opaque_ranges` representation mismatch returning `[]` | **Promote** | Explicit fail-open parser boundary: when python-docx text disagrees with the OOXML walk, prepare-time opaque-range demotion is skipped. Renderer integrity checks remain the fail-closed backstop. |
+| Precise text comment anchoring to whole-paragraph comments in `renderer_docx` | **Promote** | Explicit degraded-output behavior: if an advisory quote cannot be precisely marked, retain the review feedback on the containing paragraph rather than drop it. Precise anchoring around opaque content is covered by `test_precise_comment_anchor_survives_opaque_segment_before_the_quote`. |
 | `InsertionValidator` malformed OOXML reporting | **Promote** | Explicit fail-closed integrity feature, covered by `test_check_document_integrity_missing_body` and the empty-document integrity test. |
 | Unanchored scope actions in `renderer_docx` | **Promote** | Explicit reviewed-artifact feature: actions receive a labelled comment on a generated review-note paragraph; covered by scoped advisory and cross-paragraph conflict tests. |
 | Overlap-consumed suggestions in `renderer_docx` | **Promote** | Explicit conflict-comment behavior, covered by `test_overlap_consumed_suggestion_degrades_to_comment_not_error`. |
