@@ -138,10 +138,6 @@ def load_profile(profile_path: str | Path) -> ReviewProfile:
         raise FileNotFoundError(msg)
     raw = _load_toml_mapping(source_path)
 
-    if not isinstance(raw, dict):
-        msg = f"{source_path.name} must contain a mapping: {source_path}"
-        raise ValueError(msg)
-
     markdown_files = _read_markdown_files(folder)
     payload: dict[str, Any] = {
         **raw,
@@ -153,16 +149,10 @@ def load_profile(profile_path: str | Path) -> ReviewProfile:
 
 def _load_toml_mapping(path: Path) -> dict[str, Any]:
     try:
-        loaded = tomllib.loads(path.read_text(encoding="utf-8"))
+        return tomllib.loads(path.read_text(encoding="utf-8"))
     except tomllib.TOMLDecodeError as error:
         msg = f"profile.toml is not valid TOML: {path}: {error}"
         raise ValueError(msg) from error
-    if loaded is None:
-        return {}
-    if not isinstance(loaded, dict):
-        msg = f"profile.toml must contain a mapping: {path}"
-        raise ValueError(msg)
-    return loaded
 
 
 def _read_markdown_files(folder: Path) -> dict[str, str]:
