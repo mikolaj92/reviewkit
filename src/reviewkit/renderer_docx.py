@@ -260,8 +260,7 @@ def render_reviewed_docx(
                 section_paragraph = _paragraph_for_locator(docx, target)
                 if section_paragraph is None:
                     section_paragraph = docx.add_paragraph(section.title or section.id)
-                if not _add_comment(docx, section_paragraph, comment, reviewer):
-                    docx.add_paragraph(comment)
+                _add_comment(docx, section_paragraph, comment, reviewer)
 
     _append_unanchored_scope_comments(docx, document, actions, reviewer)
 
@@ -280,8 +279,7 @@ def render_reviewed_docx(
                 )
                 if document_paragraph is None:
                     document_paragraph = docx.add_paragraph("Document-level review")
-                if not _add_comment(docx, document_paragraph, comment, reviewer):
-                    docx.add_paragraph(comment)
+                _add_comment(docx, document_paragraph, comment, reviewer)
 
     # Every locator is resolved now; splice the stand-alone clause paragraphs against
     # the anchor elements we held onto (see deferred_block_inserts above).
@@ -1032,8 +1030,8 @@ def _append_unanchored_scope_comments(
             continue
         marker = docx.add_paragraph(f"Unanchored review action — {_comment_label(action)}")
         comment = _comment_text(action)
-        if comment and not _add_comment(docx, marker, comment, reviewer):
-            marker.add_run(f"\n{comment}")
+        if comment:
+            _add_comment(docx, marker, comment, reviewer)
 
 
 def _scope_paragraphs(
@@ -1047,17 +1045,13 @@ def _scope_paragraphs(
 
 def _add_comment(
     docx: Any, paragraph: Any, text: str, reviewer: _ReviewerIdentity
-) -> bool:
-    try:
-        runs = getattr(paragraph, "runs")
-        if not runs:
-            paragraph.add_run("")
-            runs = getattr(paragraph, "runs")
-        comment = docx.comments.add_comment(
-            text=text, author=reviewer.author, initials=reviewer.initials
-        )
-        _stamp_comment_date(comment, reviewer)
-        runs[0].mark_comment_range(runs[-1], comment.comment_id)
-    except AttributeError:
-        return False
-    return True
+) -> None:
+    runs = paragraph.runs
+    if not runs:
+        paragraph.add_run("")
+        runs = paragraph.runs
+    comment = docx.comments.add_comment(
+        text=text, author=reviewer.author, initials=reviewer.initials
+    )
+    _stamp_comment_date(comment, reviewer)
+    runs[0].mark_comment_range(runs[-1], comment.comment_id)

@@ -42,19 +42,8 @@ def scope_to_layer_index(profile: ReviewProfile) -> dict[ReviewScope, int]:
     return {scope: idx for idx, scope in enumerate(profile.review_pipeline)}
 
 
-# Backward-compatible names used in docs / older call sites
-def profile_to_homeostats(profile: ReviewProfile) -> dict[ReviewScope, LayerSpec]:
-    return profile_to_layer_specs(profile)
-
-
-def build_layered_homeostats(profile: ReviewProfile) -> list[tuple[int, LayerSpec]]:
-    return [(spec.layer, spec) for spec in build_layer_specs(profile)]
-
-
 __all__ = [
     "build_layer_specs",
-    "build_layered_homeostats",
-    "profile_to_homeostats",
     "profile_to_layer_specs",
     "scope_to_layer_index",
 ]

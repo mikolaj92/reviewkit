@@ -79,10 +79,6 @@ class DocNode:
         return f"DocNode({kind}, {self.id!r})"
 
 
-# Backward-compatible alias used by tests / older imports
-_DocNode = DocNode
-
-
 @dataclass
 class ReviewDocumentPlant:
     """Host plant over a ReviewDocument.
@@ -174,4 +170,4 @@ class ReviewDocumentPlant:
         return [n.to_plant_node() for n in self.sequential_scan()]
 
 
-__all__ = ["ReviewDocumentPlant", "DocNode", "_DocNode"]
+__all__ = ["ReviewDocumentPlant", "DocNode"]
