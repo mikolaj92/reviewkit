@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from unittest.mock import Mock
 
 from docx import Document as DocxDocument
 import pytest
 
 from reviewkit.takt_client import TaktClient
-from reviewkit.takt_types import LayerSpec, PlantNode
+from reviewkit.takt_types import LayerSpec, PlantNode, TaktDecision
 
 from reviewkit import review_document
 from reviewkit.llm import MockLLMClient
@@ -78,6 +79,34 @@ def test_takt_binding_does_not_discover_local_checkout(monkeypatch, tmp_path: Pa
 
     assert decision.outcome == "stable"
     assert not hasattr(decision, "engine")
+
+
+def test_takt_reviewer_does_not_synthesize_a_layer(monkeypatch, tmp_path: Path) -> None:
+    """An empty layer build must reach the canonical binding unchanged."""
+    docx = _make_docx(tmp_path, "Ala ma kota.")
+    from reviewkit.parser_docx import load_docx
+    from reviewkit.profile import load_profile
+
+    monkeypatch.setattr("reviewkit.takt_reviewer.build_layer_specs", lambda _profile: [])
+    takt_client = Mock()
+    takt_client.evaluate.return_value = TaktDecision(outcome="stable", node_id="node")
+    reviewer = TaktReviewer(
+        profile=load_profile("examples/profiles/story.teacher"),
+        llm=MockLLMClient(
+            responses=[
+                {"actions": [], "summary": "ok"},
+                {"actions": [], "summary": "ok"},
+                {"actions": [], "summary": "ok"},
+                {"actions": [], "summary": "ok"},
+            ]
+        ),
+        takt_client=takt_client,
+    )
+
+    reviewer.review(load_docx(docx))
+
+    assert takt_client.evaluate.call_count > 0
+    assert all(call.kwargs["layers"] == [] for call in takt_client.evaluate.call_args_list)
 
 
 def test_review_document_plant_builds_correct_tree(tmp_path: Path) -> None:

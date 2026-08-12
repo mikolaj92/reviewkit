@@ -9,6 +9,9 @@ Takt's Mojo cascade owns:
   - fusion of raw signals
   - homeostat → actuation / interlock / stable
 
+The official in-process binding is the only evaluation path; binding failures are
+propagated and are never downgraded to a local compatibility engine.
+
 Flow per matching node (post-order):
 1. Plant yields node (sentence, paragraph, section, document).
 2. Scope detector runs LLM → RawSignals + stored response.
@@ -33,7 +36,7 @@ from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
 from reviewkit.state import ReviewState
 from reviewkit.takt_client import TaktClient
-from reviewkit.takt_types import LayerSpec, RawSignal
+from reviewkit.takt_types import RawSignal
 
 
 class TaktReviewer:
@@ -82,7 +85,7 @@ class TaktReviewer:
             # Even with empty signals we still evaluate (stable / intrinsic value).
             decision = self.takt_client.evaluate(
                 plant_nodes=[node.to_plant_node(value=0.0)],
-                layers=layers or [LayerSpec(layer=0)],
+                layers=layers,
                 raw_signals=signals,
             )
             effector.apply_takt_decision(node.id, decision)
