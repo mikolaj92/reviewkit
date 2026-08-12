@@ -35,14 +35,12 @@ from reviewkit.state import ReviewState
 from reviewkit.takt_types import RawSignal
 
 
-def _rollup_actions_for_prompt(
+def _lower_actions_for_prompt(
     scope: ReviewScope,
     inner: Any,
     actions: list[ReviewAction],
-    pipeline: list[ReviewScope],
 ) -> list[ReviewAction]:
-    """Collect lower-level actions visible to the next scope (legacy roll-up)."""
-    enabled = set(pipeline)
+    """Collect actions from the immediately preceding scope for a prompt."""
     if scope == ReviewScope.PARAGRAPH:
         if not isinstance(inner, ParagraphNode):
             return []
@@ -57,50 +55,22 @@ def _rollup_actions_for_prompt(
         if not isinstance(inner, SectionNode):
             return []
         section_paragraph_ids = {paragraph.id for paragraph in inner.paragraphs}
-        section_sentence_ids: set[str] = set()
-        for paragraph in inner.paragraphs:
-            section_sentence_ids.update(sentence.id for sentence in paragraph.sentences)
-        rolled: list[ReviewAction] = []
-        for action in actions:
-            if (
-                action.scope == ReviewScope.PARAGRAPH
-                and action.node_id in section_paragraph_ids
-            ):
-                rolled.append(action)
-            elif (
-                ReviewScope.PARAGRAPH not in enabled
-                and action.scope == ReviewScope.SENTENCE
-                and action.node_id in section_sentence_ids
-            ):
-                rolled.append(action)
-        return rolled
+        return [
+            action
+            for action in actions
+            if action.scope == ReviewScope.PARAGRAPH
+            and action.node_id in section_paragraph_ids
+        ]
     if scope == ReviewScope.DOCUMENT:
         if not isinstance(inner, ReviewDocument):
             return []
         document_section_ids = {section.id for section in inner.sections}
-        document_paragraph_ids: set[str] = set()
-        for section in inner.sections:
-            document_paragraph_ids.update(paragraph.id for paragraph in section.paragraphs)
-        rolled_doc: list[ReviewAction] = []
-        for action in actions:
-            if (
-                action.scope == ReviewScope.SECTION
-                and action.node_id in document_section_ids
-            ):
-                rolled_doc.append(action)
-            elif (
-                ReviewScope.SECTION not in enabled
-                and action.scope == ReviewScope.PARAGRAPH
-                and action.node_id in document_paragraph_ids
-            ):
-                rolled_doc.append(action)
-            elif (
-                ReviewScope.SECTION not in enabled
-                and ReviewScope.PARAGRAPH not in enabled
-                and action.scope == ReviewScope.SENTENCE
-            ):
-                rolled_doc.append(action)
-        return rolled_doc
+        return [
+            action
+            for action in actions
+            if action.scope == ReviewScope.SECTION
+            and action.node_id in document_section_ids
+        ]
     return []
 
 
@@ -121,6 +91,7 @@ class BaseLLMDetector:
         self.state = state
         self.scope = scope
         self._document: ReviewDocument | None = None
+        self.lower_actions_for_prompt: list[ReviewAction] = []
 
     def set_document(self, document: ReviewDocument) -> None:
         self._document = document
@@ -158,7 +129,7 @@ class BaseLLMDetector:
             resp = self._complete(prompt, SentenceReviewResponse)
             return _response_to_signals(resp, node_id, "llm_sentence", self.scope)
 
-        lower = getattr(self, "_lower_actions_for_prompt", None) or []
+        lower = self.lower_actions_for_prompt
 
         if self.scope == ReviewScope.PARAGRAPH:
             prompt = paragraph_review_prompt(
@@ -247,4 +218,4 @@ def _severity_to_deviation(severity: str) -> float:
     return mapping.get(str(severity).lower(), 0.6)
 
 
-__all__ = ["BaseLLMDetector", "_response_to_signals", "_rollup_actions_for_prompt"]
+__all__ = ["BaseLLMDetector", "_response_to_signals", "_lower_actions_for_prompt"]

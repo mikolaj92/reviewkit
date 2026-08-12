@@ -189,10 +189,10 @@ def test_overlapping_edits_from_different_scopes_both_escalate(tmp_path: Path) -
     assert _docx_text(result.corrected_docx) == "The cat sat."
 
 
-def test_subset_pipeline_rolls_lower_actions_up_to_the_next_enabled_scope() -> None:
-    # A profile may enable only sentence + document (a subset the API permits). The
-    # sentence-level action must still reach the document review even though the
-    # intermediate paragraph and section scopes are skipped.
+def test_subset_pipeline_does_not_roll_actions_across_skipped_scopes() -> None:
+    # Prompt inputs follow one canonical hierarchy: each scope sees only actions from
+    # its immediate child scope. Skipping paragraph and section must not silently feed
+    # sentence actions into the document prompt.
     document = ReviewDocument(
         sections=[
             SectionNode(
@@ -243,7 +243,7 @@ def test_subset_pipeline_rolls_lower_actions_up_to_the_next_enabled_scope() -> N
     assert len(llm.calls) == 2
     document_prompt = llm.calls[1].content
     assert "section_review_results" in document_prompt
-    assert "a-sentence" in document_prompt
+    assert "a-sentence" not in document_prompt
 
 
 def test_sentence_review_adds_action(tmp_path: Path) -> None:

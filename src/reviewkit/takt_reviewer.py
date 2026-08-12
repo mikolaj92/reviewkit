@@ -22,7 +22,7 @@ from __future__ import annotations
 from typing import Any
 
 from reviewkit.context import EmptyReviewContextProvider, ReviewContextProvider
-from reviewkit.detectors import BaseLLMDetector, _rollup_actions_for_prompt
+from reviewkit.detectors import BaseLLMDetector, _lower_actions_for_prompt
 from reviewkit.document import ReviewDocument
 from reviewkit.effectors import ReviewEffector
 from reviewkit.homeostat import build_layer_specs, scope_to_layer_index
@@ -122,7 +122,6 @@ class TaktReviewer:
                 scope=scope,
                 document=document,
                 effector=effector,
-                pipeline=pipeline,
                 propagate_llm_errors=self.propagate_llm_errors,
             )
             det.inner.set_document(document)
@@ -143,7 +142,6 @@ class _LLMDetectorAdapter:
         scope: ReviewScope,
         document: ReviewDocument,
         effector: ReviewEffector,
-        pipeline: list[ReviewScope],
         propagate_llm_errors: bool,
     ) -> None:
         self.inner = BaseLLMDetector(
@@ -156,7 +154,6 @@ class _LLMDetectorAdapter:
         self.scope = scope
         self.document = document
         self.effector = effector
-        self.pipeline = pipeline
         self.propagate_llm_errors = propagate_llm_errors
         self._lower_actions: list[ReviewAction] = []
 
@@ -169,10 +166,9 @@ class _LLMDetectorAdapter:
         if isinstance(inner_node, ReviewDocument):
             effective_scope = ReviewScope.DOCUMENT
 
-        rolled = _rollup_actions_for_prompt(
-            self.scope, inner_node, self._lower_actions, self.pipeline
+        self.inner.lower_actions_for_prompt = _lower_actions_for_prompt(
+            self.scope, inner_node, self._lower_actions
         )
-        self.inner._lower_actions_for_prompt = rolled  # type: ignore[attr-defined]
 
         original_complete = self.inner._complete
         captured: dict[str, Any] = {"resp": None}
@@ -196,8 +192,7 @@ class _LLMDetectorAdapter:
             signals = []
         finally:
             self.inner._complete = original_complete  # type: ignore[method-assign]
-            if hasattr(self.inner, "_lower_actions_for_prompt"):
-                delattr(self.inner, "_lower_actions_for_prompt")
+            self.inner.lower_actions_for_prompt = []
 
         resp = captured["resp"]
         if resp is not None:
