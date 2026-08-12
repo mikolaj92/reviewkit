@@ -99,9 +99,9 @@ uv run reviewkit input.docx \
 the report.
 
 `--llm module:factory` names a zero-argument callable (dotted `module:factory` path) that
-returns an `LLMClient`; ReviewKit imports it and calls it to build the client. When omitted,
-the CLI falls back to the built-in `MockLLMClient`, because ReviewKit does not assume a
-provider. Production integrations pass their own `LLMClient` factory this way.
+returns an `LLMClient`; ReviewKit imports it and calls it to build the client. The option is
+required because ReviewKit does not assume a provider and will not silently run a mock review.
+Production integrations pass their own `LLMClient` factory this way.
 
 ## Python API
 

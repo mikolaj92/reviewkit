@@ -640,61 +640,8 @@ def test_sentence_string_edit_targets_the_matching_sentence(tmp_path: Path) -> N
     assert corrected_text == "The cat sat. The dog ran."
 
 
-def test_one_failing_node_does_not_abort_the_review(tmp_path: Path) -> None:
-    class _PartiallyFailingLLM:
-        def __init__(self) -> None:
-            self.calls = 0
-
-        def complete_json(self, messages: list[dict[str, str]], schema: type[Any]) -> Any:
-            self.calls += 1
-            if self.calls == 1:  # sentence node raises
-                raise RuntimeError("simulated LLM failure")
-            if self.calls == 2:  # paragraph node still produces a real, applicable edit
-                return schema.model_validate(
-                    {
-                        "actions": [
-                            {
-                                "id": "p1a",
-                                "scope": "paragraph",
-                                "action_type": "replace",
-                                "node_id": "p1",
-                                "original_text": "bład",
-                                "replacement_text": "błąd",
-                                "category": "typo",
-                                "confidence": 1.0,
-                                "apply_hint": True,
-                            }
-                        ],
-                        "summary": "ok",
-                    }
-                )
-            return schema()
-
-    input_path = _make_docx(tmp_path, "To jest bład.")
-    llm = _PartiallyFailingLLM()
-
-    result = review_document(
-        input_path=input_path,
-        profile_path="examples/profiles/story.teacher",
-        llm=llm,
-        out_reviewed=tmp_path / "reviewed.docx",
-        out_corrected=tmp_path / "corrected.docx",
-    )
-
-    # Every node was still visited despite the sentence failure.
-    assert llm.calls == 4
-    # The failure is surfaced as a warning, naming the node.
-    assert any("sentence p1.s1" in warning for warning in result.warnings)
-    assert any("RuntimeError" in warning for warning in result.warnings)
-    # The other nodes produced results: the paragraph edit was applied.
-    assert result.stats.applied_count == 1
-    assert _docx_text(result.corrected_docx) == "To jest błąd."
-
-
-def test_propagate_llm_errors_reraises_on_first_client_failure() -> None:
-    # Fail-closed opt-in (the peer of the resilient default above): a raising client
-    # aborts the whole review on the FIRST failing node instead of degrading to a
-    # partial result, and re-raises the original exception unchanged.
+def test_llm_error_aborts_on_first_client_failure() -> None:
+    # A broken AI backend must fail closed instead of returning a partial review.
     class _RaisingLLM:
         def __init__(self) -> None:
             self.calls = 0
@@ -723,44 +670,13 @@ def test_propagate_llm_errors_reraises_on_first_client_failure() -> None:
     )
 
     llm = _RaisingLLM()
-    reviewer = TaktReviewer(profile=profile, llm=llm, propagate_llm_errors=True)
+    reviewer = TaktReviewer(profile=profile, llm=llm)
 
     with pytest.raises(RuntimeError, match="simulated LLM failure"):
         reviewer.review(document)
 
     # Fail-fast: it stopped at the first failing node, never visiting the second.
     assert llm.calls == 1
-
-
-def test_propagate_llm_errors_default_false_still_degrades() -> None:
-    # The default (flag absent) keeps the resilient behavior: the same raising client
-    # surfaces a warning and completes rather than aborting.
-    class _RaisingLLM:
-        def complete_json(self, messages: list[dict[str, str]], schema: type[Any]) -> Any:
-            raise RuntimeError("simulated LLM failure")
-
-    document = ReviewDocument(
-        sections=[
-            SectionNode(
-                id="s1",
-                paragraphs=[ParagraphNode(id="p1", text="The cat sat.", section_id="s1")],
-            )
-        ]
-    )
-    profile = ReviewProfile(
-        name="generic",
-        language="en",
-        document_type="generic document",
-        reviewer_role="generic reviewer",
-        review_pipeline=[ReviewScope.PARAGRAPH],
-    )
-
-    findings, actions, state = TaktReviewer(
-        profile=profile, llm=_RaisingLLM()
-    ).review(document)
-
-    assert actions == []
-    assert any("RuntimeError" in warning for warning in state.warnings)
 
 
 def test_identical_finding_surfaced_at_two_levels_appears_once(tmp_path: Path) -> None:
