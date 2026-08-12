@@ -9,7 +9,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from reviewkit.llm import LLMClient, MockLLMClient
+from reviewkit.llm import LLMClient
 from reviewkit.pipeline import review_document
 
 app = typer.Typer(no_args_is_help=True)
@@ -34,8 +34,8 @@ def review(
         typer.Option(
             "--llm",
             help=(
-                "Dotted 'module:factory' path to a zero-arg callable returning an LLMClient. "
-                "Defaults to the built-in MockLLMClient."
+                "Required dotted 'module:factory' path to a zero-arg callable returning "
+                "an LLMClient."
             ),
         ),
     ] = None,
@@ -60,7 +60,7 @@ def review(
 
 def _resolve_llm(spec: str | None) -> LLMClient:
     if spec is None:
-        return MockLLMClient()
+        raise typer.BadParameter("--llm is required; no default LLM client is configured.")
     if ":" not in spec:
         msg = f"--llm must be 'module:factory' (a colon-separated path), got {spec!r}."
         raise typer.BadParameter(msg)
@@ -75,4 +75,9 @@ def _resolve_llm(spec: str | None) -> LLMClient:
         raise typer.BadParameter(f"--llm factory {attr!r} not found in module {module_name!r}.")
     if not callable(factory):
         raise typer.BadParameter(f"--llm target {spec!r} is not callable.")
-    return factory()
+    client = factory()
+    if not callable(getattr(client, "complete_json", None)):
+        raise typer.BadParameter(
+            f"--llm factory {spec!r} did not return an LLMClient with complete_json()."
+        )
+    return client

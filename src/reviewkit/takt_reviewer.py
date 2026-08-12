@@ -49,14 +49,12 @@ class TaktReviewer:
         context_provider: ReviewContextProvider | None = None,
         action_policy: ActionPolicy | None = None,
         *,
-        propagate_llm_errors: bool = False,
         takt_client: TaktClient | None = None,
     ) -> None:
         self.profile = profile
         self.llm = llm
         self.context_provider = context_provider or EmptyReviewContextProvider()
         self.action_policy = action_policy
-        self.propagate_llm_errors = propagate_llm_errors
         self.takt_client = takt_client or TaktClient()
 
     def review(
@@ -125,7 +123,6 @@ class TaktReviewer:
                 scope=scope,
                 document=document,
                 effector=effector,
-                propagate_llm_errors=self.propagate_llm_errors,
             )
             det.inner.set_document(document)
             detectors[scope] = det
@@ -145,7 +142,6 @@ class _LLMDetectorAdapter:
         scope: ReviewScope,
         document: ReviewDocument,
         effector: ReviewEffector,
-        propagate_llm_errors: bool,
     ) -> None:
         self.inner = BaseLLMDetector(
             profile=profile,
@@ -157,7 +153,6 @@ class _LLMDetectorAdapter:
         self.scope = scope
         self.document = document
         self.effector = effector
-        self.propagate_llm_errors = propagate_llm_errors
         self._lower_actions: list[ReviewAction] = []
 
     def set_lower_actions(self, actions: list[ReviewAction]) -> None:
@@ -185,14 +180,6 @@ class _LLMDetectorAdapter:
 
         try:
             signals = self.inner.detect(node)
-        except Exception as error:
-            if self.propagate_llm_errors:
-                raise
-            label = f"{self.scope.value} {getattr(inner_node, 'id', '?')}"
-            self.inner.state.warnings.append(
-                f"LLM review skipped for {label}: {type(error).__name__}: {error}"
-            )
-            signals = []
         finally:
             self.inner._complete = original_complete  # type: ignore[method-assign]
             self.inner.lower_actions_for_prompt = []

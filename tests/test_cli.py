@@ -39,6 +39,8 @@ def test_cli_writes_json_report_when_out_report_given(tmp_path: Path) -> None:
             str(tmp_path / "corrected.docx"),
             "--out-report",
             str(report_path),
+            "--llm",
+            "reviewkit.llm:MockLLMClient",
         ],
     )
 
@@ -63,11 +65,24 @@ def test_cli_skips_json_report_by_default(tmp_path: Path) -> None:
             str(tmp_path / "reviewed.docx"),
             "--out-corrected",
             str(tmp_path / "corrected.docx"),
+            "--llm",
+            "reviewkit.llm:MockLLMClient",
         ],
     )
 
     assert result.exit_code == 0, result.output
     assert "JSON report:" not in result.output
+
+
+def test_cli_rejects_missing_llm_configuration(tmp_path: Path) -> None:
+    input_path = _make_docx(tmp_path)
+    result = runner.invoke(
+        app,
+        [str(input_path), "--profile", "examples/profiles/story.teacher"],
+    )
+
+    assert result.exit_code != 0
+    assert "--llm is required" in result.output
 
 
 def test_cli_accepts_injected_llm_factory(tmp_path: Path) -> None:
@@ -90,8 +105,9 @@ def test_cli_accepts_injected_llm_factory(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
 
 
-def test_resolve_llm_defaults_to_mock_client() -> None:
-    assert isinstance(_resolve_llm(None), MockLLMClient)
+def test_resolve_llm_requires_explicit_client() -> None:
+    with pytest.raises(typer.BadParameter, match="--llm is required"):
+        _resolve_llm(None)
 
 
 def test_resolve_llm_imports_dotted_factory() -> None:
@@ -111,3 +127,8 @@ def test_resolve_llm_rejects_unimportable_module() -> None:
 def test_resolve_llm_rejects_missing_attribute() -> None:
     with pytest.raises(typer.BadParameter):
         _resolve_llm("reviewkit.llm:NoSuchFactory")
+
+
+def test_resolve_llm_rejects_factory_returning_wrong_type() -> None:
+    with pytest.raises(typer.BadParameter, match="did not return an LLMClient"):
+        _resolve_llm("builtins:dict")
