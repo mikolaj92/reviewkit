@@ -29,6 +29,22 @@ def _make_docx(tmp_path: Path, text: str) -> Path:
     return p
 
 
+def test_takt_result_does_not_fall_back_when_outcome_is_invalid(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "takt.cascade_step",
+        lambda _request: {
+            "outcome": "legacy",
+            "signals": {"actuation": {"node_id": "node"}},
+        },
+    )
+
+    with pytest.raises(ValueError, match="invalid takt outcome"):
+        TaktClient().evaluate(
+            plant_nodes=[PlantNode(id="node")],
+            layers=[LayerSpec(layer=0)],
+        )
+
+
 def test_takt_binding_failure_is_not_silently_downgraded(monkeypatch) -> None:
     def fail(_request):
         raise RuntimeError("binding unavailable")

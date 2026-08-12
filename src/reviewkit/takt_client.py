@@ -20,16 +20,9 @@ def _parse_mojo_result(payload: dict[str, Any]) -> TaktDecision:
     if not payload.get("ok", True) and payload.get("error"):
         raise RuntimeError(f"takt mojo step failed: {payload.get('error')}")
 
-    outcome = str(payload.get("outcome") or "stable")
+    outcome = payload.get("outcome")
     if outcome not in ("actuation", "interlock", "stable"):
-        # Infer from signals when outcome missing
-        sig = payload.get("signals") or {}
-        if sig.get("interlock"):
-            outcome = "interlock"
-        elif sig.get("actuation"):
-            outcome = "actuation"
-        else:
-            outcome = "stable"
+        raise ValueError(f"invalid takt outcome: {outcome!r}")
 
     node_id = str(payload.get("node_id") or "")
     sig = payload.get("signals") or {}
