@@ -9,6 +9,9 @@ Takt's Mojo cascade owns:
   - fusion of raw signals
   - homeostat → actuation / interlock / stable
 
+The official in-process binding is the only evaluation path; binding failures are
+propagated and are never downgraded to a local compatibility engine.
+
 Flow per matching node (post-order):
 1. Plant yields node (sentence, paragraph, section, document).
 2. Scope detector runs LLM → RawSignals + stored response.
