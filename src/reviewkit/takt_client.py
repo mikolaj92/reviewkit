@@ -64,7 +64,6 @@ def _parse_mojo_result(payload: dict[str, Any]) -> TaktDecision:
         actuation=actuation,
         interlock=interlock,
         telemetry_count=int(sig.get("telemetry_count") or 0),
-        engine="binding",
     )
 
 
