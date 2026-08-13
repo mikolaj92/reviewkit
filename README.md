@@ -76,7 +76,8 @@ References (same as Fala / Splot):
 
 Marian Mazur, Cybernetyczna teoria układów samodzielnych (1966), Jakościowa teoria informacji (1970).
 Józef Kossecki on multi-level autonomous systems (wielopoziomowe układy samodzielne).
-takt README / docs/FALA_INTEGRATION.md, splot CONCEPTUAL_MODEL.md, Fala CYBERNETIC_MAPPING.md.
+[takt README](https://github.com/mikolaj92/takt) / [docs/FALA_INTEGRATION.md](https://github.com/mikolaj92/takt/blob/main/docs/FALA_INTEGRATION.md), [splot docs/CONCEPTUAL_MODEL.md](https://github.com/mikolaj92/splot/blob/main/docs/CONCEPTUAL_MODEL.md), [Fala docs/CYBERNETIC_MAPPING.md](https://github.com/mikolaj92/Fala/blob/main/docs/CYBERNETIC_MAPPING.md).
+
 ## Install and Run
 
 ```bash

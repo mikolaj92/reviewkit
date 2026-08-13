@@ -1399,3 +1399,13 @@ def test_prepare_demotes_first_occurrence_overlap_under_non_unique_match() -> No
     ]
     # Nothing applies, so the corrected text is honest: unchanged, not a partial apply.
     assert apply_corrections_to_text("abcabc", prepared) == "abcabc"
+
+
+def test_readme_points_at_existing_sibling_docs() -> None:
+    readme = Path(__file__).resolve().parents[1] / "README.md"
+    text = readme.read_text(encoding="utf-8")
+    assert "https://github.com/mikolaj92/takt/blob/main/docs/FALA_INTEGRATION.md" in text
+    assert "https://github.com/mikolaj92/splot/blob/main/docs/CONCEPTUAL_MODEL.md" in text
+    assert "https://github.com/mikolaj92/Fala/blob/main/docs/CYBERNETIC_MAPPING.md" in text
+    assert "splot CONCEPTUAL_MODEL.md" not in text
+    assert "Fala CYBERNETIC_MAPPING.md" not in text
