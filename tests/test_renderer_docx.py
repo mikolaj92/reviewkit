@@ -1407,6 +1407,8 @@ def test_new_paragraph_insert_after_renders_a_tracked_sibling_paragraph(tmp_path
         new_paragraph=True,
         status=ActionStatus.APPLIED,
         apply_to_corrected=True,
+        reason="The document needs this clause.",
+        references=[ReviewReference(source="Act", label="Article 20a")],
     )
 
     reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
@@ -1426,6 +1428,17 @@ def test_new_paragraph_insert_after_renders_a_tracked_sibling_paragraph(tmp_path
     # Its content is a run-level insertion carrying exactly the clause text.
     run_ins = [ins for ins in inserted.findall(f"{_W}ins") if ins.find(f".//{_W}t") is not None]
     assert [ins.find(f".//{_W}t").text for ins in run_ins] == ["§20a. The inserted clause."]
+
+    # The tracked block uses the same canonical comment as inline corrections,
+    # keeping the reviewer remark aligned with the text that accepting inserts.
+    comments = _comment_texts(reviewed_path)
+    assert len(comments) == 1
+    assert comments[0].startswith("CORRECTION: The document needs this clause.")
+    assert "Replacement: '§20a. The inserted clause.'" in comments[0]
+    assert "References: Article 20a" in comments[0]
+    assert inserted.find(f"{_W}commentRangeStart") is not None
+    assert inserted.find(f"{_W}commentRangeEnd") is not None
+    assert inserted.find(f"{_W}r/{_W}commentReference") is not None
 
 
 def test_new_paragraph_insert_before_places_clause_ahead_of_anchor(tmp_path: Path) -> None:

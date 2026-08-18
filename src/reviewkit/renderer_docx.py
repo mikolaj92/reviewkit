@@ -285,7 +285,7 @@ def render_reviewed_docx(
     # the anchor elements we held onto (see deferred_block_inserts above).
     for anchor_paragraph, action in deferred_block_inserts:
         revision_id = _insert_tracked_block_paragraphs(
-            anchor_paragraph, action, reviewer, revision_id
+            docx, anchor_paragraph, action, reviewer, revision_id
         )
 
     docx.save(str(path))
@@ -799,6 +799,7 @@ def _append_revision(
 
 
 def _insert_tracked_block_paragraphs(
+    docx: Any,
     anchor_paragraph: Any,
     action: ReviewAction,
     reviewer: _ReviewerIdentity,
@@ -823,6 +824,15 @@ def _insert_tracked_block_paragraphs(
     for line in lines:
         paragraph_element, revision_id = _build_tracked_paragraph(line, reviewer, revision_id)
         new_paragraphs.append(paragraph_element)
+
+    comment = _comment_text(action)
+    if comment:
+        comment_id = _create_comment(docx, comment, reviewer)
+        first = new_paragraphs[0]
+        first.insert(1, _comment_range("w:commentRangeStart", comment_id))
+        last = new_paragraphs[-1]
+        last.append(_comment_range("w:commentRangeEnd", comment_id))
+        last.append(_comment_reference_run(comment_id))
 
     anchor = anchor_paragraph._p
     if action.action_type == ReviewActionType.INSERT_BEFORE:
