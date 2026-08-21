@@ -31,7 +31,7 @@ It can produce three outputs:
 
 ## Architecture
 
-ReviewKit 0.14+ uses the pinned **takt v0.3.0** in-process Mojo binding and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
+ReviewKit 0.14+ uses the pinned **takt v0.3.1** in-process Mojo binding and re-uses the same Polish cybernetic terminology and structure as Fala and Splot (Marian Mazur, Józef Kossecki).
 
 ReviewKit is the document host:
 
@@ -45,9 +45,9 @@ is no subprocess engine or local fallback. Takt compiles its native module on fi
 therefore requires the exact Mojo `1.0.0b3.dev2026071505` toolchain with the `mojo`
 executable on `PATH`.
 
-The upstream Takt v0.3.0 manifest supports `osx-arm64` only. Install that exact Mojo build
+The upstream Takt v0.3.1 manifest supports `osx-arm64` only. Install that exact Mojo build
 from Modular's nightly Conda channel with Pixi. `TAKT_HOME` may point to a separate takt
-v0.3.0 source checkout, but is normally unnecessary because the package includes the sources.
+v0.3.1 source checkout, but is normally unnecessary because the package includes the sources.
 
 How ReviewKit maps onto the archetype:
 

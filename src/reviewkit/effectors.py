@@ -1,4 +1,4 @@
-"""Effector adapters for takt v0.3.0 decisions in ReviewKit.
+"""Effector adapters for takt v0.3.1 decisions in ReviewKit.
 
 When a cascade evaluate returns actuation / interlock / stable for a node,
 these adapters turn that decision + the stored LLM response into ReviewAction

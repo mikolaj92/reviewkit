@@ -1,4 +1,4 @@
-"""ReviewKit document plant for the takt v0.3.0 binding.
+"""ReviewKit document plant for the takt v0.3.1 binding.
 
 Builds a domain tree (sentence → paragraph → section → document) and exposes
 post-order scan plus JSON ``plant_nodes`` for the in-process cascade binding.

@@ -1,4 +1,4 @@
-"""Host-side types for the takt v0.3.0 binding's JSON boundary.
+"""Host-side types for the takt v0.3.1 binding's JSON boundary.
 
 ReviewKit owns detectors and plant construction; the in-process takt binding receives
 ``plant_nodes`` + ``layers`` + ``raw_signals`` and returns actuation / interlock / stable.
