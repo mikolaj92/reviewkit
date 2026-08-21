@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -124,8 +124,8 @@ wheels = [
 
 [[package]]
 name = "docxtor"
-version = "0.4.0"
-source = { git = "https://github.com/mikolaj92/Docxtor.git?rev=4bff41d0673e23582e308473a17b157fcd583970#4bff41d0673e23582e308473a17b157fcd583970" }
+version = "0.4.3"
+source = { git = "https://github.com/mikolaj92/Docxtor.git?rev=v0.4.3#523e81ade0b9ee155c35ab175bc62b7979f7eb8a" }
 dependencies = [
     { name = "pymupdf" },
     { name = "pypdf" },
@@ -560,7 +560,7 @@ wheels = [
 
 [[package]]
 name = "reviewkit"
-version = "0.15.2"
+version = "0.15.3"
 source = { editable = "." }
 dependencies = [
     { name = "docxtor" },
@@ -588,7 +588,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "docxtor", git = "https://github.com/mikolaj92/Docxtor.git?rev=4bff41d0673e23582e308473a17b157fcd583970" },
+    { name = "docxtor", git = "https://github.com/mikolaj92/Docxtor.git?rev=v0.4.3" },
     { name = "lxml", specifier = ">=4.9" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
@@ -596,7 +596,7 @@ requires-dist = [
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.17" },
-    { name = "takt", git = "https://github.com/mikolaj92/takt.git?rev=v0.3.0" },
+    { name = "takt", git = "https://github.com/mikolaj92/takt.git?rev=v0.3.1" },
     { name = "typer", specifier = ">=0.26.7" },
 ]
 provides-extras = ["dev"]
@@ -657,8 +657,8 @@ wheels = [
 
 [[package]]
 name = "takt"
-version = "0.3.0"
-source = { git = "https://github.com/mikolaj92/takt.git?rev=v0.3.0#3f9eafb79bfd401440d5aa27af5fcd8109177239" }
+version = "0.3.1"
+source = { git = "https://github.com/mikolaj92/takt.git?rev=v0.3.1#950734645a584477e5830815ca861388feadfd16" }
 
 [[package]]
 name = "typer"

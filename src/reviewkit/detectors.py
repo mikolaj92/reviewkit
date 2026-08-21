@@ -1,4 +1,4 @@
-"""Host-side LLM detectors for the takt v0.3.0 binding.
+"""Host-side LLM detectors for the takt v0.3.1 binding.
 
 Detectors produce ``RawSignal`` lists that ReviewKit passes to the in-process cascade
 binding. Takt itself does not run LLMs.

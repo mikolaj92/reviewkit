@@ -1,4 +1,4 @@
-"""Map ReviewProfile to takt v0.3.0 layer specs (JSON boundary).
+"""Map ReviewProfile to takt v0.3.1 layer specs (JSON boundary).
 
 Each review scope becomes one cascade layer. Thresholds come from the
 profile action policy and conservative fail-closed defaults.
