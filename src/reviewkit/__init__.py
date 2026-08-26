@@ -49,7 +49,8 @@ from reviewkit.models import (
     ReviewStats,
     canonical_action_dump,
 )
-from reviewkit.parser_docx import DocxComment, DocxFootnote, read_comments, read_footnotes
+from reviewkit.comments import DocxComment, comments_for_locator, read_comments
+from reviewkit.parser_docx import DocxFootnote, read_footnotes
 from reviewkit.pipeline import review_document
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
@@ -100,6 +101,7 @@ __all__ = [
     "accept_all_revisions",
     "apply_reviewed_markup",
     "canonical_action_dump",
+    "comments_for_locator",
     "contains_suggestion_marker",
     "find_body_paragraph",
     "find_paragraph_by_locator",

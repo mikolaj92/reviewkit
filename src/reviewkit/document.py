@@ -7,6 +7,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from reviewkit.comments import DocxComment
+
 
 class SentenceNode(BaseModel):
     id: str
@@ -29,6 +31,9 @@ class ParagraphNode(BaseModel):
     # hyperlink/field text, ...). Coordinates match ``text`` (post-strip). Filled by
     # the DOCX parser; empty for plain-text paragraphs or unknown layouts.
     opaque_ranges: list[tuple[int, int]] = Field(default_factory=list)
+    # Existing Word comments whose range starts in this paragraph. Review input
+    # for a consumer (Dike) that joins ``text`` with each comment's body.
+    comments: list[DocxComment] = Field(default_factory=list)
 
 
 class SectionNode(BaseModel):
@@ -52,6 +57,9 @@ class ReviewDocument(BaseModel):
     source_path: Path | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
     sections: list[SectionNode] = Field(default_factory=list)
+    # Structured existing Word comments (anchor + text + author). Empty when
+    # the source has none; never a reason to refuse a review.
+    comments: list[DocxComment] = Field(default_factory=list)
 
     @property
     def text(self) -> str:

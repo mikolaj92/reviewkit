@@ -20,6 +20,7 @@ from reviewkit.actions import (
     apply_action_to_text,
     should_apply_to_corrected,
 )
+from reviewkit.comments import restore_comment_thread_parts
 from reviewkit.docx_package import (
     normalize_docx_timestamps,
     restore_semantically_unchanged_xml_parts,
@@ -294,6 +295,7 @@ def render_reviewed_docx(
     docx.save(str(path))
     if document.source_path is not None:
         restore_semantically_unchanged_xml_parts(document.source_path, path)
+        restore_comment_thread_parts(document.source_path, path)
     # python-docx stamps every zip entry with the wall-clock mtime, which alone makes an
     # otherwise byte-identical reviewed.docx differ on every run; pin them so the promised
     # byte-for-byte reproducibility actually holds at the package level.
