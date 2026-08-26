@@ -10,12 +10,12 @@ from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 
 from docx import Document as DocxDocument
-from docx.opc.exceptions import PackageNotFoundError
 from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from lxml import etree
 
+from reviewkit.comments import DocxComment, comments_for_locator, read_comments
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.markup_purity import has_tracked_revisions
 
@@ -33,6 +33,7 @@ _TRAILING_WORD_RE = re.compile(r"(\w+)$", re.UNICODE)
 def load_docx(path: str | Path) -> ReviewDocument:
     source_path = Path(path)
     docx = DocxDocument(str(source_path))
+    comments = read_comments(source_path)
 
     # Section/paragraph id counters are shared across the body walk and the synthetic
     # header/footer sections so every node keeps a globally unique id. "s1" is reserved
@@ -77,6 +78,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
                 locator,
                 source,
                 _opaque_ranges(docx_paragraph),
+                comments_for_locator(comments, locator),
             )
         )
 
@@ -86,15 +88,17 @@ def load_docx(path: str | Path) -> ReviewDocument:
     # Header/footer paragraphs get their own synthetic sections keyed by source so they
     # are not misread as body prose tacked onto the trailing body section. Locator strings
     # ("header:S:p:P"/"footer:S:p:P") are unchanged, so rendering resolves them identically.
-    sections.extend(_header_footer_sections(docx, section_ids, paragraph_ids))
+    sections.extend(_header_footer_sections(docx, section_ids, paragraph_ids, comments))
 
     metadata = {
         "paragraph_count": str(sum(len(section.paragraphs) for section in sections)),
         "table_count": str(len(docx.tables)),
-        "comment_count": str(_comment_count(docx)),
+        "comment_count": str(len(comments)),
         "tracked_revisions_detected": str(has_tracked_revisions(source_path)).lower(),
     }
-    return ReviewDocument(source_path=source_path, sections=sections, metadata=metadata)
+    return ReviewDocument(
+        source_path=source_path, sections=sections, metadata=metadata, comments=comments
+    )
 
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -151,41 +155,6 @@ def _footnote_visible_text(element: object) -> str:
         elif tag in (f"{{{_W_NS}}}br", f"{{{_W_NS}}}cr"):
             parts.append("\n")
     return "".join(parts)
-
-
-@dataclass(frozen=True)
-class DocxComment:
-    """One comment read from a ``.docx`` package: its id, author identity and visible text."""
-
-    id: str
-    author: str
-    initials: str
-    text: str
-
-
-def read_comments(path: str | Path) -> list[DocxComment]:
-    """Extract every comment's id, author, initials and visible text, in document order.
-
-    python-docx (>= 1.2.0) models comments, so this reads through its public
-    ``Document.comments`` collection -- the same model the renderer writes
-    through -- rather than hand-rolling OOXML. ``text`` joins the comment's
-    paragraphs with newlines, exactly as python-docx renders it; ``initials``
-    is optional in the XML and surfaces as ``""`` when absent. Returns an empty
-    list when the package carries no comments (or cannot be opened as a package).
-    """
-    try:
-        docx = DocxDocument(str(path))
-    except (OSError, PackageNotFoundError):
-        return []
-    return [
-        DocxComment(
-            id=str(comment.comment_id),
-            author=comment.author or "",
-            initials=comment.initials or "",
-            text=comment.text,
-        )
-        for comment in docx.comments
-    ]
 
 
 def split_sentences(text: str) -> list[str]:
@@ -282,6 +251,7 @@ def _paragraph_node(
     locator: str,
     source: str,
     opaque_ranges: list[tuple[int, int]] | None = None,
+    comments: list[DocxComment] | None = None,
 ) -> ParagraphNode:
     sentences = [
         SentenceNode(
@@ -303,6 +273,7 @@ def _paragraph_node(
         metadata={"source": source},
         sentences=sentences,
         opaque_ranges=opaque_ranges or [],
+        comments=comments or [],
     )
 
 
@@ -405,7 +376,10 @@ def _iter_table_sources(table: Table, table_index: int) -> Iterator[tuple[object
 
 
 def _header_footer_sections(
-    docx: object, section_ids: Iterator[int], paragraph_ids: Iterator[int]
+    docx: object,
+    section_ids: Iterator[int],
+    paragraph_ids: Iterator[int],
+    comments: list[DocxComment],
 ) -> list[SectionNode]:
     grouped: dict[str, list[tuple[object, str]]] = {}
     for docx_paragraph, locator, source in _iter_header_footer_sources(docx):
@@ -429,6 +403,7 @@ def _header_footer_sections(
                 locator,
                 source,
                 _opaque_ranges(paragraph),
+                comments_for_locator(comments, locator),
             )
             for paragraph, locator in non_empty
         ]
@@ -455,8 +430,3 @@ def _iter_header_footer_sources(docx: object) -> Iterator[tuple[object, str, str
             yield paragraph, f"footer:{section_index}:p:{paragraph_index}", "footer"
 
 
-def _comment_count(docx: object) -> int:
-    comments = getattr(docx, "comments", None)
-    if comments is None:
-        return 0
-    return sum(1 for _ in comments)
