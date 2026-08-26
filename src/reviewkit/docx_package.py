@@ -15,7 +15,7 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
-from lxml import etree
+import lxml.etree as etree
 
 # The ZIP/DOS epoch (1980-01-01 00:00:00) is the smallest timestamp the zip format can
 # represent, so it is the natural canonical value: stamping every entry with it removes
@@ -30,9 +30,9 @@ def _canonical_xml(data: bytes) -> bytes | None:
             data,
             parser=etree.XMLParser(resolve_entities=False, no_network=True),
         )
-    except etree.XMLSyntaxError:
+        return etree.tostring(root, method="c14n2", with_comments=True)
+    except (etree.XMLSyntaxError, etree.C14NError):
         return None
-    return etree.tostring(root, method="c14n", with_comments=True)
 
 
 def restore_semantically_unchanged_xml_parts(
@@ -55,11 +55,12 @@ def restore_semantically_unchanged_xml_parts(
     restored_entries: list[tuple[zipfile.ZipInfo, bytes]] = []
     for info, data in entries:
         original = original_parts.get(info.filename)
-        canonical_original = _canonical_xml(original) if original is not None else None
+        if original is None or data == original:
+            restored_entries.append((info, data))
+            continue
+        canonical_original = _canonical_xml(original)
         if (
-            original is not None
-            and data != original
-            and canonical_original is not None
+            canonical_original is not None
             and canonical_original == _canonical_xml(data)
         ):
             data = original
