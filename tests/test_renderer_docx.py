@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from xml.etree import ElementTree
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 from docx import Document as DocxDocument
@@ -891,6 +891,72 @@ def test_rendered_docx_packages_are_byte_reproducible_whole_file(tmp_path: Path)
         with ZipFile(first) as archive:
             assert all(info.date_time == (1980, 1, 1, 0, 0, 0) for info in archive.infolist())
         assert first.read_bytes() == second.read_bytes()
+
+
+def _numbered_docx_with_foreign_xml_declaration(tmp_path: Path) -> Path:
+    generated_path = tmp_path / "generated.docx"
+    source_path = tmp_path / "source.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("First item", style="List Number")
+    docx.add_paragraph("Second item", style="List Number")
+    docx.save(generated_path)
+
+    with ZipFile(generated_path) as incoming, ZipFile(
+        source_path, "w", ZIP_DEFLATED
+    ) as outgoing:
+        for info in incoming.infolist():
+            payload = incoming.read(info.filename)
+            if info.filename == "word/numbering.xml":
+                _, xml_body = payload.split(b"?>", 1)
+                payload = (
+                    b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
+                    + xml_body.lstrip(b"\r\n")
+                )
+            outgoing.writestr(info, payload)
+    return source_path
+
+
+def _part_bytes(path: Path, member: str) -> bytes:
+    with ZipFile(path) as archive:
+        return archive.read(member)
+
+
+@pytest.mark.parametrize("renderer", [render_reviewed_docx, render_corrected_docx])
+def test_source_backed_render_preserves_semantically_unchanged_numbering_part(
+    tmp_path: Path,
+    renderer,
+) -> None:
+    source_path = _numbered_docx_with_foreign_xml_declaration(tmp_path)
+    source_numbering = _part_bytes(source_path, "word/numbering.xml")
+
+    output_path = renderer(load_docx(source_path), [], tmp_path / "output.docx")
+
+    assert _part_bytes(output_path, "word/numbering.xml") == source_numbering
+
+
+def test_reviewed_render_with_text_action_preserves_untouched_numbering_part(
+    tmp_path: Path,
+) -> None:
+    source_path = _numbered_docx_with_foreign_xml_declaration(tmp_path)
+    document = load_docx(source_path)
+    paragraph = next(document.iter_paragraphs())
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id=paragraph.id,
+        original_text="First item",
+        replacement_text="Primary item",
+        reason="Use consistent wording.",
+        status=ActionStatus.NOT_APPLIED,
+    )
+
+    reviewed_path = render_reviewed_docx(
+        document, [action], tmp_path / "reviewed.docx"
+    )
+
+    assert _part_bytes(reviewed_path, "word/numbering.xml") == _part_bytes(
+        source_path, "word/numbering.xml"
+    )
 
 
 def test_add_comment_failure_propagates() -> None:

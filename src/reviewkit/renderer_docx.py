@@ -20,7 +20,10 @@ from reviewkit.actions import (
     apply_action_to_text,
     should_apply_to_corrected,
 )
-from reviewkit.docx_package import normalize_docx_timestamps
+from reviewkit.docx_package import (
+    normalize_docx_timestamps,
+    restore_semantically_unchanged_xml_parts,
+)
 from reviewkit.document import ParagraphNode, ReviewDocument
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
 from reviewkit.policy import WRITING_ACTIONS
@@ -289,6 +292,8 @@ def render_reviewed_docx(
         )
 
     docx.save(str(path))
+    if document.source_path is not None:
+        restore_semantically_unchanged_xml_parts(document.source_path, path)
     # python-docx stamps every zip entry with the wall-clock mtime, which alone makes an
     # otherwise byte-identical reviewed.docx differ on every run; pin them so the promised
     # byte-for-byte reproducibility actually holds at the package level.
@@ -351,6 +356,8 @@ def render_corrected_docx(
             _apply_clean_corrections(docx_paragraph, paragraph_actions)
 
     docx.save(str(path))
+    if document.source_path is not None:
+        restore_semantically_unchanged_xml_parts(document.source_path, path)
     # See render_reviewed_docx: pin python-docx's wall-clock zip timestamps so corrected.docx
     # is reproducible byte-for-byte too.
     normalize_docx_timestamps(path)

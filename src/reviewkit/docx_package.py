@@ -15,11 +15,63 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
+import lxml.etree as etree
+
 # The ZIP/DOS epoch (1980-01-01 00:00:00) is the smallest timestamp the zip format can
 # represent, so it is the natural canonical value: stamping every entry with it removes
 # the wall-clock mtime as a source of nondeterminism while staying a valid zip date that
 # Word and every unzip tool accept.
 _ZIP_EPOCH = (1980, 1, 1, 0, 0, 0)
+
+
+def _canonical_xml(data: bytes) -> bytes | None:
+    try:
+        root = etree.fromstring(
+            data,
+            parser=etree.XMLParser(resolve_entities=False, no_network=True),
+        )
+        return etree.tostring(root, method="c14n2", with_comments=True)
+    except (etree.XMLSyntaxError, etree.C14NError):
+        return None
+
+
+def restore_semantically_unchanged_xml_parts(
+    source_path: str | Path,
+    rendered_path: str | Path,
+) -> None:
+    """Restore source bytes for XML parts the renderer did not semantically change."""
+    with zipfile.ZipFile(source_path) as source:
+        original_parts = {
+            name: source.read(name)
+            for name in source.namelist()
+            if name.endswith((".xml", ".rels"))
+        }
+
+    target = Path(rendered_path)
+    with zipfile.ZipFile(target) as rendered:
+        entries = [(info, rendered.read(info.filename)) for info in rendered.infolist()]
+
+    changed = False
+    restored_entries: list[tuple[zipfile.ZipInfo, bytes]] = []
+    for info, data in entries:
+        original = original_parts.get(info.filename)
+        if original is None or data == original:
+            restored_entries.append((info, data))
+            continue
+        canonical_original = _canonical_xml(original)
+        if (
+            canonical_original is not None
+            and canonical_original == _canonical_xml(data)
+        ):
+            data = original
+            changed = True
+        restored_entries.append((info, data))
+
+    if not changed:
+        return
+    with zipfile.ZipFile(target, "w") as output:
+        for info, data in restored_entries:
+            output.writestr(info, data)
 
 
 def _deterministic_zipinfo(info: zipfile.ZipInfo) -> zipfile.ZipInfo:
