@@ -42,11 +42,11 @@ ReviewKit is the document host:
 The pinned `takt` dependency is the only cascade engine. `TaktClient` calls its
 `cascade_step` Python binding in-process and propagates import or execution failures; there
 is no subprocess engine or local fallback. Takt compiles its native module on first use and
-therefore requires the exact Mojo `1.0.0b3.dev2026071505` toolchain with the `mojo`
-executable on `PATH`.
+therefore requires stable Mojo `1.0.0` with the `mojo` executable on `PATH` — the same pin
+as takt v0.3.1 and Fala (`mojo == 1.0.0` on Modular's `max` channel).
 
-The upstream Takt v0.3.1 manifest supports `osx-arm64` only. Install that exact Mojo build
-from Modular's nightly Conda channel with Pixi. `TAKT_HOME` may point to a separate takt
+The upstream Takt v0.3.1 manifest supports `osx-arm64` only. Install that Mojo build from
+Modular's stable Conda channel with Pixi. `TAKT_HOME` may point to a separate takt
 v0.3.1 source checkout, but is normally unnecessary because the package includes the sources.
 
 How ReviewKit maps onto the archetype:
@@ -69,7 +69,7 @@ Flow (one document):
 
 Public models (`ReviewFinding`, `ReviewAction`, `ReviewResult`), profiles, `review_document`, and CLI are unchanged.
 
-Requires Python >= 3.13, macOS on Apple silicon, and Mojo `1.0.0b3.dev2026071505`. `uv sync`
+Requires Python >= 3.13, macOS on Apple silicon, and Mojo `1.0.0`. `uv sync`
 installs the Python packages only; the first review compiles and caches Takt's native module.
 
 References (same as Fala / Splot):
@@ -83,8 +83,8 @@ Józef Kossecki on multi-level autonomous systems (wielopoziomowe układy samodz
 ```bash
 # Supported platform: macOS on Apple silicon (osx-arm64)
 curl -fsSL https://pixi.sh/install.sh | sh  # skip if Pixi is already installed
-pixi global install -c https://conda.modular.com/max-nightly -c conda-forge \
-  mojo=1.0.0b3.dev2026071505
+pixi global install -c https://conda.modular.com/max -c conda-forge \
+  mojo==1.0.0
 mojo --version
 
 uv sync
