@@ -122,7 +122,17 @@ def test_tracked_change_in_strict_wordprocessingml_is_detected(tmp_path: Path) -
     assert report.revision_kinds == ("ins",)
 
 
-@pytest.mark.parametrize("kind", ["conflictIns", "conflictDel"])
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "conflictIns",
+        "conflictDel",
+        "customXmlConflictInsRangeStart",
+        "customXmlConflictInsRangeEnd",
+        "customXmlConflictDelRangeStart",
+        "customXmlConflictDelRangeEnd",
+    ],
+)
 def test_office_2010_conflict_revision_is_detected(tmp_path: Path, kind: str) -> None:
     xml = _document_xml(f'<w14:{kind} w14:id="1"/>'.encode())
     xml = xml.replace(_W_NS, _W_NS + b" " + _W14_NS)

@@ -110,29 +110,34 @@ def drop_paired_range_revision_markers(
     for name in _UNSUPPORTED_MOVE_RANGE_REVISIONS:
         if next(root.iter(_tag(word_namespace, name)), None) is not None:
             return f"{name} is unsupported"
+    starts = {
+        _tag(word_namespace, start_name): start_name
+        for start_name, _end_name in _RANGE_REVISION_PAIRS
+    }
+    ends = {
+        _tag(word_namespace, end_name): start_name
+        for start_name, end_name in _RANGE_REVISION_PAIRS
+    }
+    relevant = [element for element in root.iter() if element.tag in starts or element.tag in ends]
     markers: list[etree._Element] = []
-    for start_name, end_name in _RANGE_REVISION_PAIRS:
-        start_tag = _tag(word_namespace, start_name)
-        end_tag = _tag(word_namespace, end_name)
-        relevant = [element for element in root.iter() if element.tag in {start_tag, end_tag}]
-        if not relevant:
-            continue
-        stack: list[str] = []
-        seen_ids: set[str] = set()
-        for element in relevant:
-            marker_id = element.get(_tag(word_namespace, "id"))
-            if marker_id is None:
-                return f"{start_name} is malformed"
-            if element.tag == start_tag:
-                if marker_id in seen_ids:
-                    return f"{start_name} is malformed"
-                seen_ids.add(marker_id)
-                stack.append(marker_id)
-            elif not stack or stack.pop() != marker_id:
-                return f"{start_name} is malformed"
-        if stack:
+    stack: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for element in relevant:
+        marker_id = element.get(_tag(word_namespace, "id"))
+        start_name = starts.get(element.tag) or ends[element.tag]
+        if marker_id is None:
             return f"{start_name} is malformed"
-        markers.extend(relevant)
+        key = (start_name, marker_id)
+        if element.tag in starts:
+            if key in seen:
+                return f"{start_name} is malformed"
+            seen.add(key)
+            stack.append(key)
+        elif not stack or stack.pop() != key:
+            return f"{start_name} is malformed"
+        markers.append(element)
+    if stack:
+        return f"{stack[-1][0]} is malformed"
     for marker in markers:
         _remove_element(marker)
     return None
