@@ -4,15 +4,24 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from lxml import etree
 
 from reviewkit.docx_package import _deterministic_zipinfo
 from reviewkit.markup_purity import _REVISION_TAG_RE, inspect_markup
+from reviewkit.revision_paragraphs import (
+    merge_paragraph_into_next,
+    paragraph_for_mark,
+    remove_paragraph_block,
+)
 from reviewkit.revision_package import (
     COMMENT_ANCHOR_RE,
+    RevisionPackageError,
     is_comment_part,
+    parse_xml,
+    read_package_entries,
     serialize,
     strip_comment_anchors,
     strip_comment_content_types,
@@ -33,6 +42,11 @@ _BODY_MARKER_TAGS = frozenset(
 )
 _COMMENT_RANGE_TAGS = frozenset((f"{{{_W}}}commentRangeStart", f"{{{_W}}}commentRangeEnd"))
 _INSERTION_TAGS = frozenset((f"{{{_W}}}ins", f"{{{_W}}}moveTo"))
+_INSERTION_CONTAINER_TAGS = frozenset((f"{{{_W}}}sdt",))
+_UNSUPPORTED_REJECTION_TAGS = (
+    "cellDel cellIns cellMerge sectPrChange tblPrChange trPrChange tcPrChange "
+    "tblPrExChange tblGridChange numberingChange"
+).split()
 _NON_TEXT_CONTENT_TAGS = tuple(
     f"{{{_W}}}{name}" for name in ("tab", "br", "cr", "drawing", "object", "pict", "fldChar", "sym")
 )
@@ -92,30 +106,6 @@ def _is_paragraph_mark(element: etree._Element) -> bool:
     )
 
 
-def _merge_paragraph_into_next(mark: etree._Element, part_name: str) -> None:
-    run_properties = mark.getparent()
-    paragraph_properties = run_properties.getparent() if run_properties is not None else None
-    paragraph = paragraph_properties.getparent() if paragraph_properties is not None else None
-    next_paragraph = paragraph.getnext() if paragraph is not None else None
-    if (
-        paragraph is None
-        or paragraph.tag != _tag("p")
-        or next_paragraph is None
-        or next_paragraph.tag != _tag("p")
-    ):
-        raise RejectRevisionsError(
-            f"{part_name}: tracked paragraph-mark insertion has no following paragraph"
-        )
-    insert_at = 1 if len(next_paragraph) and next_paragraph[0].tag == _tag("pPr") else 0
-    for child in [node for node in paragraph if node.tag != _tag("pPr")]:
-        next_paragraph.insert(insert_at, child)
-        insert_at += 1
-    parent = paragraph.getparent()
-    if parent is None:
-        raise RejectRevisionsError(f"{part_name}: tracked paragraph has no parent")
-    parent.remove(paragraph)
-
-
 def _paragraph_has_original_content(paragraph: etree._Element) -> bool:
     for node in paragraph.iter(_tag("t"), _tag("delText"), *_NON_TEXT_CONTENT_TAGS):
         if node.tag in {_tag("t"), _tag("delText")} and not (node.text or "").strip():
@@ -131,16 +121,24 @@ def _is_comment_reference_run(element: etree._Element) -> bool:
     return element.tag == _tag("r") and element.find(f".//{_tag('commentReference')}") is not None
 
 
+def _is_empty_text_container(element: etree._Element) -> bool:
+    if element.tag not in {_tag("r"), _tag("del"), _tag("moveFrom")}:
+        return False
+    for node in element.iter(_tag("t"), _tag("delText"), *_NON_TEXT_CONTENT_TAGS):
+        if node.tag in _NON_TEXT_CONTENT_TAGS or (node.text or "").strip():
+            return False
+    return True
+
+
 def _reject_inserted_paragraph_mark(
     mark: etree._Element, part_name: str, *, drop_comments: bool
 ) -> None:
-    run_properties = mark.getparent()
-    paragraph_properties = run_properties.getparent() if run_properties is not None else None
-    paragraph = paragraph_properties.getparent() if paragraph_properties is not None else None
-    if paragraph is None or paragraph.tag != _tag("p"):
+    paragraph = paragraph_for_mark(mark, _W)
+    if paragraph is None:
         raise RejectRevisionsError(f"{part_name}: malformed paragraph-mark insertion")
     if _paragraph_has_original_content(paragraph):
-        _merge_paragraph_into_next(mark, part_name)
+        if not merge_paragraph_into_next(mark, _W):
+            _remove(mark)
         return
 
     unexpected = [
@@ -148,7 +146,9 @@ def _reject_inserted_paragraph_mark(
         for child in paragraph
         if child.tag != _tag("pPr")
         and child.tag not in _INSERTION_TAGS
+        and child.tag not in _INSERTION_CONTAINER_TAGS
         and child.tag not in _BODY_MARKER_TAGS
+        and not _is_empty_text_container(child)
         and not (
             drop_comments and (child.tag in _COMMENT_RANGE_TAGS or _is_comment_reference_run(child))
         )
@@ -160,15 +160,14 @@ def _reject_inserted_paragraph_mark(
     for child in list(paragraph):
         if child.tag in _BODY_MARKER_TAGS:
             paragraph.addprevious(child)
-    parent = paragraph.getparent()
-    if parent is None:
+    if not remove_paragraph_block(paragraph, _W):
         raise RejectRevisionsError(f"{part_name}: tracked paragraph has no parent")
-    parent.remove(paragraph)
 
 
 def _reject_revisions_in_tree(root: etree._Element, part_name: str, *, drop_comments: bool) -> None:
-    for _element in root.iter(_tag("cellDel")):
-        raise RejectRevisionsError(f"{part_name}: rejecting a tracked cell deletion is unsupported")
+    for name in _UNSUPPORTED_REJECTION_TAGS:
+        if next(root.iter(_tag(name)), None) is not None:
+            raise RejectRevisionsError(f"{part_name}: rejecting {name} is unsupported")
     for element in list(root.iter(_tag("ins"), _tag("moveTo"))):
         if _is_paragraph_mark(element) and element.getparent() is not None:
             _reject_inserted_paragraph_mark(element, part_name, drop_comments=drop_comments)
@@ -186,22 +185,6 @@ def _reject_revisions_in_tree(root: etree._Element, part_name: str, *, drop_comm
             _unwrap(element)
     _restore_deleted_text(root)
     _restore_property_changes(root, part_name)
-
-    for name in (
-        "rPrChange",
-        "pPrChange",
-        "sectPrChange",
-        "tblPrChange",
-        "trPrChange",
-        "tcPrChange",
-        "tblPrExChange",
-        "tblGridChange",
-        "numberingChange",
-        "cellIns",
-        "cellMerge",
-    ):
-        for element in list(root.iter(_tag(name))):
-            _remove(element)
 
 
 def _restore_deleted_text(root: etree._Element) -> None:
@@ -233,7 +216,7 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
     if not (needs_revisions or needs_comment_strip):
         return data
 
-    root = etree.fromstring(data)
+    root = parse_xml(data)
     if needs_revisions:
         _reject_revisions_in_tree(root, name, drop_comments=drop_comments)
     if needs_comment_strip:
@@ -252,33 +235,42 @@ def reject_all_revisions(
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
 
-    with ZipFile(source) as bundle:
-        entries = [(info, bundle.read(info.filename)) for info in bundle.infolist()]
-    if drop_comments:
-        entries = [(info, data) for info, data in entries if not is_comment_part(info.filename)]
+    try:
+        entries = read_package_entries(source)
+        if drop_comments:
+            entries = [(info, data) for info, data in entries if not is_comment_part(info.filename)]
 
-    transformed: list[tuple[ZipInfo, bytes]] = []
-    for info, data in entries:
-        if (
-            (
-                info.filename.startswith(_CONTENT_PART_PREFIX)
-                and info.filename.endswith(_CONTENT_PART_SUFFIX)
+        transformed: list[tuple[ZipInfo, bytes]] = []
+        for info, data in entries:
+            if (
+                (
+                    info.filename.startswith(_CONTENT_PART_PREFIX)
+                    and info.filename.endswith(_CONTENT_PART_SUFFIX)
+                )
+                or info.filename.endswith(".rels")
+                or info.filename == "[Content_Types].xml"
+            ):
+                data = _transform_part(info.filename, data, drop_comments=drop_comments)
+            transformed.append((info, data))
+    except RevisionPackageError as exc:
+        raise RejectRevisionsError(str(exc)) from exc
+
+    with NamedTemporaryFile(
+        dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        with ZipFile(temporary, "w", ZIP_DEFLATED) as output:
+            for info, data in transformed:
+                output.writestr(_deterministic_zipinfo(info), data)
+
+        report = inspect_markup(temporary)
+        if report.has_tracked_revisions or (drop_comments and report.has_comments):
+            raise RejectRevisionsError(
+                f"reject_all_revisions left markup in {destination}: "
+                f"revision parts={report.revision_parts}, comments={report.comment_count}"
             )
-            or info.filename.endswith(".rels")
-            or info.filename == "[Content_Types].xml"
-        ):
-            data = _transform_part(info.filename, data, drop_comments=drop_comments)
-        transformed.append((info, data))
-
-    with ZipFile(destination, "w", ZIP_DEFLATED) as output:
-        for info, data in transformed:
-            output.writestr(_deterministic_zipinfo(info), data)
-
-    report = inspect_markup(destination)
-    if report.has_tracked_revisions or (drop_comments and report.has_comments):
-        destination.unlink(missing_ok=True)
-        raise RejectRevisionsError(
-            f"reject_all_revisions left markup in {destination}: "
-            f"revision parts={report.revision_parts}, comments={report.comment_count}"
-        )
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
     return destination

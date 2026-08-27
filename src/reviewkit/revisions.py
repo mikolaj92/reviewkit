@@ -20,13 +20,15 @@ from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from lxml import etree
-
 from reviewkit.docx_package import _deterministic_zipinfo
 from reviewkit.markup_purity import _REVISION_TAG_RE, inspect_markup
+from reviewkit.revision_paragraphs import merge_paragraph_into_next
 from reviewkit.revision_package import (
     COMMENT_ANCHOR_RE,
+    RevisionPackageError,
     is_comment_part,
+    parse_xml,
+    read_package_entries,
     serialize,
     strip_comment_anchors,
     strip_comment_content_types,
@@ -104,30 +106,6 @@ def _is_paragraph_mark(element: Any) -> bool:
     )
 
 
-def _merge_paragraph_into_next(mark: Any, part_name: str) -> None:
-    run_properties = mark.getparent()
-    paragraph_properties = run_properties.getparent() if run_properties is not None else None
-    paragraph = paragraph_properties.getparent() if paragraph_properties is not None else None
-    next_paragraph = paragraph.getnext() if paragraph is not None else None
-    if (
-        paragraph is None
-        or paragraph.tag != _tag("p")
-        or next_paragraph is None
-        or next_paragraph.tag != _tag("p")
-    ):
-        raise AcceptRevisionsError(
-            f"{part_name}: tracked paragraph-mark deletion has no following paragraph"
-        )
-    insert_at = 1 if len(next_paragraph) and next_paragraph[0].tag == _tag("pPr") else 0
-    for child in [node for node in paragraph if node.tag != _tag("pPr")]:
-        next_paragraph.insert(insert_at, child)
-        insert_at += 1
-    parent = paragraph.getparent()
-    if parent is None:
-        raise AcceptRevisionsError(f"{part_name}: tracked paragraph has no parent")
-    parent.remove(paragraph)
-
-
 def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
     # Refuse the structural merges we do not implement before touching anything, so a
     # failure leaves no half-transformed tree.
@@ -138,7 +116,8 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
         )
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
         if _is_paragraph_mark(element) and element.getparent() is not None:
-            _merge_paragraph_into_next(element, part_name)
+            if not merge_paragraph_into_next(element, _W):
+                _remove(element)
 
     # Deletions: the deleted content disappears when accepted.
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
@@ -184,7 +163,7 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
     if not (needs_revisions or needs_comment_strip):
         return data  # nothing to accept in this part; copy it through verbatim
 
-    root = etree.fromstring(data)
+    root = parse_xml(data)
     if needs_revisions:
         _accept_revisions_in_tree(root, name)
     if needs_comment_strip:
@@ -222,8 +201,10 @@ def accept_all_revisions(
 
     # Read the whole package into memory first so the transform is safe even when
     # out_path == reviewed_path (rewriting a document in place).
-    with ZipFile(source) as bundle:
-        entries = [(info, bundle.read(info.filename)) for info in bundle.infolist()]
+    try:
+        entries = read_package_entries(source)
+    except RevisionPackageError as exc:
+        raise AcceptRevisionsError(str(exc)) from exc
 
     if drop_comments:
         entries = [(info, data) for info, data in entries if not is_comment_part(info.filename)]
