@@ -360,6 +360,23 @@ def test_reject_all_revisions_merges_inserted_paragraph_mark(tmp_path: Path) -> 
     assert _body_paragraph_texts(restored) == ["Hello world."]
 
 
+def test_reject_all_revisions_merges_consecutive_inserted_paragraph_marks(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "reviewed.docx"
+    docx = DocxDocument()
+    first = docx.add_paragraph("One ")
+    _paragraph_mark("ins", first)
+    second = docx.add_paragraph("two ")
+    _paragraph_mark("ins", second)
+    docx.add_paragraph("three.")
+    docx.save(path)
+
+    restored = reject_all_revisions(path, tmp_path / "input.docx")
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == ["One two three."]
+
+
 def test_reject_all_revisions_drops_empty_numbered_leftover(tmp_path: Path) -> None:
     path = tmp_path / "reviewed.docx"
     docx = DocxDocument()
