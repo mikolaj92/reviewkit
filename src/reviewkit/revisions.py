@@ -1,18 +1,17 @@
-"""Accept every tracked revision in a reviewed ``.docx`` (Word "Accept All Changes").
+"""Accept or reject every tracked revision in a reviewed ``.docx``.
 
 reviewkit owns the OOXML tracked-change grammar (it *renders* reviewed DOCX with
-real Word revisions in :mod:`reviewkit.renderer_docx`), so it also owns the inverse:
-flattening a reviewed document into a clean one by accepting the markup exactly the
-way Word's "Accept All Changes" command does. This keeps the czystopis / clean-copy
-step from re-deriving the corrected text out of the original + plan; it consumes only
-the reviewed document and honours whatever a human accepted, rejected or edited in it.
+real Word revisions in :mod:`reviewkit.renderer_docx`), so it also owns both Word
+inverses: Accept All and Reject All. Accept flattens to the current (post-review)
+text; reject restores the pre-revision text. Downstream products can then derive a
+clean copy or an approximate generated-original without re-implementing OOXML.
 
 The transform runs over raw package XML (zipfile + lxml) rather than python-docx so
 paragraph-mark insertions, moves and format-change records -- none of which python-docx
-models -- are handled faithfully. Structural merges that dike never emits (accepting a
-*paragraph-mark deletion*, which joins two paragraphs, or a *cell deletion*, which
-removes a table cell) are refused fail-closed rather than approximated, so a surprising
-input can never silently corrupt the clean copy.
+models -- are handled faithfully. Accepting a deleted paragraph mark and rejecting an
+inserted paragraph mark merge adjacent paragraphs the way Word does. Table-cell
+structural revisions (``cellDel``, and ``cellIns`` / ``cellMerge`` on reject) stay
+fail-closed: a surprising input must never silently corrupt the clean copy.
 """
 
 from __future__ import annotations
@@ -45,8 +44,16 @@ _XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 class AcceptRevisionsError(RuntimeError):
     """A reviewed document carries markup that cannot be accepted losslessly.
 
-    Raised for the structural merges dike never emits (paragraph-mark or table-cell
-    deletions) and as a fail-closed guard if the flattened output still carries markup.
+    Raised for unsupported table-cell structural revisions and as a fail-closed
+    guard if the flattened output still carries markup.
+    """
+
+
+class RejectRevisionsError(RuntimeError):
+    """A reviewed document carries markup that cannot be rejected losslessly.
+
+    Raised for unsupported table-cell structural revisions and as a fail-closed
+    guard if the flattened output still carries markup.
     """
 
 
@@ -98,23 +105,110 @@ def _is_paragraph_mark(element: Any) -> bool:
     return parent is not None and parent.tag == _tag("rPr")
 
 
+def _is_paragraph_mark_revision(element: Any) -> bool:
+    # Word stores a tracked paragraph-mark change as ``w:pPr/w:rPr/w:ins|w:del``.
+    # Run-property revisions live in ``w:r/w:rPr`` and must not trigger a merge.
+    if not _is_paragraph_mark(element):
+        return False
+    rpr = element.getparent()
+    if rpr is None:
+        return False
+    ppr = rpr.getparent()
+    return ppr is not None and ppr.tag == _tag("pPr")
+
+
+def _paragraph_for_mark(element: Any) -> Any | None:
+    rpr = element.getparent()
+    if rpr is None:
+        return None
+    ppr = rpr.getparent()
+    if ppr is None or ppr.tag != _tag("pPr"):
+        return None
+    paragraph = ppr.getparent()
+    if paragraph is None or paragraph.tag != _tag("p"):
+        return None
+    return paragraph
+
+
+def _restore_prior_properties(change: Any) -> None:
+    # ``w:*PrChange`` stores the *previous* properties as a nested ``w:*Pr`` child.
+    # The current properties already sit as siblings of the change record. Rejecting
+    # replaces those siblings with the nested previous properties, unwrapping the
+    # extra ``w:*Pr`` so we never nest ``w:rPr`` inside ``w:rPr``.
+    parent = change.getparent()
+    if parent is None:
+        return
+    previous = list(change)
+    if len(previous) == 1 and previous[0].tag == parent.tag:
+        previous = list(previous[0])
+    for sibling in list(parent):
+        if sibling is change:
+            continue
+        parent.remove(sibling)
+    for child in previous:
+        change.addprevious(child)
+    _remove(change)
+
+
+def _merge_with_next_paragraph(paragraph: Any, part_name: str, error_type: type[Exception]) -> None:
+    parent = paragraph.getparent()
+    if parent is None:
+        raise error_type(f"{part_name}: cannot merge a tracked paragraph mark without a parent")
+    nxt = paragraph.getnext()
+    if nxt is None or nxt.tag != _tag("p"):
+        raise error_type(
+            f"{part_name}: cannot merge a tracked paragraph mark; next sibling is not a paragraph"
+        )
+    # Keep this paragraph's properties; move only the next paragraph's content
+    # (and a trailing ``w:sectPr`` if Word stored it on the last paragraph).
+    for child in list(nxt):
+        if child.tag == _tag("pPr"):
+            continue
+        paragraph.append(child)
+    _remove(nxt)
+
+
+def _drop_empty_revision_leftover(paragraph: Any) -> None:
+    """Drop a paragraph emptied by rejecting an inserted numbered item.
+
+    Word keeps ``w:numPr`` on a paragraph whose only content was a rejected
+    insertion, leaving a blank numbered slot or a stray digit. Remove that
+    leftover only when the paragraph has no remaining visible or deleted text.
+    Unrelated empty numbered items stay.
+    """
+    if paragraph.getparent() is None:
+        return
+    if any((node.text or "").strip() for node in paragraph.iter(_tag("t"), _tag("delText"))):
+        return
+    ppr = paragraph.find(_tag("pPr"))
+    if ppr is None or ppr.find(_tag("numPr")) is None:
+        return
+    _remove(paragraph)
+
+
 def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
-    # Refuse the structural merges we do not implement before touching anything, so a
-    # failure leaves no half-transformed tree.
+    # Refuse table-cell structural revisions we do not implement before touching
+    # anything, so a failure leaves no half-transformed tree.
     for element in root.iter(_tag("cellDel")):
         raise AcceptRevisionsError(
             f"{part_name}: accepting a tracked cell deletion would remove a table cell; "
-            "unsupported (dike never emits table-structure revisions)."
+            "unsupported."
         )
-    for element in root.iter(_tag("del"), _tag("moveFrom")):
-        if _is_paragraph_mark(element):
-            raise AcceptRevisionsError(
-                f"{part_name}: accepting a tracked paragraph-mark deletion would merge two "
-                "paragraphs; unsupported (dike never deletes a paragraph mark)."
-            )
 
-    # Deletions: the deleted content disappears when accepted.
+    # Accepting a deleted paragraph mark merges this paragraph with the next one,
+    # matching Word. Collect first so nested revisions are not walked twice.
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
+        if element.getparent() is None:
+            continue
+        if _is_paragraph_mark_revision(element):
+            paragraph = _paragraph_for_mark(element)
+            if paragraph is None:
+                raise AcceptRevisionsError(
+                    f"{part_name}: accepting a tracked paragraph-mark deletion is malformed"
+                )
+            _remove(element)
+            _merge_with_next_paragraph(paragraph, part_name, AcceptRevisionsError)
+            continue
         _remove(element)
 
     # Insertions: the inserted content stays; a paragraph-mark insertion keeps the
@@ -144,6 +238,66 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
     ):
         for element in list(root.iter(_tag(name))):
             _remove(element)
+
+
+def _restore_deleted_text(root: Any) -> None:
+    """``w:delText`` is invisible once the ``w:del`` wrapper is gone."""
+    visible = _tag("t")
+    for element in root.iter(_tag("delText")):
+        element.tag = visible
+
+
+def _reject_revisions_in_tree(root: Any, part_name: str) -> None:
+    for element in root.iter(_tag("cellDel"), _tag("cellIns"), _tag("cellMerge")):
+        raise RejectRevisionsError(
+            f"{part_name}: rejecting a tracked cell revision would change table structure; "
+            "unsupported."
+        )
+
+    leftover_paragraphs: list[Any] = []
+    for element in list(root.iter(_tag("ins"), _tag("moveTo"))):
+        if element.getparent() is None:
+            continue
+        if _is_paragraph_mark_revision(element):
+            paragraph = _paragraph_for_mark(element)
+            if paragraph is None:
+                raise RejectRevisionsError(
+                    f"{part_name}: rejecting a tracked paragraph-mark insertion is malformed"
+                )
+            _remove(element)
+            _merge_with_next_paragraph(paragraph, part_name, RejectRevisionsError)
+            leftover_paragraphs.append(paragraph)
+            continue
+        parent = element.getparent()
+        _remove(element)
+        if parent is not None and parent.tag == _tag("p"):
+            leftover_paragraphs.append(parent)
+
+    for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
+        if element.getparent() is None:
+            continue
+        if _is_paragraph_mark(element):
+            _remove(element)
+        else:
+            _unwrap(element)
+    _restore_deleted_text(root)
+
+    for name in (
+        "rPrChange",
+        "pPrChange",
+        "sectPrChange",
+        "tblPrChange",
+        "trPrChange",
+        "tcPrChange",
+        "tblPrExChange",
+        "tblGridChange",
+        "numberingChange",
+    ):
+        for element in list(root.iter(_tag(name))):
+            _restore_prior_properties(element)
+
+    for paragraph in leftover_paragraphs:
+        _drop_empty_revision_leftover(paragraph)
 
 
 def _strip_comment_anchors(root: Any) -> None:
@@ -193,7 +347,13 @@ def _strip_comment_content_types(data: bytes) -> bytes:
     return _serialize(root) if changed else data
 
 
-def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
+def _transform_part(
+    name: str,
+    data: bytes,
+    *,
+    drop_comments: bool,
+    reject: bool,
+) -> bytes:
     if drop_comments and name.endswith(".rels"):
         return _strip_comment_relationships(data)
     if drop_comments and name == "[Content_Types].xml":
@@ -202,41 +362,28 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
     needs_revisions = bool(_REVISION_TAG_RE.search(data))
     needs_comment_strip = drop_comments and bool(_COMMENT_ANCHOR_RE.search(data))
     if not (needs_revisions or needs_comment_strip):
-        return data  # nothing to accept in this part; copy it through verbatim
+        return data  # nothing to flatten in this part; copy it through verbatim
 
     root = etree.fromstring(data)
     if needs_revisions:
-        _accept_revisions_in_tree(root, name)
+        if reject:
+            _reject_revisions_in_tree(root, name)
+        else:
+            _accept_revisions_in_tree(root, name)
     if needs_comment_strip:
         _strip_comment_anchors(root)
     return _serialize(root)
 
 
-def accept_all_revisions(
+def _flatten_revisions(
     reviewed_path: str | Path,
     out_path: str | Path,
     *,
-    drop_comments: bool = True,
+    drop_comments: bool,
+    reject: bool,
+    error_type: type[Exception],
+    operation: str,
 ) -> Path:
-    """Flatten a reviewed ``.docx`` into a clean one by accepting every tracked change.
-
-    Equivalent to Word's "Accept All Changes": every insertion is kept, every deletion
-    is dropped, every move is realised, and every format-change record is discarded,
-    leaving the *current* (post-review) content. ``drop_comments`` (default ``True``)
-    also removes all comments and their in-document anchors. The single input is the
-    reviewed document itself -- the corrected text is never re-derived from an original
-    or a plan, so whatever a human accepted, rejected or edited in the reviewed copy is
-    honoured exactly.
-
-    Structural merges dike never emits are refused fail-closed via
-    :class:`AcceptRevisionsError`: accepting a paragraph-mark deletion (which merges two
-    paragraphs) or a table-cell deletion. As a post-condition the output is inspected
-    with :func:`reviewkit.markup_purity.inspect_markup`; if any revision markup (or, when
-    ``drop_comments``, any comment) survived, the call raises rather than emitting a
-    document that still carries markup.
-
-    Returns the ``out_path`` it wrote.
-    """
     source = Path(reviewed_path)
     destination = Path(out_path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -247,19 +394,21 @@ def accept_all_revisions(
         entries = [(info, bundle.read(info.filename)) for info in bundle.infolist()]
 
     if drop_comments:
-        entries = [
-            (info, data) for info, data in entries if not _is_comment_part(info.filename)
-        ]
+        entries = [(info, data) for info, data in entries if not _is_comment_part(info.filename)]
 
     # Transform every part BEFORE opening the output: a fail-closed raise then leaves no
     # half-written .docx behind.
     transformed: list[tuple[Any, bytes]] = []
     for info, data in entries:
         if (
-            info.filename.startswith(_CONTENT_PART_PREFIX)
-            and info.filename.endswith(_CONTENT_PART_SUFFIX)
-        ) or info.filename.endswith(".rels") or info.filename == "[Content_Types].xml":
-            data = _transform_part(info.filename, data, drop_comments=drop_comments)
+            (
+                info.filename.startswith(_CONTENT_PART_PREFIX)
+                and info.filename.endswith(_CONTENT_PART_SUFFIX)
+            )
+            or info.filename.endswith(".rels")
+            or info.filename == "[Content_Types].xml"
+        ):
+            data = _transform_part(info.filename, data, drop_comments=drop_comments, reject=reject)
         transformed.append((info, data))
 
     with ZipFile(destination, "w", ZIP_DEFLATED) as out:
@@ -272,11 +421,78 @@ def accept_all_revisions(
 
     report = inspect_markup(destination)
     if report.has_tracked_revisions or (drop_comments and report.has_comments):
-        raise AcceptRevisionsError(
-            f"accept_all_revisions left markup in {destination}: "
+        destination.unlink(missing_ok=True)
+        raise error_type(
+            f"{operation} left markup in {destination}: "
             f"revision parts={report.revision_parts}, comments={report.comment_count}"
         )
     return destination
+
+
+def accept_all_revisions(
+    reviewed_path: str | Path,
+    out_path: str | Path,
+    *,
+    drop_comments: bool = True,
+) -> Path:
+    """Flatten a reviewed ``.docx`` into a clean one by accepting every tracked change.
+
+    Equivalent to Word's "Accept All Changes": every insertion is kept, every deletion
+    is dropped, every move is realised, and every format-change record is discarded,
+    leaving the *current* (post-review) content. Accepting a deleted paragraph mark
+    merges that paragraph with the next one. ``drop_comments`` (default ``True``)
+    also removes all comments and their in-document anchors. The single input is the
+    reviewed document itself -- the corrected text is never re-derived from an original
+    or a plan, so whatever a human accepted, rejected or edited in the reviewed copy is
+    honoured exactly.
+
+    Unsupported table-cell structural revisions are refused fail-closed via
+    :class:`AcceptRevisionsError`. As a post-condition the output is inspected with
+    :func:`reviewkit.markup_purity.inspect_markup`; if any revision markup (or, when
+    ``drop_comments``, any comment) survived, the call raises rather than emitting a
+    document that still carries markup.
+
+    Returns the ``out_path`` it wrote.
+    """
+    return _flatten_revisions(
+        reviewed_path,
+        out_path,
+        drop_comments=drop_comments,
+        reject=False,
+        error_type=AcceptRevisionsError,
+        operation="accept_all_revisions",
+    )
+
+
+def reject_all_revisions(
+    reviewed_path: str | Path,
+    out_path: str | Path,
+    *,
+    drop_comments: bool = True,
+) -> Path:
+    """Flatten a reviewed ``.docx`` by rejecting every tracked change.
+
+    Equivalent to Word's "Reject All Changes": insertions disappear, deletions are
+    restored, and rejecting an inserted paragraph mark merges that paragraph with the
+    next one. The result is an *approximate generated-original*, not a historical
+    source document. ``drop_comments`` (default ``True``) also removes comments and
+    their in-document anchors.
+
+    Unsupported table-cell structural revisions are refused fail-closed via
+    :class:`RejectRevisionsError` before a partial output is written. As a
+    post-condition the output is inspected with :func:`inspect_markup`; leftover
+    markup deletes the destination and raises.
+
+    Returns the ``out_path`` it wrote.
+    """
+    return _flatten_revisions(
+        reviewed_path,
+        out_path,
+        drop_comments=drop_comments,
+        reject=True,
+        error_type=RejectRevisionsError,
+        operation="reject_all_revisions",
+    )
 
 
 # Domain-facing alias: from the caller's side this "applies the reviewed markup" to
