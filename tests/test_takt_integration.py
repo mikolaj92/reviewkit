@@ -30,6 +30,23 @@ def _make_docx(tmp_path: Path, text: str) -> Path:
     return p
 
 
+def test_mojo_pin_is_stable_1_0_0() -> None:
+    """README and CI must pin the same installable Mojo 1.0.0 as takt/Fala.
+
+    The yanked nightly ``1.0.0b3.dev2026071505`` (max-nightly) does not export
+    ``Span`` from ``std.collections``, so takt's EmberJson vendoring fails to
+    compile. Stable ``1.0.0`` on ``conda.modular.com/max`` does.
+    """
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    workflow = (root / ".github/workflows/takt-integration.yml").read_text(encoding="utf-8")
+    for text in (readme, workflow):
+        assert "1.0.0b3" not in text
+        assert "max-nightly" not in text
+        assert "https://conda.modular.com/max" in text
+        assert "mojo==1.0.0" in text
+
+
 def test_takt_result_does_not_fall_back_when_outcome_is_invalid(monkeypatch) -> None:
     monkeypatch.setattr(
         "takt.cascade_step",
