@@ -294,6 +294,42 @@ def test_revision_operations_drop_paired_custom_xml_range_markers(
     assert DocxDocument(output).paragraphs[0].text == expected_text
 
 
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        (reject_all_revisions, RejectRevisionsError),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+    ],
+)
+@pytest.mark.parametrize("shape", ["reversed", "duplicate_end"])
+def test_revision_operations_fail_closed_on_malformed_custom_xml_ranges(
+    tmp_path: Path,
+    operation,
+    error_type: type[Exception],
+    shape: str,
+) -> None:
+    path = tmp_path / "malformed-custom-xml-range.docx"
+    document = DocxDocument()
+    paragraph = document.add_paragraph("Clause")
+    start = OxmlElement("w:customXmlInsRangeStart")
+    start.set(qn("w:id"), "11")
+    end = OxmlElement("w:customXmlInsRangeEnd")
+    end.set(qn("w:id"), "11")
+    if shape == "reversed":
+        paragraph._p.extend((end, start))
+    else:
+        duplicate_end = OxmlElement("w:customXmlInsRangeEnd")
+        duplicate_end.set(qn("w:id"), "11")
+        paragraph._p.extend((start, end, duplicate_end))
+    document.save(path)
+    output = tmp_path / f"{operation.__name__}.docx"
+
+    with pytest.raises(error_type, match="customXmlInsRangeStart is malformed"):
+        operation(path, output)
+
+    assert not output.exists()
+
+
 def test_accept_all_revisions_preserves_existing_output_on_late_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -179,9 +179,7 @@ def _reject_revisions_in_tree(root: etree._Element, part_name: str, *, drop_comm
             raise RejectRevisionsError(f"{part_name}: rejecting {name} is unsupported")
     invalid_range = drop_paired_range_revision_markers(root, _W)
     if invalid_range is not None:
-        raise RejectRevisionsError(
-            f"{part_name}: rejecting malformed {invalid_range} is unsupported"
-        )
+        raise RejectRevisionsError(f"{part_name}: rejecting {invalid_range}")
     for element in list(root.iter(_tag("ins"), _tag("moveTo"))):
         if _is_paragraph_mark(element) and element.getparent() is not None:
             _reject_inserted_paragraph_mark(element, part_name, drop_comments=drop_comments)

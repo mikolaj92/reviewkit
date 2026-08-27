@@ -128,9 +128,7 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
             raise AcceptRevisionsError(f"{part_name}: accepting {name} is unsupported")
     invalid_range = drop_paired_range_revision_markers(root, _W)
     if invalid_range is not None:
-        raise AcceptRevisionsError(
-            f"{part_name}: accepting malformed {invalid_range} is unsupported"
-        )
+        raise AcceptRevisionsError(f"{part_name}: accepting {invalid_range}")
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
         if _is_paragraph_mark(element) and element.getparent() is not None:
             if not merge_paragraph_into_next(element, _W):

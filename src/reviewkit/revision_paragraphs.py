@@ -5,13 +5,19 @@ import re
 from lxml import etree
 
 _NUMBER_TOKEN_RE = re.compile(r"\d+(?:[.)])?")
+_UNSUPPORTED_MOVE_RANGE_REVISIONS = (
+    "moveFromRangeStart",
+    "moveFromRangeEnd",
+    "moveToRangeStart",
+    "moveToRangeEnd",
+    "customXmlMoveFromRangeStart",
+    "customXmlMoveFromRangeEnd",
+    "customXmlMoveToRangeStart",
+    "customXmlMoveToRangeEnd",
+)
 _RANGE_REVISION_PAIRS = (
-    ("moveFromRangeStart", "moveFromRangeEnd", "moveFrom"),
-    ("moveToRangeStart", "moveToRangeEnd", "moveTo"),
-    ("customXmlDelRangeStart", "customXmlDelRangeEnd", None),
-    ("customXmlInsRangeStart", "customXmlInsRangeEnd", None),
-    ("customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", None),
-    ("customXmlMoveToRangeStart", "customXmlMoveToRangeEnd", None),
+    ("customXmlDelRangeStart", "customXmlDelRangeEnd"),
+    ("customXmlInsRangeStart", "customXmlInsRangeEnd"),
 )
 
 
@@ -101,26 +107,32 @@ def drop_paired_range_revision_markers(
     root: etree._Element,
     word_namespace: str,
 ) -> str | None:
+    for name in _UNSUPPORTED_MOVE_RANGE_REVISIONS:
+        if next(root.iter(_tag(word_namespace, name)), None) is not None:
+            return f"{name} is unsupported"
     markers: list[etree._Element] = []
-    for start_name, end_name, required_wrapper in _RANGE_REVISION_PAIRS:
-        starts = list(root.iter(_tag(word_namespace, start_name)))
-        ends = list(root.iter(_tag(word_namespace, end_name)))
-        if not starts and not ends:
+    for start_name, end_name in _RANGE_REVISION_PAIRS:
+        start_tag = _tag(word_namespace, start_name)
+        end_tag = _tag(word_namespace, end_name)
+        relevant = [element for element in root.iter() if element.tag in {start_tag, end_tag}]
+        if not relevant:
             continue
-        start_ids = [element.get(_tag(word_namespace, "id")) for element in starts]
-        end_ids = [element.get(_tag(word_namespace, "id")) for element in ends]
-        if (
-            None in start_ids
-            or None in end_ids
-            or len(start_ids) != len(set(start_ids))
-            or set(start_ids) != set(end_ids)
-            or (
-                required_wrapper is not None
-                and next(root.iter(_tag(word_namespace, required_wrapper)), None) is None
-            )
-        ):
-            return start_name
-        markers.extend((*starts, *ends))
+        stack: list[str] = []
+        seen_ids: set[str] = set()
+        for element in relevant:
+            marker_id = element.get(_tag(word_namespace, "id"))
+            if marker_id is None:
+                return f"{start_name} is malformed"
+            if element.tag == start_tag:
+                if marker_id in seen_ids:
+                    return f"{start_name} is malformed"
+                seen_ids.add(marker_id)
+                stack.append(marker_id)
+            elif not stack or stack.pop() != marker_id:
+                return f"{start_name} is malformed"
+        if stack:
+            return f"{start_name} is malformed"
+        markers.extend(relevant)
     for marker in markers:
         _remove_element(marker)
     return None
