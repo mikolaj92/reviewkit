@@ -263,6 +263,37 @@ def test_revision_operations_fail_closed_on_move_range_markers(
     assert not output.exists()
 
 
+@pytest.mark.parametrize(
+    ("operation", "expected_text"),
+    [
+        (reject_all_revisions, "Original "),
+        (revisions_module.accept_all_revisions, "Original new"),
+    ],
+)
+def test_revision_operations_drop_paired_custom_xml_range_markers(
+    tmp_path: Path,
+    operation,
+    expected_text: str,
+) -> None:
+    path = tmp_path / "custom-xml-range.docx"
+    document = DocxDocument()
+    paragraph = document.add_paragraph("Original ")
+    start = OxmlElement("w:customXmlInsRangeStart")
+    start.set(qn("w:id"), "10")
+    paragraph._p.append(start)
+    _add_inserted_text(paragraph, "new")
+    end = OxmlElement("w:customXmlInsRangeEnd")
+    end.set(qn("w:id"), "10")
+    paragraph._p.append(end)
+    document.save(path)
+    output = tmp_path / f"{operation.__name__}.docx"
+
+    operation(path, output)
+
+    assert inspect_markup(output).is_clean
+    assert DocxDocument(output).paragraphs[0].text == expected_text
+
+
 def test_accept_all_revisions_preserves_existing_output_on_late_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

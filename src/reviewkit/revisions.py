@@ -21,6 +21,7 @@ from typing import Any
 
 from reviewkit.markup_purity import inspect_markup
 from reviewkit.revision_paragraphs import (
+    drop_paired_range_revision_markers,
     is_content_control_paragraph,
     merge_paragraph_into_next,
 )
@@ -49,20 +50,6 @@ __all__ = [
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _STRICT_W = "http://purl.oclc.org/ooxml/wordprocessingml/main"
-_UNSUPPORTED_RANGE_REVISIONS = (
-    "moveFromRangeStart",
-    "moveFromRangeEnd",
-    "moveToRangeStart",
-    "moveToRangeEnd",
-    "customXmlDelRangeStart",
-    "customXmlDelRangeEnd",
-    "customXmlInsRangeStart",
-    "customXmlInsRangeEnd",
-    "customXmlMoveFromRangeStart",
-    "customXmlMoveFromRangeEnd",
-    "customXmlMoveToRangeStart",
-    "customXmlMoveToRangeEnd",
-)
 
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
@@ -139,9 +126,11 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
     for name in ("cellDel", "cellIns", "cellMerge"):
         if next(root.iter(_tag(name)), None) is not None:
             raise AcceptRevisionsError(f"{part_name}: accepting {name} is unsupported")
-    for name in _UNSUPPORTED_RANGE_REVISIONS:
-        if next(root.iter(_tag(name)), None) is not None:
-            raise AcceptRevisionsError(f"{part_name}: accepting {name} is unsupported")
+    invalid_range = drop_paired_range_revision_markers(root, _W)
+    if invalid_range is not None:
+        raise AcceptRevisionsError(
+            f"{part_name}: accepting malformed {invalid_range} is unsupported"
+        )
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
         if _is_paragraph_mark(element) and element.getparent() is not None:
             if not merge_paragraph_into_next(element, _W):

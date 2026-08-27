@@ -5,6 +5,14 @@ import re
 from lxml import etree
 
 _NUMBER_TOKEN_RE = re.compile(r"\d+(?:[.)])?")
+_RANGE_REVISION_PAIRS = (
+    ("moveFromRangeStart", "moveFromRangeEnd", "moveFrom"),
+    ("moveToRangeStart", "moveToRangeEnd", "moveTo"),
+    ("customXmlDelRangeStart", "customXmlDelRangeEnd", None),
+    ("customXmlInsRangeStart", "customXmlInsRangeEnd", None),
+    ("customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", None),
+    ("customXmlMoveToRangeStart", "customXmlMoveToRangeEnd", None),
+)
 
 
 def paragraph_for_mark(mark: etree._Element, word_namespace: str) -> etree._Element | None:
@@ -89,6 +97,35 @@ def drop_inserted_numbering_leftover(
     return remove_paragraph_block(paragraph, word_namespace)
 
 
+def drop_paired_range_revision_markers(
+    root: etree._Element,
+    word_namespace: str,
+) -> str | None:
+    markers: list[etree._Element] = []
+    for start_name, end_name, required_wrapper in _RANGE_REVISION_PAIRS:
+        starts = list(root.iter(_tag(word_namespace, start_name)))
+        ends = list(root.iter(_tag(word_namespace, end_name)))
+        if not starts and not ends:
+            continue
+        start_ids = [element.get(_tag(word_namespace, "id")) for element in starts]
+        end_ids = [element.get(_tag(word_namespace, "id")) for element in ends]
+        if (
+            None in start_ids
+            or None in end_ids
+            or len(start_ids) != len(set(start_ids))
+            or set(start_ids) != set(end_ids)
+            or (
+                required_wrapper is not None
+                and next(root.iter(_tag(word_namespace, required_wrapper)), None) is None
+            )
+        ):
+            return start_name
+        markers.extend((*starts, *ends))
+    for marker in markers:
+        _remove_element(marker)
+    return None
+
+
 def _paragraph_block(paragraph: etree._Element, word_namespace: str) -> etree._Element:
     content = paragraph.getparent()
     control = content.getparent() if content is not None else None
@@ -120,3 +157,16 @@ def _next_paragraph(block: etree._Element, word_namespace: str) -> etree._Elemen
 
 def _tag(word_namespace: str, name: str) -> str:
     return f"{{{word_namespace}}}{name}"
+
+
+def _remove_element(element: etree._Element) -> None:
+    parent = element.getparent()
+    if parent is None:
+        return
+    if element.tail:
+        previous = element.getprevious()
+        if previous is not None:
+            previous.tail = (previous.tail or "") + element.tail
+        else:
+            parent.text = (parent.text or "") + element.tail
+    parent.remove(element)

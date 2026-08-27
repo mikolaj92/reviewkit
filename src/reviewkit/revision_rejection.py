@@ -11,6 +11,7 @@ from lxml import etree
 from reviewkit.markup_purity import inspect_markup
 from reviewkit.revision_paragraphs import (
     drop_inserted_numbering_leftover,
+    drop_paired_range_revision_markers,
     is_content_control_paragraph,
     merge_paragraph_into_next,
     paragraph_for_mark,
@@ -50,20 +51,6 @@ _UNSUPPORTED_REJECTION_TAGS = (
     "cellDel cellIns cellMerge sectPrChange tblPrChange trPrChange tcPrChange "
     "tblPrExChange tblGridChange numberingChange"
 ).split()
-_UNSUPPORTED_RANGE_REVISIONS = (
-    "moveFromRangeStart",
-    "moveFromRangeEnd",
-    "moveToRangeStart",
-    "moveToRangeEnd",
-    "customXmlDelRangeStart",
-    "customXmlDelRangeEnd",
-    "customXmlInsRangeStart",
-    "customXmlInsRangeEnd",
-    "customXmlMoveFromRangeStart",
-    "customXmlMoveFromRangeEnd",
-    "customXmlMoveToRangeStart",
-    "customXmlMoveToRangeEnd",
-)
 _NON_TEXT_CONTENT_TAGS = tuple(
     f"{{{_W}}}{name}" for name in ("tab", "br", "cr", "drawing", "object", "pict", "fldChar", "sym")
 )
@@ -190,9 +177,11 @@ def _reject_revisions_in_tree(root: etree._Element, part_name: str, *, drop_comm
     for name in _UNSUPPORTED_REJECTION_TAGS:
         if next(root.iter(_tag(name)), None) is not None:
             raise RejectRevisionsError(f"{part_name}: rejecting {name} is unsupported")
-    for name in _UNSUPPORTED_RANGE_REVISIONS:
-        if next(root.iter(_tag(name)), None) is not None:
-            raise RejectRevisionsError(f"{part_name}: rejecting {name} is unsupported")
+    invalid_range = drop_paired_range_revision_markers(root, _W)
+    if invalid_range is not None:
+        raise RejectRevisionsError(
+            f"{part_name}: rejecting malformed {invalid_range} is unsupported"
+        )
     for element in list(root.iter(_tag("ins"), _tag("moveTo"))):
         if _is_paragraph_mark(element) and element.getparent() is not None:
             _reject_inserted_paragraph_mark(element, part_name, drop_comments=drop_comments)
