@@ -30,6 +30,18 @@ REVISION_NAMES = (
     "tblGridChange",
     "tblPrExChange",
     "numberingChange",
+    "moveFromRangeStart",
+    "moveFromRangeEnd",
+    "moveToRangeStart",
+    "moveToRangeEnd",
+    "customXmlDelRangeStart",
+    "customXmlDelRangeEnd",
+    "customXmlInsRangeStart",
+    "customXmlInsRangeEnd",
+    "customXmlMoveFromRangeStart",
+    "customXmlMoveFromRangeEnd",
+    "customXmlMoveToRangeStart",
+    "customXmlMoveToRangeEnd",
 )
 MAX_PACKAGE_ENTRIES = 4096
 MAX_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024

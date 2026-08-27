@@ -31,6 +31,7 @@ from reviewkit.revision_package import (
 )
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_STRICT_W = "http://purl.oclc.org/ooxml/wordprocessingml/main"
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
 _BODY_MARKER_TAGS = frozenset(
@@ -49,6 +50,20 @@ _UNSUPPORTED_REJECTION_TAGS = (
     "cellDel cellIns cellMerge sectPrChange tblPrChange trPrChange tcPrChange "
     "tblPrExChange tblGridChange numberingChange"
 ).split()
+_UNSUPPORTED_RANGE_REVISIONS = (
+    "moveFromRangeStart",
+    "moveFromRangeEnd",
+    "moveToRangeStart",
+    "moveToRangeEnd",
+    "customXmlDelRangeStart",
+    "customXmlDelRangeEnd",
+    "customXmlInsRangeStart",
+    "customXmlInsRangeEnd",
+    "customXmlMoveFromRangeStart",
+    "customXmlMoveFromRangeEnd",
+    "customXmlMoveToRangeStart",
+    "customXmlMoveToRangeEnd",
+)
 _NON_TEXT_CONTENT_TAGS = tuple(
     f"{{{_W}}}{name}" for name in ("tab", "br", "cr", "drawing", "object", "pict", "fldChar", "sym")
 )
@@ -175,6 +190,9 @@ def _reject_revisions_in_tree(root: etree._Element, part_name: str, *, drop_comm
     for name in _UNSUPPORTED_REJECTION_TAGS:
         if next(root.iter(_tag(name)), None) is not None:
             raise RejectRevisionsError(f"{part_name}: rejecting {name} is unsupported")
+    for name in _UNSUPPORTED_RANGE_REVISIONS:
+        if next(root.iter(_tag(name)), None) is not None:
+            raise RejectRevisionsError(f"{part_name}: rejecting {name} is unsupported")
     for element in list(root.iter(_tag("ins"), _tag("moveTo"))):
         if _is_paragraph_mark(element) and element.getparent() is not None:
             _reject_inserted_paragraph_mark(element, part_name, drop_comments=drop_comments)
@@ -234,6 +252,12 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
         return strip_comment_content_types(data)
 
     root = parse_xml(data)
+    strict_revisions = revision_kinds(root, _STRICT_W)
+    strict_comment_anchors = drop_comments and has_comment_anchors(root, _STRICT_W)
+    if strict_revisions or strict_comment_anchors:
+        raise RejectRevisionsError(
+            f"{name}: strict WordprocessingML review markup is unsupported"
+        )
     needs_revisions = bool(revision_kinds(root, _W))
     needs_comment_strip = drop_comments and has_comment_anchors(root, _W)
     if not (needs_revisions or needs_comment_strip):

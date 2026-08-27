@@ -71,6 +71,9 @@ def drop_inserted_numbering_leftover(
         properties is not None
         and properties.find(_tag(word_namespace, "numPr")) is not None
     )
+    # Word may leave a manually typed list token outside ``w:ins`` while tracking
+    # the new point's text. Its presence in this exact insertion-owning paragraph
+    # is the provenance that links the otherwise bare token to the rejected point.
     if not ((numbered and not text) or _NUMBER_TOKEN_RE.fullmatch(text)):
         return False
     if any(

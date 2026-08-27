@@ -15,6 +15,7 @@ from reviewkit.insertions import format_suggestion_text
 
 _XML_HEAD = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 _W_NS = b'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+_STRICT_W_NS = b'xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"'
 
 # The complete non-insertion/deletion revision set in the canonical OOXML grammar.
 _NON_INS_DEL_REVISIONS = [
@@ -32,6 +33,18 @@ _NON_INS_DEL_REVISIONS = [
     "tblGridChange",
     "tblPrExChange",
     "numberingChange",
+    "moveFromRangeStart",
+    "moveFromRangeEnd",
+    "moveToRangeStart",
+    "moveToRangeEnd",
+    "customXmlDelRangeStart",
+    "customXmlDelRangeEnd",
+    "customXmlInsRangeStart",
+    "customXmlInsRangeEnd",
+    "customXmlMoveFromRangeStart",
+    "customXmlMoveFromRangeEnd",
+    "customXmlMoveToRangeStart",
+    "customXmlMoveToRangeEnd",
 ]
 
 
@@ -89,6 +102,17 @@ def test_tracked_change_ins_del_detected(tmp_path: Path, kind: str) -> None:
 def test_tracked_change_with_arbitrary_namespace_prefix_is_detected(tmp_path: Path) -> None:
     xml = _document_xml(b'<w:ins w:id="1"><w:r><w:t>x</w:t></w:r></w:ins>')
     xml = xml.replace(b"xmlns:w=", b"xmlns:x=").replace(b"w:", b"x:")
+    path = _docx(tmp_path, {"word/document.xml": xml})
+
+    report = inspect_markup(path)
+
+    assert report.has_tracked_revisions
+    assert report.revision_kinds == ("ins",)
+
+
+def test_tracked_change_in_strict_wordprocessingml_is_detected(tmp_path: Path) -> None:
+    xml = _document_xml(b'<w:ins w:id="1"><w:r><w:t>x</w:t></w:r></w:ins>')
+    xml = xml.replace(_W_NS, _STRICT_W_NS)
     path = _docx(tmp_path, {"word/document.xml": xml})
 
     report = inspect_markup(path)

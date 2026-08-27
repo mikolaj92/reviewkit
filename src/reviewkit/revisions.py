@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+
 from reviewkit.markup_purity import inspect_markup
 from reviewkit.revision_paragraphs import (
     is_content_control_paragraph,
@@ -36,8 +37,32 @@ from reviewkit.revision_package import (
     strip_comment_relationships,
     write_package_atomically,
 )
+from reviewkit.revision_rejection import RejectRevisionsError, reject_all_revisions
+
+__all__ = [
+    "AcceptRevisionsError",
+    "RejectRevisionsError",
+    "accept_all_revisions",
+    "apply_reviewed_markup",
+    "reject_all_revisions",
+]
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_STRICT_W = "http://purl.oclc.org/ooxml/wordprocessingml/main"
+_UNSUPPORTED_RANGE_REVISIONS = (
+    "moveFromRangeStart",
+    "moveFromRangeEnd",
+    "moveToRangeStart",
+    "moveToRangeEnd",
+    "customXmlDelRangeStart",
+    "customXmlDelRangeEnd",
+    "customXmlInsRangeStart",
+    "customXmlInsRangeEnd",
+    "customXmlMoveFromRangeStart",
+    "customXmlMoveFromRangeEnd",
+    "customXmlMoveToRangeStart",
+    "customXmlMoveToRangeEnd",
+)
 
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
@@ -114,6 +139,9 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
     for name in ("cellDel", "cellIns", "cellMerge"):
         if next(root.iter(_tag(name)), None) is not None:
             raise AcceptRevisionsError(f"{part_name}: accepting {name} is unsupported")
+    for name in _UNSUPPORTED_RANGE_REVISIONS:
+        if next(root.iter(_tag(name)), None) is not None:
+            raise AcceptRevisionsError(f"{part_name}: accepting {name} is unsupported")
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
         if _is_paragraph_mark(element) and element.getparent() is not None:
             if not merge_paragraph_into_next(element, _W):
@@ -164,6 +192,12 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
         return strip_comment_content_types(data)
 
     root = parse_xml(data)
+    strict_revisions = revision_kinds(root, _STRICT_W)
+    strict_comment_anchors = drop_comments and has_comment_anchors(root, _STRICT_W)
+    if strict_revisions or strict_comment_anchors:
+        raise AcceptRevisionsError(
+            f"{name}: strict WordprocessingML review markup is unsupported"
+        )
     needs_revisions = bool(revision_kinds(root, _W))
     needs_comment_strip = drop_comments and has_comment_anchors(root, _W)
     if not (needs_revisions or needs_comment_strip):

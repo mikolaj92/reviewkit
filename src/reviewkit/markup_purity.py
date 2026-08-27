@@ -22,6 +22,8 @@ _CONTENT_PART_SUFFIX = ".xml"
 
 _COMMENTS_PART = "word/comments.xml"
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_STRICT_W = "http://purl.oclc.org/ooxml/wordprocessingml/main"
+_WORD_NAMESPACES = (_W, _STRICT_W)
 
 # The literal ``[SUGGESTION`` text marker reviewkit's own ``suggest`` insertions
 # emit (see :mod:`reviewkit.insertions`). It is written verbatim as run text, so
@@ -94,14 +96,20 @@ def inspect_markup(path: str | Path) -> MarkupReport:
         if not (name.startswith(_CONTENT_PART_PREFIX) and name.endswith(_CONTENT_PART_SUFFIX)):
             continue
         root = parse_xml(data)
-        found = revision_kinds(root, _W)
+        found = set().union(
+            *(revision_kinds(root, namespace) for namespace in _WORD_NAMESPACES)
+        )
         if found:
             revision_parts.append(name)
             found_revision_kinds.update(found)
         if _SUGGESTION_MARKER_BYTES in data:
             suggestion_parts.append(name)
         if name == _COMMENTS_PART:
-            comment_count = sum(1 for _element in root.iter(f"{{{_W}}}comment"))
+            comment_count = sum(
+                1
+                for namespace in _WORD_NAMESPACES
+                for _element in root.iter(f"{{{namespace}}}comment")
+            )
     return MarkupReport(
         revision_parts=tuple(sorted(revision_parts)),
         revision_kinds=tuple(sorted(found_revision_kinds)),

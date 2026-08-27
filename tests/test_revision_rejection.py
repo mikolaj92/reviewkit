@@ -63,6 +63,11 @@ def _replace_document_xml(path: Path, document_xml: bytes) -> None:
             archive.writestr(info, document_xml if info.filename == "word/document.xml" else data)
 
 
+def test_revisions_module_preserves_public_reject_api() -> None:
+    assert revisions_module.reject_all_revisions is reject_all_revisions
+    assert revisions_module.RejectRevisionsError is RejectRevisionsError
+
+
 def test_reject_all_revisions_is_byte_reproducible(tmp_path: Path) -> None:
     source = _saved_docx(tmp_path / "source.docx", "old clause")
     reviewed = _reviewed_replacement(source, tmp_path / "reviewed.docx")
@@ -195,6 +200,67 @@ def test_reject_all_revisions_handles_arbitrary_namespace_prefix(tmp_path: Path)
 
     assert inspect_markup(restored).is_clean
     assert DocxDocument(restored).paragraphs[0].text == "old clause"
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        (reject_all_revisions, RejectRevisionsError),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+    ],
+)
+def test_revision_operations_fail_closed_on_strict_wordprocessingml(
+    tmp_path: Path,
+    operation,
+    error_type: type[Exception],
+) -> None:
+    path = tmp_path / "strict.docx"
+    document = DocxDocument()
+    paragraph = document.add_paragraph("old")
+    _add_inserted_text(paragraph, "new")
+    document.save(path)
+    with ZipFile(path) as archive:
+        document_xml = archive.read("word/document.xml")
+    _replace_document_xml(
+        path,
+        document_xml.replace(
+            b"http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+            b"http://purl.oclc.org/ooxml/wordprocessingml/main",
+        ),
+    )
+    output = tmp_path / f"{operation.__name__}.docx"
+
+    with pytest.raises(error_type, match="strict WordprocessingML"):
+        operation(path, output)
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        (reject_all_revisions, RejectRevisionsError),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+    ],
+)
+def test_revision_operations_fail_closed_on_move_range_markers(
+    tmp_path: Path,
+    operation,
+    error_type: type[Exception],
+) -> None:
+    path = tmp_path / "move-range.docx"
+    document = DocxDocument()
+    paragraph = document.add_paragraph("Clause")
+    marker = OxmlElement("w:moveFromRangeStart")
+    marker.set(qn("w:id"), "9")
+    paragraph._p.insert(0, marker)
+    document.save(path)
+    output = tmp_path / f"{operation.__name__}.docx"
+
+    with pytest.raises(error_type, match="moveFromRangeStart"):
+        operation(path, output)
+
+    assert not output.exists()
 
 
 def test_accept_all_revisions_preserves_existing_output_on_late_failure(
