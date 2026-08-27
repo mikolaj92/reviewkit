@@ -150,22 +150,37 @@ def _restore_prior_properties(change: Any) -> None:
     _remove(change)
 
 
-def _merge_with_next_paragraph(paragraph: Any, part_name: str, error_type: type[Exception]) -> None:
+def _merge_with_next_paragraph(paragraph: Any) -> None:
     parent = paragraph.getparent()
     if parent is None:
-        raise error_type(f"{part_name}: cannot merge a tracked paragraph mark without a parent")
+        return  # already absorbed by an earlier paragraph-mark merge
     nxt = paragraph.getnext()
     if nxt is None or nxt.tag != _tag("p"):
-        raise error_type(
-            f"{part_name}: cannot merge a tracked paragraph mark; next sibling is not a paragraph"
-        )
-    # Keep this paragraph's properties; move only the next paragraph's content
-    # (and a trailing ``w:sectPr`` if Word stored it on the last paragraph).
+        return  # last paragraph, or a trailing sectPr; dropping the mark is enough
+    # Keep this paragraph's properties; move only the next paragraph's content.
     for child in list(nxt):
         if child.tag == _tag("pPr"):
             continue
         paragraph.append(child)
     _remove(nxt)
+
+
+def _paragraphs_with_mark(root: Any, *revision_tags: str) -> list[Any]:
+    seen: set[int] = set()
+    paragraphs: list[Any] = []
+    for element in root.iter(*(_tag(name) for name in revision_tags)):
+        if not _is_paragraph_mark_revision(element):
+            continue
+        paragraph = _paragraph_for_mark(element)
+        if paragraph is None:
+            continue
+        marker = id(paragraph)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        paragraphs.append(paragraph)
+    paragraphs.reverse()
+    return paragraphs
 
 
 def _drop_empty_revision_leftover(paragraph: Any) -> None:
@@ -196,18 +211,16 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
         )
 
     # Accepting a deleted paragraph mark merges this paragraph with the next one,
-    # matching Word. Collect first so nested revisions are not walked twice.
+    # matching Word. Walk from the end so consecutive marks still join.
+    for paragraph in _paragraphs_with_mark(root, "del", "moveFrom"):
+        ppr = paragraph.find(_tag("pPr"))
+        rpr = None if ppr is None else ppr.find(_tag("rPr"))
+        if rpr is not None:
+            for mark in list(rpr.iter(_tag("del"), _tag("moveFrom"))):
+                _remove(mark)
+        _merge_with_next_paragraph(paragraph)
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
         if element.getparent() is None:
-            continue
-        if _is_paragraph_mark_revision(element):
-            paragraph = _paragraph_for_mark(element)
-            if paragraph is None:
-                raise AcceptRevisionsError(
-                    f"{part_name}: accepting a tracked paragraph-mark deletion is malformed"
-                )
-            _remove(element)
-            _merge_with_next_paragraph(paragraph, part_name, AcceptRevisionsError)
             continue
         _remove(element)
 
@@ -255,18 +268,19 @@ def _reject_revisions_in_tree(root: Any, part_name: str) -> None:
         )
 
     leftover_paragraphs: list[Any] = []
+    for paragraph in _paragraphs_with_mark(root, "ins", "moveTo"):
+        ppr = paragraph.find(_tag("pPr"))
+        rpr = None if ppr is None else ppr.find(_tag("rPr"))
+        if rpr is not None:
+            for mark in list(rpr.iter(_tag("ins"), _tag("moveTo"))):
+                _remove(mark)
+        _merge_with_next_paragraph(paragraph)
+        leftover_paragraphs.append(paragraph)
     for element in list(root.iter(_tag("ins"), _tag("moveTo"))):
         if element.getparent() is None:
             continue
-        if _is_paragraph_mark_revision(element):
-            paragraph = _paragraph_for_mark(element)
-            if paragraph is None:
-                raise RejectRevisionsError(
-                    f"{part_name}: rejecting a tracked paragraph-mark insertion is malformed"
-                )
+        if _is_paragraph_mark(element):
             _remove(element)
-            _merge_with_next_paragraph(paragraph, part_name, RejectRevisionsError)
-            leftover_paragraphs.append(paragraph)
             continue
         parent = element.getparent()
         _remove(element)
