@@ -1,8 +1,9 @@
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 import pytest
 import reviewkit.revision_package as revision_package
+import reviewkit.revisions as revisions_module
 from docx import Document as DocxDocument
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -149,6 +150,172 @@ def test_reject_all_revisions_rejects_doctype(tmp_path: Path) -> None:
         reject_all_revisions(reviewed, tmp_path / "out.docx")
 
     assert not (tmp_path / "out.docx").exists()
+
+
+def test_parse_xml_rejects_utf16_doctype() -> None:
+    xml = (
+        '<?xml version="1.0" encoding="UTF-16"?>'
+        '<!DOCTYPE document [<!ENTITY payload "expanded">]>'
+        "<document>&payload;</document>"
+    ).encode("utf-16")
+
+    with pytest.raises(revision_package.RevisionPackageError, match="DOCTYPE"):
+        revision_package.parse_xml(xml)
+
+
+def test_reject_all_revisions_handles_arbitrary_namespace_prefix(tmp_path: Path) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    reviewed = _reviewed_replacement(source, tmp_path / "reviewed.docx")
+    with ZipFile(reviewed) as archive:
+        document_xml = archive.read("word/document.xml")
+    document_xml = document_xml.replace(b"xmlns:w=", b"xmlns:x=").replace(b"w:", b"x:")
+    _replace_document_xml(reviewed, document_xml)
+
+    restored = reject_all_revisions(reviewed, tmp_path / "out.docx")
+
+    assert inspect_markup(restored).is_clean
+    assert DocxDocument(restored).paragraphs[0].text == "old clause"
+
+
+def test_accept_all_revisions_preserves_existing_output_on_late_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    reviewed = _reviewed_replacement(source, tmp_path / "reviewed.docx")
+    destination = tmp_path / "destination.docx"
+    destination.write_bytes(b"SENTINEL")
+
+    def fail_inspection(_path: Path) -> None:
+        raise RuntimeError("late validation failure")
+
+    monkeypatch.setattr(revisions_module, "inspect_markup", fail_inspection)
+
+    with pytest.raises(RuntimeError, match="late validation failure"):
+        revisions_module.accept_all_revisions(reviewed, destination)
+
+    assert destination.read_bytes() == b"SENTINEL"
+
+
+def test_accept_all_revisions_preserves_in_place_source_on_late_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    reviewed = _reviewed_replacement(source, tmp_path / "reviewed.docx")
+    before = reviewed.read_bytes()
+
+    def fail_inspection(_path: Path) -> None:
+        raise RuntimeError("late validation failure")
+
+    monkeypatch.setattr(revisions_module, "inspect_markup", fail_inspection)
+
+    with pytest.raises(RuntimeError, match="late validation failure"):
+        revisions_module.accept_all_revisions(reviewed, reviewed)
+
+    assert reviewed.read_bytes() == before
+
+
+@pytest.mark.parametrize("change_name", ["cellIns", "cellMerge"])
+def test_accept_all_revisions_fails_closed_on_cell_structure(
+    tmp_path: Path, change_name: str
+) -> None:
+    path = tmp_path / "table.docx"
+    document = DocxDocument()
+    cell = document.add_table(rows=1, cols=1).cell(0, 0)
+    cell.text = "cell"
+    cell._tc.get_or_add_tcPr().append(OxmlElement(f"w:{change_name}"))
+    document.save(path)
+
+    with pytest.raises(revisions_module.AcceptRevisionsError, match=change_name):
+        revisions_module.accept_all_revisions(path, tmp_path / "out.docx")
+
+    assert not (tmp_path / "out.docx").exists()
+
+
+def test_accept_all_revisions_fails_closed_on_unmergeable_paragraph_mark(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "final.docx"
+    document = DocxDocument()
+    paragraph = document.add_paragraph("Final paragraph")
+    properties = paragraph._p.get_or_add_pPr()
+    run_properties = OxmlElement("w:rPr")
+    run_properties.append(OxmlElement("w:del"))
+    properties.append(run_properties)
+    document.save(path)
+
+    with pytest.raises(revisions_module.AcceptRevisionsError, match="no following"):
+        revisions_module.accept_all_revisions(path, tmp_path / "out.docx")
+
+    assert not (tmp_path / "out.docx").exists()
+
+
+def test_reject_all_revisions_fails_closed_on_unmergeable_paragraph_mark(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "final.docx"
+    document = DocxDocument()
+    paragraph = document.add_paragraph("Final paragraph")
+    properties = paragraph._p.get_or_add_pPr()
+    run_properties = OxmlElement("w:rPr")
+    run_properties.append(OxmlElement("w:ins"))
+    properties.append(run_properties)
+    document.save(path)
+
+    with pytest.raises(RejectRevisionsError, match="no following"):
+        reject_all_revisions(path, tmp_path / "out.docx")
+
+    assert not (tmp_path / "out.docx").exists()
+
+
+@pytest.mark.parametrize("operation_name", ["accept", "reject"])
+def test_revision_operations_reject_duplicate_package_members(
+    tmp_path: Path, operation_name: str
+) -> None:
+    source = tmp_path / "duplicate.docx"
+    document_xml = (
+        b'<w:document xmlns:w="http://schemas.openxmlformats.org/'
+        b'wordprocessingml/2006/main"><w:body/></w:document>'
+    )
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        with ZipFile(source, "w") as archive:
+            archive.writestr("word/document.xml", document_xml)
+            archive.writestr("word/document.xml", document_xml)
+    destination = tmp_path / "out.docx"
+    operation = (
+        revisions_module.accept_all_revisions
+        if operation_name == "accept"
+        else reject_all_revisions
+    )
+    error_type = (
+        revisions_module.AcceptRevisionsError
+        if operation_name == "accept"
+        else RejectRevisionsError
+    )
+
+    with pytest.raises(error_type, match="duplicate"):
+        operation(source, destination)
+
+    assert not destination.exists()
+
+
+@pytest.mark.parametrize("operation_name", ["accept", "reject"])
+def test_revision_operations_leave_no_output_for_non_docx_package(
+    tmp_path: Path, operation_name: str
+) -> None:
+    source = tmp_path / "not-docx.docx"
+    with ZipFile(source, "w") as archive:
+        archive.writestr("word/styles.xml", b"<styles/>")
+    destination = tmp_path / "out.docx"
+    operation = (
+        revisions_module.accept_all_revisions
+        if operation_name == "accept"
+        else reject_all_revisions
+    )
+
+    with pytest.raises(BadZipFile):
+        operation(source, destination)
+
+    assert not destination.exists()
 
 
 def test_reject_all_revisions_removes_inserted_content_control_paragraph(

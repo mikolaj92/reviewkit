@@ -1,16 +1,36 @@
 from __future__ import annotations
 
-import re
+from collections.abc import Callable
 from pathlib import Path
-from zipfile import ZipFile, ZipInfo
+from tempfile import NamedTemporaryFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 from lxml import etree
+
+from reviewkit.docx_package import _deterministic_zipinfo
 
 _COMMENT_PART_PREFIXES = ("word/comments", "word/people.xml")
 _RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
-COMMENT_ANCHOR_RE = re.compile(rb"<w:comment(Reference|RangeStart|RangeEnd)(?=[\s>/])")
 _XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+REVISION_NAMES = (
+    "ins",
+    "del",
+    "moveFrom",
+    "moveTo",
+    "rPrChange",
+    "pPrChange",
+    "sectPrChange",
+    "tblPrChange",
+    "trPrChange",
+    "tcPrChange",
+    "cellIns",
+    "cellDel",
+    "cellMerge",
+    "tblGridChange",
+    "tblPrExChange",
+    "numberingChange",
+)
 MAX_PACKAGE_ENTRIES = 4096
 MAX_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
@@ -28,6 +48,9 @@ def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
             raise RevisionPackageError(
                 f"DOCX has {len(infos)} entries; limit is {MAX_PACKAGE_ENTRIES}"
             )
+        names = [info.filename for info in infos]
+        if len(names) != len(set(names)):
+            raise RevisionPackageError("DOCX contains duplicate package member names")
         total = sum(info.file_size for info in infos)
         if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
             raise RevisionPackageError(
@@ -43,14 +66,30 @@ def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
                 raise RevisionPackageError(
                     f"DOCX entry {info.filename} compression ratio exceeds limit"
                 )
-        return [(info, archive.read(info.filename)) for info in infos]
+        return [(info, archive.read(info)) for info in infos]
 
 
 def parse_xml(data: bytes) -> etree._Element:
-    if b"<!DOCTYPE" in data:
-        raise RevisionPackageError("DOCX XML must not contain a DOCTYPE declaration")
     parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
-    return etree.fromstring(data, parser=parser)
+    root = etree.fromstring(data, parser=parser)
+    if root.getroottree().docinfo.doctype:
+        raise RevisionPackageError("DOCX XML must not contain a DOCTYPE declaration")
+    return root
+
+
+def revision_kinds(root: etree._Element, word_namespace: str) -> set[str]:
+    return {
+        name
+        for name in REVISION_NAMES
+        if next(root.iter(f"{{{word_namespace}}}{name}"), None) is not None
+    }
+
+
+def has_comment_anchors(root: etree._Element, word_namespace: str) -> bool:
+    return any(
+        next(root.iter(f"{{{word_namespace}}}{name}"), None) is not None
+        for name in ("commentReference", "commentRangeStart", "commentRangeEnd")
+    )
 
 
 def serialize(root: etree._Element) -> bytes:
@@ -59,6 +98,25 @@ def serialize(root: etree._Element) -> bytes:
 
 def is_comment_part(name: str) -> bool:
     return name.startswith(_COMMENT_PART_PREFIXES)
+
+
+def write_package_atomically(
+    destination: Path,
+    entries: list[tuple[ZipInfo, bytes]],
+    validate: Callable[[Path], None],
+) -> None:
+    with NamedTemporaryFile(
+        dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        with ZipFile(temporary, "w", ZIP_DEFLATED) as output:
+            for info, data in entries:
+                output.writestr(_deterministic_zipinfo(info), data)
+        validate(temporary)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def strip_comment_anchors(root: etree._Element, word_namespace: str) -> None:

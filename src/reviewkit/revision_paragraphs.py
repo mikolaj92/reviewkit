@@ -42,6 +42,11 @@ def remove_paragraph_block(paragraph: etree._Element, word_namespace: str) -> bo
     return True
 
 
+def is_content_control_paragraph(mark: etree._Element, word_namespace: str) -> bool:
+    paragraph = paragraph_for_mark(mark, word_namespace)
+    return paragraph is not None and _paragraph_block(paragraph, word_namespace) is not paragraph
+
+
 def _paragraph_block(paragraph: etree._Element, word_namespace: str) -> etree._Element:
     content = paragraph.getparent()
     control = content.getparent() if content is not None else None

@@ -10,50 +10,18 @@ stays with the caller.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
-from zipfile import BadZipFile, ZipFile
+from zipfile import BadZipFile
 
 from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
+from reviewkit.revision_package import parse_xml, read_package_entries, revision_kinds
 
-# Full tracked-change / move / format / table-structure revision grammar Word can
-# emit under Track Changes (ISO/IEC 29500 §17.13): edits (w:ins/w:del), moves
-# (w:moveFrom/w:moveTo), the property-change wrappers (w:*PrChange), the table
-# revision marks (w:cellIns/w:cellDel/w:cellMerge/w:tblGridChange/w:tblPrExChange)
-# and paragraph-numbering revisions (w:numberingChange). The trailing lookahead pins
-# each element name to a delimiter so lookalikes never match:
-# <w:insideH>/<w:insideV> (table borders) are
-# not <w:ins>, <w:tblPrEx> (table property exceptions) is not <w:tblPrExChange>,
-# and the ubiquitous <w:sectPr>/<w:pPr>/<w:rPr>/<w:tcPr>/<w:trPr>/<w:tblPr>
-# property wrappers are not their *Change revisions -- so a clean document, which
-# is full of those wrappers, never trips the detector.
-#
-# The ``w:`` prefix is hard-coded: every mainstream producer (Word, python-docx,
-# LibreOffice, Google Docs export, the Open XML SDK) binds the WordprocessingML
-# namespace to ``w:`` in the parts scanned here, so pinning the prefix keeps the
-# grammar simple without missing real-world markup. A byte scan cannot resolve
-# namespace URIs anyway, and matching an arbitrary ``<*:ins>`` prefix would risk
-# false positives from unrelated namespaces that reuse these local names.
-_REVISION_TAG_RE = re.compile(
-    rb"<w:(ins|del|moveFrom|moveTo|rPrChange|pPrChange|sectPrChange|"
-    rb"tblPrChange|trPrChange|tcPrChange|cellIns|cellDel|cellMerge|"
-    rb"tblGridChange|tblPrExChange|numberingChange)(?=[\s>/])"
-)
-
-# Every revision element above appears ONLY in revised content, so there is no
-# need for a part allowlist: scan each ``.xml`` part under ``word/`` and revisions
-# living in a header, footer, footnote, endnote or the glossary document surface
-# too. The grammar cannot false-positive on the ``w:trackChanges`` *setting* in
-# settings.xml, nor on the ``w:*Pr`` property wrappers in styles.xml.
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
 
-# A populated comment element in word/comments.xml. The lookahead keeps
-# <w:commentReference>/<w:commentRangeStart>/<w:commentRangeEnd> (which live in
-# document.xml, not the comments part) from ever being counted as comments.
-_COMMENT_TAG_RE = re.compile(rb"<w:comment(?=[\s>/])")
 _COMMENTS_PART = "word/comments.xml"
+_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 # The literal ``[SUGGESTION`` text marker reviewkit's own ``suggest`` insertions
 # emit (see :mod:`reviewkit.insertions`). It is written verbatim as run text, so
@@ -114,28 +82,29 @@ def inspect_markup(path: str | Path) -> MarkupReport:
     policy decides how to treat that.
     """
     revision_parts: list[str] = []
-    revision_kinds: set[str] = set()
+    found_revision_kinds: set[str] = set()
     suggestion_parts: list[str] = []
     comment_count = 0
-    with ZipFile(path) as bundle:
-        names = bundle.namelist()
-        if _DOCUMENT_PART not in names:
-            raise BadZipFile(f"not a DOCX package: missing {_DOCUMENT_PART} in {path}")
-        for name in names:
-            if not (name.startswith(_CONTENT_PART_PREFIX) and name.endswith(_CONTENT_PART_SUFFIX)):
-                continue
-            data = bundle.read(name)
-            found = _REVISION_TAG_RE.findall(data)
-            if found:
-                revision_parts.append(name)
-                revision_kinds.update(kind.decode("ascii") for kind in found)
-            if _SUGGESTION_MARKER_BYTES in data:
-                suggestion_parts.append(name)
-        if _COMMENTS_PART in names:
-            comment_count = len(_COMMENT_TAG_RE.findall(bundle.read(_COMMENTS_PART)))
+    entries = read_package_entries(Path(path))
+    names = {info.filename for info, _data in entries}
+    if _DOCUMENT_PART not in names:
+        raise BadZipFile(f"not a DOCX package: missing {_DOCUMENT_PART} in {path}")
+    for info, data in entries:
+        name = info.filename
+        if not (name.startswith(_CONTENT_PART_PREFIX) and name.endswith(_CONTENT_PART_SUFFIX)):
+            continue
+        root = parse_xml(data)
+        found = revision_kinds(root, _W)
+        if found:
+            revision_parts.append(name)
+            found_revision_kinds.update(found)
+        if _SUGGESTION_MARKER_BYTES in data:
+            suggestion_parts.append(name)
+        if name == _COMMENTS_PART:
+            comment_count = sum(1 for _element in root.iter(f"{{{_W}}}comment"))
     return MarkupReport(
         revision_parts=tuple(sorted(revision_parts)),
-        revision_kinds=tuple(sorted(revision_kinds)),
+        revision_kinds=tuple(sorted(found_revision_kinds)),
         comment_count=comment_count,
         suggestion_parts=tuple(sorted(suggestion_parts)),
     )

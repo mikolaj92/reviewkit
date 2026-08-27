@@ -58,8 +58,7 @@ def test_clean_document_has_no_markup(tmp_path: Path) -> None:
         tmp_path,
         {
             "word/document.xml": _document_xml(
-                b"<w:p><w:pPr><w:sectPr/></w:pPr>"
-                b"<w:r><w:rPr/><w:t>Ala ma kota.</w:t></w:r></w:p>"
+                b"<w:p><w:pPr><w:sectPr/></w:pPr><w:r><w:rPr/><w:t>Ala ma kota.</w:t></w:r></w:p>"
             ),
             "word/styles.xml": _XML_HEAD + b"<w:styles " + _W_NS + b"><w:pPr/><w:rPr/></w:styles>",
         },
@@ -87,9 +86,22 @@ def test_tracked_change_ins_del_detected(tmp_path: Path, kind: str) -> None:
     assert has_tracked_revisions(path) is True
 
 
+def test_tracked_change_with_arbitrary_namespace_prefix_is_detected(tmp_path: Path) -> None:
+    xml = _document_xml(b'<w:ins w:id="1"><w:r><w:t>x</w:t></w:r></w:ins>')
+    xml = xml.replace(b"xmlns:w=", b"xmlns:x=").replace(b"w:", b"x:")
+    path = _docx(tmp_path, {"word/document.xml": xml})
+
+    report = inspect_markup(path)
+
+    assert report.has_tracked_revisions
+    assert report.revision_kinds == ("ins",)
+
+
 @pytest.mark.parametrize("element", _NON_INS_DEL_REVISIONS)
 def test_move_format_table_revisions_detected(tmp_path: Path, element: str) -> None:
-    path = _docx(tmp_path, {"word/document.xml": _document_xml(f'<w:{element} w:id="7"/>'.encode())})
+    path = _docx(
+        tmp_path, {"word/document.xml": _document_xml(f'<w:{element} w:id="7"/>'.encode())}
+    )
     report = inspect_markup(path)
     assert report.has_tracked_revisions, element
     assert element in report.revision_kinds
@@ -263,7 +275,9 @@ def test_suggestion_parts_are_sorted(tmp_path: Path) -> None:
     path = _docx(
         tmp_path,
         {
-            "word/footnotes.xml": _document_xml(b"<w:p><w:r><w:t>[SUGGESTION: b]</w:t></w:r></w:p>"),
+            "word/footnotes.xml": _document_xml(
+                b"<w:p><w:r><w:t>[SUGGESTION: b]</w:t></w:r></w:p>"
+            ),
             "word/document.xml": _document_xml(b"<w:p><w:r><w:t>[SUGGESTION: a]</w:t></w:r></w:p>"),
         },
     )

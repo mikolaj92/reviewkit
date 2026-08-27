@@ -4,28 +4,29 @@ from __future__ import annotations
 
 from copy import deepcopy
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+from zipfile import ZipInfo
 
 from lxml import etree
 
-from reviewkit.docx_package import _deterministic_zipinfo
-from reviewkit.markup_purity import _REVISION_TAG_RE, inspect_markup
+from reviewkit.markup_purity import inspect_markup
 from reviewkit.revision_paragraphs import (
+    is_content_control_paragraph,
     merge_paragraph_into_next,
     paragraph_for_mark,
     remove_paragraph_block,
 )
 from reviewkit.revision_package import (
-    COMMENT_ANCHOR_RE,
     RevisionPackageError,
+    has_comment_anchors,
     is_comment_part,
     parse_xml,
     read_package_entries,
+    revision_kinds,
     serialize,
     strip_comment_anchors,
     strip_comment_content_types,
     strip_comment_relationships,
+    write_package_atomically,
 )
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -138,7 +139,12 @@ def _reject_inserted_paragraph_mark(
         raise RejectRevisionsError(f"{part_name}: malformed paragraph-mark insertion")
     if _paragraph_has_original_content(paragraph):
         if not merge_paragraph_into_next(mark, _W):
-            _remove(mark)
+            if is_content_control_paragraph(mark, _W):
+                _remove(mark)
+            else:
+                raise RejectRevisionsError(
+                    f"{part_name}: tracked paragraph-mark insertion has no following paragraph"
+                )
         return
 
     unexpected = [
@@ -211,12 +217,12 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
     if drop_comments and name == "[Content_Types].xml":
         return strip_comment_content_types(data)
 
-    needs_revisions = bool(_REVISION_TAG_RE.search(data))
-    needs_comment_strip = drop_comments and bool(COMMENT_ANCHOR_RE.search(data))
+    root = parse_xml(data)
+    needs_revisions = bool(revision_kinds(root, _W))
+    needs_comment_strip = drop_comments and has_comment_anchors(root, _W)
     if not (needs_revisions or needs_comment_strip):
         return data
 
-    root = parse_xml(data)
     if needs_revisions:
         _reject_revisions_in_tree(root, name, drop_comments=drop_comments)
     if needs_comment_strip:
@@ -255,22 +261,13 @@ def reject_all_revisions(
     except RevisionPackageError as exc:
         raise RejectRevisionsError(str(exc)) from exc
 
-    with NamedTemporaryFile(
-        dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False
-    ) as handle:
-        temporary = Path(handle.name)
-    try:
-        with ZipFile(temporary, "w", ZIP_DEFLATED) as output:
-            for info, data in transformed:
-                output.writestr(_deterministic_zipinfo(info), data)
-
-        report = inspect_markup(temporary)
+    def validate(path: Path) -> None:
+        report = inspect_markup(path)
         if report.has_tracked_revisions or (drop_comments and report.has_comments):
             raise RejectRevisionsError(
                 f"reject_all_revisions left markup in {destination}: "
                 f"revision parts={report.revision_parts}, comments={report.comment_count}"
             )
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
+
+    write_package_atomically(destination, transformed, validate)
     return destination

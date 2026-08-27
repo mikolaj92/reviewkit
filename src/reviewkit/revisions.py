@@ -18,21 +18,23 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from zipfile import ZIP_DEFLATED, ZipFile
-
-from reviewkit.docx_package import _deterministic_zipinfo
-from reviewkit.markup_purity import _REVISION_TAG_RE, inspect_markup
-from reviewkit.revision_paragraphs import merge_paragraph_into_next
+from reviewkit.markup_purity import inspect_markup
+from reviewkit.revision_paragraphs import (
+    is_content_control_paragraph,
+    merge_paragraph_into_next,
+)
 from reviewkit.revision_package import (
-    COMMENT_ANCHOR_RE,
     RevisionPackageError,
+    has_comment_anchors,
     is_comment_part,
     parse_xml,
     read_package_entries,
+    revision_kinds,
     serialize,
     strip_comment_anchors,
     strip_comment_content_types,
     strip_comment_relationships,
+    write_package_atomically,
 )
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -44,8 +46,8 @@ _CONTENT_PART_SUFFIX = ".xml"
 class AcceptRevisionsError(RuntimeError):
     """A reviewed document carries markup that cannot be accepted losslessly.
 
-    Raised for the structural merges dike never emits (paragraph-mark or table-cell
-    deletions) and as a fail-closed guard if the flattened output still carries markup.
+    Raised when a structural revision cannot be flattened without guessing and when
+    the flattened output still carries review markup.
     """
 
 
@@ -109,15 +111,18 @@ def _is_paragraph_mark(element: Any) -> bool:
 def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
     # Refuse the structural merges we do not implement before touching anything, so a
     # failure leaves no half-transformed tree.
-    for element in root.iter(_tag("cellDel")):
-        raise AcceptRevisionsError(
-            f"{part_name}: accepting a tracked cell deletion would remove a table cell; "
-            "unsupported (dike never emits table-structure revisions)."
-        )
+    for name in ("cellDel", "cellIns", "cellMerge"):
+        if next(root.iter(_tag(name)), None) is not None:
+            raise AcceptRevisionsError(f"{part_name}: accepting {name} is unsupported")
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
         if _is_paragraph_mark(element) and element.getparent() is not None:
             if not merge_paragraph_into_next(element, _W):
-                _remove(element)
+                if is_content_control_paragraph(element, _W):
+                    _remove(element)
+                else:
+                    raise AcceptRevisionsError(
+                        f"{part_name}: tracked paragraph-mark deletion has no following paragraph"
+                    )
 
     # Deletions: the deleted content disappears when accepted.
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
@@ -158,12 +163,12 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
     if drop_comments and name == "[Content_Types].xml":
         return strip_comment_content_types(data)
 
-    needs_revisions = bool(_REVISION_TAG_RE.search(data))
-    needs_comment_strip = drop_comments and bool(COMMENT_ANCHOR_RE.search(data))
+    root = parse_xml(data)
+    needs_revisions = bool(revision_kinds(root, _W))
+    needs_comment_strip = drop_comments and has_comment_anchors(root, _W)
     if not (needs_revisions or needs_comment_strip):
         return data  # nothing to accept in this part; copy it through verbatim
 
-    root = parse_xml(data)
     if needs_revisions:
         _accept_revisions_in_tree(root, name)
     if needs_comment_strip:
@@ -224,20 +229,15 @@ def accept_all_revisions(
             data = _transform_part(info.filename, data, drop_comments=drop_comments)
         transformed.append((info, data))
 
-    with ZipFile(destination, "w", ZIP_DEFLATED) as out:
-        for info, data in transformed:
-            # Preserve filename and per-part compression, but pin the entry timestamp: the
-            # reviewed input carries the wall-clock mtime from whenever it was rendered, and
-            # copying it through would make an otherwise-identical clean copy differ byte-for-
-            # byte on every run.
-            out.writestr(_deterministic_zipinfo(info), data)
+    def validate(path: Path) -> None:
+        report = inspect_markup(path)
+        if report.has_tracked_revisions or (drop_comments and report.has_comments):
+            raise AcceptRevisionsError(
+                f"accept_all_revisions left markup in {destination}: "
+                f"revision parts={report.revision_parts}, comments={report.comment_count}"
+            )
 
-    report = inspect_markup(destination)
-    if report.has_tracked_revisions or (drop_comments and report.has_comments):
-        raise AcceptRevisionsError(
-            f"accept_all_revisions left markup in {destination}: "
-            f"revision parts={report.revision_parts}, comments={report.comment_count}"
-        )
+    write_package_atomically(destination, transformed, validate)
     return destination
 
 
