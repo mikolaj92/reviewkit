@@ -230,7 +230,7 @@ def test_revision_operations_fail_closed_on_strict_wordprocessingml(
     )
     output = tmp_path / f"{operation.__name__}.docx"
 
-    with pytest.raises(error_type, match="strict WordprocessingML"):
+    with pytest.raises(error_type, match="WordprocessingML review markup"):
         operation(path, output)
 
     assert not output.exists()
@@ -325,6 +325,34 @@ def test_revision_operations_fail_closed_on_malformed_custom_xml_ranges(
     output = tmp_path / f"{operation.__name__}.docx"
 
     with pytest.raises(error_type, match="customXmlInsRangeStart is malformed"):
+        operation(path, output)
+
+    assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        (reject_all_revisions, RejectRevisionsError),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+    ],
+)
+@pytest.mark.parametrize("kind", ["conflictIns", "conflictDel"])
+def test_revision_operations_fail_closed_on_office_conflict_revisions(
+    tmp_path: Path,
+    operation,
+    error_type: type[Exception],
+    kind: str,
+) -> None:
+    path = tmp_path / "conflict.docx"
+    document = DocxDocument()
+    paragraph = document.add_paragraph("Clause")
+    paragraph._p.append(OxmlElement(f"w14:{kind}"))
+    document.save(path)
+    output = tmp_path / f"{operation.__name__}.docx"
+
+    assert inspect_markup(path).has_tracked_revisions
+    with pytest.raises(error_type, match="non-transitional WordprocessingML"):
         operation(path, output)
 
     assert not output.exists()

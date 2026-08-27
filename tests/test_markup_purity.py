@@ -16,6 +16,7 @@ from reviewkit.insertions import format_suggestion_text
 _XML_HEAD = b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
 _W_NS = b'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
 _STRICT_W_NS = b'xmlns:w="http://purl.oclc.org/ooxml/wordprocessingml/main"'
+_W14_NS = b'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
 
 # The complete non-insertion/deletion revision set in the canonical OOXML grammar.
 _NON_INS_DEL_REVISIONS = [
@@ -119,6 +120,18 @@ def test_tracked_change_in_strict_wordprocessingml_is_detected(tmp_path: Path) -
 
     assert report.has_tracked_revisions
     assert report.revision_kinds == ("ins",)
+
+
+@pytest.mark.parametrize("kind", ["conflictIns", "conflictDel"])
+def test_office_2010_conflict_revision_is_detected(tmp_path: Path, kind: str) -> None:
+    xml = _document_xml(f'<w14:{kind} w14:id="1"/>'.encode())
+    xml = xml.replace(_W_NS, _W_NS + b" " + _W14_NS)
+    path = _docx(tmp_path, {"word/document.xml": xml})
+
+    report = inspect_markup(path)
+
+    assert report.has_tracked_revisions
+    assert report.revision_kinds == (kind,)
 
 
 @pytest.mark.parametrize("element", _NON_INS_DEL_REVISIONS)

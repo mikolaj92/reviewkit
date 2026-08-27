@@ -23,7 +23,8 @@ _CONTENT_PART_SUFFIX = ".xml"
 _COMMENTS_PART = "word/comments.xml"
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _STRICT_W = "http://purl.oclc.org/ooxml/wordprocessingml/main"
-_WORD_NAMESPACES = (_W, _STRICT_W)
+_W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
+_WORD_NAMESPACES = (_W, _STRICT_W, _W14)
 
 # The literal ``[SUGGESTION`` text marker reviewkit's own ``suggest`` insertions
 # emit (see :mod:`reviewkit.insertions`). It is written verbatim as run text, so

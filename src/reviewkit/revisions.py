@@ -50,6 +50,7 @@ __all__ = [
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 _STRICT_W = "http://purl.oclc.org/ooxml/wordprocessingml/main"
+_W14 = "http://schemas.microsoft.com/office/word/2010/wordml"
 
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
@@ -180,10 +181,11 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
 
     root = parse_xml(data)
     strict_revisions = revision_kinds(root, _STRICT_W)
+    office_revisions = revision_kinds(root, _W14)
     strict_comment_anchors = drop_comments and has_comment_anchors(root, _STRICT_W)
-    if strict_revisions or strict_comment_anchors:
+    if strict_revisions or office_revisions or strict_comment_anchors:
         raise AcceptRevisionsError(
-            f"{name}: strict WordprocessingML review markup is unsupported"
+            f"{name}: non-transitional WordprocessingML review markup is unsupported"
         )
     needs_revisions = bool(revision_kinds(root, _W))
     needs_comment_strip = drop_comments and has_comment_anchors(root, _W)

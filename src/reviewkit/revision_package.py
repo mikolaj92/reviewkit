@@ -42,6 +42,8 @@ REVISION_NAMES = (
     "customXmlMoveFromRangeEnd",
     "customXmlMoveToRangeStart",
     "customXmlMoveToRangeEnd",
+    "conflictIns",
+    "conflictDel",
 )
 MAX_PACKAGE_ENTRIES = 4096
 MAX_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
