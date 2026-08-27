@@ -9,15 +9,13 @@ the reviewed document and honours whatever a human accepted, rejected or edited 
 
 The transform runs over raw package XML (zipfile + lxml) rather than python-docx so
 paragraph-mark insertions, moves and format-change records -- none of which python-docx
-models -- are handled faithfully. Structural merges that dike never emits (accepting a
-*paragraph-mark deletion*, which joins two paragraphs, or a *cell deletion*, which
-removes a table cell) are refused fail-closed rather than approximated, so a surprising
-input can never silently corrupt the clean copy.
+models -- are handled faithfully. Paragraph-mark deletions join the affected paragraphs.
+Table-cell deletions remain unsupported and fail closed rather than being approximated,
+so a surprising input can never silently corrupt the clean copy.
 """
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -26,20 +24,19 @@ from lxml import etree
 
 from reviewkit.docx_package import _deterministic_zipinfo
 from reviewkit.markup_purity import _REVISION_TAG_RE, inspect_markup
+from reviewkit.revision_package import (
+    COMMENT_ANCHOR_RE,
+    is_comment_part,
+    serialize,
+    strip_comment_anchors,
+    strip_comment_content_types,
+    strip_comment_relationships,
+)
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
-_COMMENT_PART_PREFIXES = ("word/comments", "word/people.xml")
-_RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
-_CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
-# The in-document comment anchors (they live in document.xml / headers / footers, not
-# in comments.xml). ``inspect_markup`` counts comments only in comments.xml, but a
-# clean copy must not leave dangling anchors pointing at an emptied comments part.
-_COMMENT_ANCHOR_RE = re.compile(rb"<w:comment(Reference|RangeStart|RangeEnd)(?=[\s>/])")
-
-_XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
 
 
 class AcceptRevisionsError(RuntimeError):
@@ -95,7 +92,40 @@ def _is_paragraph_mark(element: Any) -> bool:
     # A run-property revision (paragraph glyph mark or run-property change) lives inside
     # a ``w:rPr``; a content revision wraps runs directly under a block element.
     parent = element.getparent()
-    return parent is not None and parent.tag == _tag("rPr")
+    properties = parent.getparent() if parent is not None else None
+    paragraph = properties.getparent() if properties is not None else None
+    return (
+        parent is not None
+        and parent.tag == _tag("rPr")
+        and properties is not None
+        and properties.tag == _tag("pPr")
+        and paragraph is not None
+        and paragraph.tag == _tag("p")
+    )
+
+
+def _merge_paragraph_into_next(mark: Any, part_name: str) -> None:
+    run_properties = mark.getparent()
+    paragraph_properties = run_properties.getparent() if run_properties is not None else None
+    paragraph = paragraph_properties.getparent() if paragraph_properties is not None else None
+    next_paragraph = paragraph.getnext() if paragraph is not None else None
+    if (
+        paragraph is None
+        or paragraph.tag != _tag("p")
+        or next_paragraph is None
+        or next_paragraph.tag != _tag("p")
+    ):
+        raise AcceptRevisionsError(
+            f"{part_name}: tracked paragraph-mark deletion has no following paragraph"
+        )
+    insert_at = 1 if len(next_paragraph) and next_paragraph[0].tag == _tag("pPr") else 0
+    for child in [node for node in paragraph if node.tag != _tag("pPr")]:
+        next_paragraph.insert(insert_at, child)
+        insert_at += 1
+    parent = paragraph.getparent()
+    if parent is None:
+        raise AcceptRevisionsError(f"{part_name}: tracked paragraph has no parent")
+    parent.remove(paragraph)
 
 
 def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
@@ -106,12 +136,9 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
             f"{part_name}: accepting a tracked cell deletion would remove a table cell; "
             "unsupported (dike never emits table-structure revisions)."
         )
-    for element in root.iter(_tag("del"), _tag("moveFrom")):
-        if _is_paragraph_mark(element):
-            raise AcceptRevisionsError(
-                f"{part_name}: accepting a tracked paragraph-mark deletion would merge two "
-                "paragraphs; unsupported (dike never deletes a paragraph mark)."
-            )
+    for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
+        if _is_paragraph_mark(element) and element.getparent() is not None:
+            _merge_paragraph_into_next(element, part_name)
 
     # Deletions: the deleted content disappears when accepted.
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
@@ -146,61 +173,14 @@ def _accept_revisions_in_tree(root: Any, part_name: str) -> None:
             _remove(element)
 
 
-def _strip_comment_anchors(root: Any) -> None:
-    for element in list(root.iter(_tag("commentRangeStart"), _tag("commentRangeEnd"))):
-        _remove(element)
-    for element in list(root.iter(_tag("commentReference"))):
-        run = element.getparent()
-        # Word wraps each reference in its own run; drop the whole run so no empty run
-        # is left behind, falling back to the bare reference if the shape is unusual.
-        _remove(run if run is not None and run.tag == _tag("r") else element)
-
-
-def _serialize(root: Any) -> bytes:
-    return (_XML_DECLARATION + etree.tostring(root, encoding="unicode")).encode("utf-8")
-
-
-def _is_comment_part(name: str) -> bool:
-    return name.startswith(_COMMENT_PART_PREFIXES)
-
-
-def _strip_comment_relationships(data: bytes) -> bytes:
-    root = etree.fromstring(data)
-    changed = False
-    for relationship in list(root):
-        if relationship.tag != f"{{{_RELATIONSHIPS_NS}}}Relationship":
-            continue
-        target = relationship.get("Target", "").removeprefix("/")
-        relationship_type = relationship.get("Type", "")
-        if "comment" in relationship_type.lower() or target.startswith(
-            ("comments", "word/comments", "people.xml", "word/people.xml")
-        ):
-            root.remove(relationship)
-            changed = True
-    return _serialize(root) if changed else data
-
-
-def _strip_comment_content_types(data: bytes) -> bytes:
-    root = etree.fromstring(data)
-    changed = False
-    for override in list(root):
-        if override.tag != f"{{{_CONTENT_TYPES_NS}}}Override":
-            continue
-        part_name = override.get("PartName", "").removeprefix("/")
-        if _is_comment_part(part_name):
-            root.remove(override)
-            changed = True
-    return _serialize(root) if changed else data
-
-
 def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
     if drop_comments and name.endswith(".rels"):
-        return _strip_comment_relationships(data)
+        return strip_comment_relationships(data)
     if drop_comments and name == "[Content_Types].xml":
-        return _strip_comment_content_types(data)
+        return strip_comment_content_types(data)
 
     needs_revisions = bool(_REVISION_TAG_RE.search(data))
-    needs_comment_strip = drop_comments and bool(_COMMENT_ANCHOR_RE.search(data))
+    needs_comment_strip = drop_comments and bool(COMMENT_ANCHOR_RE.search(data))
     if not (needs_revisions or needs_comment_strip):
         return data  # nothing to accept in this part; copy it through verbatim
 
@@ -208,8 +188,8 @@ def _transform_part(name: str, data: bytes, *, drop_comments: bool) -> bytes:
     if needs_revisions:
         _accept_revisions_in_tree(root, name)
     if needs_comment_strip:
-        _strip_comment_anchors(root)
-    return _serialize(root)
+        strip_comment_anchors(root, _W)
+    return serialize(root)
 
 
 def accept_all_revisions(
@@ -228,10 +208,9 @@ def accept_all_revisions(
     or a plan, so whatever a human accepted, rejected or edited in the reviewed copy is
     honoured exactly.
 
-    Structural merges dike never emits are refused fail-closed via
-    :class:`AcceptRevisionsError`: accepting a paragraph-mark deletion (which merges two
-    paragraphs) or a table-cell deletion. As a post-condition the output is inspected
-    with :func:`reviewkit.markup_purity.inspect_markup`; if any revision markup (or, when
+    Table-cell deletion is refused fail-closed via :class:`AcceptRevisionsError`. As a
+    post-condition the output is inspected with
+    :func:`reviewkit.markup_purity.inspect_markup`; if any revision markup (or, when
     ``drop_comments``, any comment) survived, the call raises rather than emitting a
     document that still carries markup.
 
@@ -247,18 +226,20 @@ def accept_all_revisions(
         entries = [(info, bundle.read(info.filename)) for info in bundle.infolist()]
 
     if drop_comments:
-        entries = [
-            (info, data) for info, data in entries if not _is_comment_part(info.filename)
-        ]
+        entries = [(info, data) for info, data in entries if not is_comment_part(info.filename)]
 
     # Transform every part BEFORE opening the output: a fail-closed raise then leaves no
     # half-written .docx behind.
     transformed: list[tuple[Any, bytes]] = []
     for info, data in entries:
         if (
-            info.filename.startswith(_CONTENT_PART_PREFIX)
-            and info.filename.endswith(_CONTENT_PART_SUFFIX)
-        ) or info.filename.endswith(".rels") or info.filename == "[Content_Types].xml":
+            (
+                info.filename.startswith(_CONTENT_PART_PREFIX)
+                and info.filename.endswith(_CONTENT_PART_SUFFIX)
+            )
+            or info.filename.endswith(".rels")
+            or info.filename == "[Content_Types].xml"
+        ):
             data = _transform_part(info.filename, data, drop_comments=drop_comments)
         transformed.append((info, data))
 

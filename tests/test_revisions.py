@@ -3,6 +3,7 @@ from xml.etree import ElementTree
 from zipfile import ZipFile
 
 import pytest
+import reviewkit
 from docx import Document as DocxDocument
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -95,6 +96,47 @@ def test_accept_all_revisions_drops_deleted_text(tmp_path: Path) -> None:
     assert "beta" not in _body_paragraph_texts(corrected)[0]
 
 
+def test_reject_all_revisions_restores_inline_replacement_and_is_clean(tmp_path: Path) -> None:
+    source = _saved_docx(tmp_path, "input.docx", "The quick brown fox jumps.")
+    document = load_docx(source)
+    paragraph = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id=paragraph.id,
+        original_text="fox",
+        replacement_text="cat",
+        locator=ReviewLocator(node_id=paragraph.id, char_start=16, char_end=19),
+        status=ActionStatus.APPLIED,
+    )
+    reviewed = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+
+    restored = reviewkit.reject_all_revisions(reviewed, tmp_path / "restored.docx")
+
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == ["The quick brown fox jumps."]
+
+
+def test_reject_all_revisions_restores_original_run_properties(tmp_path: Path) -> None:
+    path = tmp_path / "formatted.docx"
+    docx = DocxDocument()
+    run = docx.add_paragraph().add_run("Clause")
+    run.bold = True
+    run_properties = run._r.get_or_add_rPr()
+    change = OxmlElement("w:rPrChange")
+    original_properties = OxmlElement("w:rPr")
+    original_properties.append(OxmlElement("w:i"))
+    change.append(original_properties)
+    run_properties.append(change)
+    docx.save(path)
+
+    restored = reviewkit.reject_all_revisions(path, tmp_path / "restored.docx")
+
+    restored_run = DocxDocument(restored).paragraphs[0].runs[0]
+    assert restored_run.italic is True
+    assert restored_run.bold is not True
+
+
 def test_accept_all_revisions_clean_copy_is_byte_reproducible(tmp_path: Path) -> None:
     # The clean copy must hash identically for identical input, so downstream attestation /
     # caching stays stable. accept_all_revisions used to copy the reviewed input's per-entry
@@ -129,9 +171,7 @@ def test_accept_all_revisions_keeps_new_paragraph_standalone(tmp_path: Path) -> 
     # End-to-end proof that a stand-alone clause insert becomes a REAL separate
     # paragraph in the clean copy - not glued onto the anchor's text. This is exactly
     # what dike's czystopis relies on when it flattens an auto-applied catalogue clause.
-    source = _saved_docx(
-        tmp_path, "input.docx", "Anchor clause heading.", "Following paragraph."
-    )
+    source = _saved_docx(tmp_path, "input.docx", "Anchor clause heading.", "Following paragraph.")
     document = load_docx(source)
     anchor = document.sections[0].paragraphs[0]
     action = ReviewAction(
@@ -152,6 +192,78 @@ def test_accept_all_revisions_keeps_new_paragraph_standalone(tmp_path: Path) -> 
         "§20a. The inserted clause.",
         "Following paragraph.",
     ]
+
+
+def test_reject_all_revisions_removes_inserted_paragraph_and_mark(tmp_path: Path) -> None:
+    source = _saved_docx(tmp_path, "input.docx", "Anchor clause heading.", "Following paragraph.")
+    document = load_docx(source)
+    anchor = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
+        node_id=anchor.id,
+        replacement_text="§20a. The inserted clause.",
+        new_paragraph=True,
+        status=ActionStatus.APPLIED,
+        apply_to_corrected=True,
+    )
+    reviewed = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+
+    restored = reviewkit.reject_all_revisions(reviewed, tmp_path / "restored.docx")
+
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == [
+        "Anchor clause heading.",
+        "Following paragraph.",
+    ]
+
+
+def test_reject_all_revisions_removes_inserted_final_paragraph(tmp_path: Path) -> None:
+    source = _saved_docx(tmp_path, "input.docx", "Anchor clause heading.")
+    document = load_docx(source)
+    anchor = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
+        node_id=anchor.id,
+        replacement_text="§20a. The inserted final clause.",
+        new_paragraph=True,
+        status=ActionStatus.APPLIED,
+        apply_to_corrected=True,
+    )
+    reviewed = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+
+    restored = reviewkit.reject_all_revisions(reviewed, tmp_path / "restored.docx")
+
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == ["Anchor clause heading."]
+
+
+def test_reject_all_revisions_keeps_deleted_drawing_during_paragraph_merge(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "drawing.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph()
+    properties = paragraph._p.get_or_add_pPr()
+    run_properties = OxmlElement("w:rPr")
+    run_properties.append(OxmlElement("w:ins"))
+    properties.append(run_properties)
+    deleted = OxmlElement("w:del")
+    deleted_run = OxmlElement("w:r")
+    deleted_run.append(OxmlElement("w:drawing"))
+    deleted.append(deleted_run)
+    paragraph._p.append(deleted)
+    docx.add_paragraph("Following paragraph.")
+    docx.save(path)
+
+    restored = reviewkit.reject_all_revisions(path, tmp_path / "restored.docx")
+
+    with ZipFile(restored) as archive:
+        document_xml = archive.read("word/document.xml")
+    assert inspect_markup(restored).is_clean
+    assert document_xml.count(b"<w:drawing") == 1
+    assert _body_paragraph_texts(restored) == ["Following paragraph."]
 
 
 def test_accept_all_revisions_multiline_clause_becomes_multiple_paragraphs(
@@ -239,12 +351,10 @@ def test_accept_all_revisions_keeps_comments_when_asked(tmp_path: Path) -> None:
 # --- fail-closed guards ---------------------------------------------------------------
 
 
-def test_accept_all_revisions_rejects_paragraph_mark_deletion(tmp_path: Path) -> None:
-    # A tracked paragraph-mark deletion (merging two paragraphs) is refused rather than
-    # approximated - dike never emits it, and guessing risks corrupting the clean copy.
+def test_accept_all_revisions_merges_deleted_paragraph_mark(tmp_path: Path) -> None:
     path = tmp_path / "merged.docx"
     docx = DocxDocument()
-    paragraph = docx.add_paragraph("A paragraph whose mark is deleted.")
+    paragraph = docx.add_paragraph("A paragraph whose mark is deleted. ")
     docx.add_paragraph("The next paragraph.")
     properties = paragraph._p.get_or_add_pPr()
     run_properties = OxmlElement("w:rPr")
@@ -256,10 +366,26 @@ def test_accept_all_revisions_rejects_paragraph_mark_deletion(tmp_path: Path) ->
     properties.insert(0, run_properties)
     docx.save(path)
 
-    with pytest.raises(AcceptRevisionsError):
-        accept_all_revisions(path, tmp_path / "out.docx")
-    # Fail-closed leaves no half-written output behind.
-    assert not (tmp_path / "out.docx").exists()
+    corrected = accept_all_revisions(path, tmp_path / "out.docx")
+
+    assert inspect_markup(corrected).is_clean
+    assert _body_paragraph_texts(corrected) == [
+        "A paragraph whose mark is deleted. The next paragraph."
+    ]
+
+
+def test_accept_all_revisions_does_not_merge_run_property_revision(tmp_path: Path) -> None:
+    path = tmp_path / "run-property.docx"
+    docx = DocxDocument()
+    run = docx.add_paragraph().add_run("Standalone paragraph.")
+    run_properties = run._r.get_or_add_rPr()
+    run_properties.append(OxmlElement("w:del"))
+    docx.save(path)
+
+    corrected = accept_all_revisions(path, tmp_path / "out.docx")
+
+    assert inspect_markup(corrected).is_clean
+    assert _body_paragraph_texts(corrected) == ["Standalone paragraph."]
 
 
 def test_accept_all_revisions_rejects_cell_deletion(tmp_path: Path) -> None:

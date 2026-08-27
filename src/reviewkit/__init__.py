@@ -60,6 +60,7 @@ from reviewkit.revisions import (
     accept_all_revisions,
     apply_reviewed_markup,
 )
+from reviewkit.revision_rejection import RejectRevisionsError, reject_all_revisions
 
 __all__ = [
     "ANCHOR_LAST",
@@ -82,6 +83,7 @@ __all__ = [
     "MockLLMClient",
     "ParagraphInserter",
     "RenderIntegrityError",
+    "RejectRevisionsError",
     "SUGGESTION_MARKER_PREFIX",
     "ReviewAction",
     "ReviewActionType",
@@ -116,5 +118,6 @@ __all__ = [
     "parse_body_anchor_index",
     "read_comments",
     "read_footnotes",
+    "reject_all_revisions",
     "review_document",
 ]
