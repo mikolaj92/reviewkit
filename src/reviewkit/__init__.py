@@ -57,13 +57,16 @@ from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 from reviewkit.renderer_docx import RenderIntegrityError
 from reviewkit.revisions import (
     AcceptRevisionsError,
+    RejectRevisionsError,
     accept_all_revisions,
     apply_reviewed_markup,
+    reject_all_revisions,
 )
 
 __all__ = [
     "ANCHOR_LAST",
     "AcceptRevisionsError",
+    "RejectRevisionsError",
     "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
@@ -100,6 +103,7 @@ __all__ = [
     "SignatureBlockStart",
     "accept_all_revisions",
     "apply_reviewed_markup",
+    "reject_all_revisions",
     "canonical_action_dump",
     "comments_for_locator",
     "contains_suggestion_marker",

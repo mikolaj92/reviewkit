@@ -19,8 +19,10 @@ from reviewkit.parser_docx import load_docx
 from reviewkit.renderer_docx import render_reviewed_docx
 from reviewkit.revisions import (
     AcceptRevisionsError,
+    RejectRevisionsError,
     accept_all_revisions,
     apply_reviewed_markup,
+    reject_all_revisions,
 )
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -129,9 +131,7 @@ def test_accept_all_revisions_keeps_new_paragraph_standalone(tmp_path: Path) -> 
     # End-to-end proof that a stand-alone clause insert becomes a REAL separate
     # paragraph in the clean copy - not glued onto the anchor's text. This is exactly
     # what dike's czystopis relies on when it flattens an auto-applied catalogue clause.
-    source = _saved_docx(
-        tmp_path, "input.docx", "Anchor clause heading.", "Following paragraph."
-    )
+    source = _saved_docx(tmp_path, "input.docx", "Anchor clause heading.", "Following paragraph.")
     document = load_docx(source)
     anchor = document.sections[0].paragraphs[0]
     action = ReviewAction(
@@ -239,27 +239,28 @@ def test_accept_all_revisions_keeps_comments_when_asked(tmp_path: Path) -> None:
 # --- fail-closed guards ---------------------------------------------------------------
 
 
-def test_accept_all_revisions_rejects_paragraph_mark_deletion(tmp_path: Path) -> None:
-    # A tracked paragraph-mark deletion (merging two paragraphs) is refused rather than
-    # approximated - dike never emits it, and guessing risks corrupting the clean copy.
-    path = tmp_path / "merged.docx"
-    docx = DocxDocument()
-    paragraph = docx.add_paragraph("A paragraph whose mark is deleted.")
-    docx.add_paragraph("The next paragraph.")
+def _paragraph_mark(kind: str, paragraph) -> None:
     properties = paragraph._p.get_or_add_pPr()
     run_properties = OxmlElement("w:rPr")
-    mark = OxmlElement("w:del")
+    mark = OxmlElement(f"w:{kind}")
     mark.set(qn("w:id"), "1")
     mark.set(qn("w:author"), "reviewer")
     mark.set(qn("w:date"), "1970-01-01T00:00:00Z")
     run_properties.append(mark)
     properties.insert(0, run_properties)
+
+
+def test_accept_all_revisions_merges_paragraph_mark_deletion(tmp_path: Path) -> None:
+    path = tmp_path / "merged.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph("Hello ")
+    _paragraph_mark("del", paragraph)
+    docx.add_paragraph("world.")
     docx.save(path)
 
-    with pytest.raises(AcceptRevisionsError):
-        accept_all_revisions(path, tmp_path / "out.docx")
-    # Fail-closed leaves no half-written output behind.
-    assert not (tmp_path / "out.docx").exists()
+    corrected = accept_all_revisions(path, tmp_path / "out.docx")
+    assert inspect_markup(corrected).is_clean
+    assert _body_paragraph_texts(corrected) == ["Hello world."]
 
 
 def test_accept_all_revisions_rejects_cell_deletion(tmp_path: Path) -> None:
@@ -317,3 +318,117 @@ def test_accept_all_revisions_clean_document_untouched(tmp_path: Path) -> None:
 
     assert inspect_markup(corrected).is_clean
     assert _body_paragraph_texts(corrected) == ["Nothing to accept here.", "Second line."]
+
+
+def _add_tracked_run(paragraph, tag: str, text: str, *, deleted: bool = False) -> None:
+    wrapper = OxmlElement(tag)
+    wrapper.set(qn("w:id"), "9")
+    wrapper.set(qn("w:author"), "reviewer")
+    run = OxmlElement("w:r")
+    node = OxmlElement("w:delText" if deleted else "w:t")
+    node.text = text
+    run.append(node)
+    wrapper.append(run)
+    paragraph._p.append(wrapper)
+
+
+def test_reject_all_revisions_restores_deleted_text_and_drops_insertions(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "reviewed.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph("Original clause. ")
+    _add_tracked_run(paragraph, "w:del", "old phrase", deleted=True)
+    _add_tracked_run(paragraph, "w:ins", "lawyer phrase")
+    docx.save(path)
+
+    restored = reject_all_revisions(path, tmp_path / "input.docx")
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == ["Original clause. old phrase"]
+
+
+def test_reject_all_revisions_merges_inserted_paragraph_mark(tmp_path: Path) -> None:
+    path = tmp_path / "reviewed.docx"
+    docx = DocxDocument()
+    first = docx.add_paragraph("Hello ")
+    _paragraph_mark("ins", first)
+    docx.add_paragraph("world.")
+    docx.save(path)
+
+    restored = reject_all_revisions(path, tmp_path / "input.docx")
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == ["Hello world."]
+
+
+def test_reject_all_revisions_drops_empty_numbered_leftover(tmp_path: Path) -> None:
+    path = tmp_path / "reviewed.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Lead-in.")
+    inserted = docx.add_paragraph()
+    numbering = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl")
+    ilvl.set(qn("w:val"), "0")
+    num_id = OxmlElement("w:numId")
+    num_id.set(qn("w:val"), "1")
+    numbering.append(ilvl)
+    numbering.append(num_id)
+    inserted._p.get_or_add_pPr().append(numbering)
+    _add_tracked_run(inserted, "w:ins", "new numbered item")
+    docx.add_paragraph("Tail.")
+    docx.save(path)
+
+    restored = reject_all_revisions(path, tmp_path / "input.docx")
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == ["Lead-in.", "Tail."]
+
+
+def test_reject_all_revisions_keeps_unrelated_empty_numbered_item(tmp_path: Path) -> None:
+    path = tmp_path / "reviewed.docx"
+    docx = DocxDocument()
+    empty = docx.add_paragraph()
+    numbering = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl")
+    ilvl.set(qn("w:val"), "0")
+    num_id = OxmlElement("w:numId")
+    num_id.set(qn("w:val"), "1")
+    numbering.append(ilvl)
+    numbering.append(num_id)
+    empty._p.get_or_add_pPr().append(numbering)
+    docx.add_paragraph("Kept.")
+    docx.save(path)
+
+    restored = reject_all_revisions(path, tmp_path / "input.docx")
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == ["", "Kept."]
+
+
+def test_reject_all_revisions_rejects_cell_deletion(tmp_path: Path) -> None:
+    path = tmp_path / "table.docx"
+    docx = DocxDocument()
+    table = docx.add_table(rows=1, cols=1)
+    cell = table.rows[0].cells[0]
+    cell.text = "cell text"
+    tc_properties = cell._tc.get_or_add_tcPr()
+    cell_del = OxmlElement("w:cellDel")
+    cell_del.set(qn("w:id"), "1")
+    cell_del.set(qn("w:author"), "reviewer")
+    cell_del.set(qn("w:date"), "1970-01-01T00:00:00Z")
+    tc_properties.append(cell_del)
+    docx.save(path)
+
+    with pytest.raises(RejectRevisionsError):
+        reject_all_revisions(path, tmp_path / "out.docx")
+    assert not (tmp_path / "out.docx").exists()
+
+
+def test_reject_all_revisions_in_place(tmp_path: Path) -> None:
+    path = tmp_path / "reviewed.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph("Original clause. ")
+    _add_tracked_run(paragraph, "w:ins", "lawyer phrase")
+    docx.save(path)
+
+    result = reject_all_revisions(path, path)
+    assert result == path
+    assert inspect_markup(path).is_clean
+    assert _body_paragraph_texts(path) == ["Original clause. "]
