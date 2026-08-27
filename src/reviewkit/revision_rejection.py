@@ -10,6 +10,7 @@ from lxml import etree
 
 from reviewkit.markup_purity import inspect_markup
 from reviewkit.revision_paragraphs import (
+    drop_inserted_numbering_leftover,
     is_content_control_paragraph,
     merge_paragraph_into_next,
     paragraph_for_mark,
@@ -178,8 +179,17 @@ def _reject_revisions_in_tree(root: etree._Element, part_name: str, *, drop_comm
         if _is_paragraph_mark(element) and element.getparent() is not None:
             _reject_inserted_paragraph_mark(element, part_name, drop_comments=drop_comments)
 
+    leftovers: list[etree._Element] = []
+    seen_leftovers: set[int] = set()
     for element in list(root.iter(_tag("ins"), _tag("moveTo"))):
         if element.getparent() is not None:
+            paragraph = next(
+                (ancestor for ancestor in element.iterancestors() if ancestor.tag == _tag("p")),
+                None,
+            )
+            if paragraph is not None and id(paragraph) not in seen_leftovers:
+                seen_leftovers.add(id(paragraph))
+                leftovers.append(paragraph)
             _remove(element)
 
     for element in list(root.iter(_tag("del"), _tag("moveFrom"))):
@@ -191,6 +201,12 @@ def _reject_revisions_in_tree(root: etree._Element, part_name: str, *, drop_comm
             _unwrap(element)
     _restore_deleted_text(root)
     _restore_property_changes(root, part_name)
+    for paragraph in leftovers:
+        drop_inserted_numbering_leftover(
+            paragraph,
+            _W,
+            drop_comments=drop_comments,
+        )
 
 
 def _restore_deleted_text(root: etree._Element) -> None:

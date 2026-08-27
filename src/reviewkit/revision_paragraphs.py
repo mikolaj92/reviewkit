@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import re
+
 from lxml import etree
+
+_NUMBER_TOKEN_RE = re.compile(r"\d+(?:[.)])?")
 
 
 def paragraph_for_mark(mark: etree._Element, word_namespace: str) -> etree._Element | None:
@@ -45,6 +49,41 @@ def remove_paragraph_block(paragraph: etree._Element, word_namespace: str) -> bo
 def is_content_control_paragraph(mark: etree._Element, word_namespace: str) -> bool:
     paragraph = paragraph_for_mark(mark, word_namespace)
     return paragraph is not None and _paragraph_block(paragraph, word_namespace) is not paragraph
+
+
+def drop_inserted_numbering_leftover(
+    paragraph: etree._Element,
+    word_namespace: str,
+    *,
+    drop_comments: bool,
+) -> bool:
+    if paragraph.getparent() is None:
+        return False
+    text = "".join(
+        node.text or ""
+        for node in paragraph.iter(
+            _tag(word_namespace, "t"),
+            _tag(word_namespace, "delText"),
+        )
+    ).strip()
+    properties = paragraph.find(_tag(word_namespace, "pPr"))
+    numbered = (
+        properties is not None
+        and properties.find(_tag(word_namespace, "numPr")) is not None
+    )
+    if not ((numbered and not text) or _NUMBER_TOKEN_RE.fullmatch(text)):
+        return False
+    if any(
+        next(paragraph.iter(_tag(word_namespace, name)), None) is not None
+        for name in ("tab", "br", "cr", "drawing", "object", "pict", "fldChar", "sym")
+    ):
+        return False
+    if not drop_comments and any(
+        next(paragraph.iter(_tag(word_namespace, name)), None) is not None
+        for name in ("commentRangeStart", "commentRangeEnd", "commentReference")
+    ):
+        return False
+    return remove_paragraph_block(paragraph, word_namespace)
 
 
 def _paragraph_block(paragraph: etree._Element, word_namespace: str) -> etree._Element:

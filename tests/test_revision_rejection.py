@@ -35,6 +35,26 @@ def _reviewed_replacement(path: Path, output: Path) -> Path:
     return render_reviewed_docx(document, [action], output)
 
 
+def _add_inserted_text(paragraph, text: str) -> None:
+    insertion = OxmlElement("w:ins")
+    run = OxmlElement("w:r")
+    node = OxmlElement("w:t")
+    node.text = text
+    run.append(node)
+    insertion.append(run)
+    paragraph._p.append(insertion)
+
+
+def _add_numbering(paragraph) -> None:
+    numbering = OxmlElement("w:numPr")
+    level = OxmlElement("w:ilvl")
+    level.set(qn("w:val"), "0")
+    numbering_id = OxmlElement("w:numId")
+    numbering_id.set(qn("w:val"), "1")
+    numbering.extend((level, numbering_id))
+    paragraph._p.get_or_add_pPr().append(numbering)
+
+
 def _replace_document_xml(path: Path, document_xml: bytes) -> None:
     with ZipFile(path) as archive:
         entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
@@ -407,4 +427,84 @@ def test_reject_all_revisions_removes_inserted_blank_paragraph(tmp_path: Path) -
 
     assert [paragraph.text for paragraph in DocxDocument(restored).paragraphs] == [
         "Following paragraph"
+    ]
+
+
+def test_reject_all_revisions_removes_numbered_shell_from_inserted_text(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "reviewed.docx"
+    document = DocxDocument()
+    document.add_paragraph("Lead-in")
+    paragraph = document.add_paragraph()
+    _add_numbering(paragraph)
+    _add_inserted_text(paragraph, "New numbered point")
+    document.add_paragraph("Tail")
+    document.save(path)
+
+    restored = reject_all_revisions(path, tmp_path / "out.docx")
+
+    assert [paragraph.text for paragraph in DocxDocument(restored).paragraphs] == [
+        "Lead-in",
+        "Tail",
+    ]
+
+
+def test_reject_all_revisions_removes_literal_number_linked_to_insertion(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "reviewed.docx"
+    document = DocxDocument()
+    document.add_paragraph("Lead-in")
+    paragraph = document.add_paragraph("7.")
+    _add_inserted_text(paragraph, " New point")
+    document.add_paragraph("Tail")
+    document.save(path)
+
+    restored = reject_all_revisions(path, tmp_path / "out.docx")
+
+    assert [paragraph.text for paragraph in DocxDocument(restored).paragraphs] == [
+        "Lead-in",
+        "Tail",
+    ]
+
+
+def test_reject_all_revisions_ignores_duplicate_paragraph_ids(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "reviewed.docx"
+    document = DocxDocument()
+    unrelated = document.add_paragraph()
+    unrelated._p.set(qn("w14:paraId"), "DUPL0001")
+    _add_numbering(unrelated)
+    inserted = document.add_paragraph()
+    inserted._p.set(qn("w14:paraId"), "DUPL0001")
+    _add_numbering(inserted)
+    _add_inserted_text(inserted, "New numbered point")
+    document.add_paragraph("Tail")
+    document.save(path)
+
+    restored = reject_all_revisions(path, tmp_path / "out.docx")
+
+    assert [paragraph.text for paragraph in DocxDocument(restored).paragraphs] == ["", "Tail"]
+
+
+def test_reject_all_revisions_merges_consecutive_inserted_paragraph_marks(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "reviewed.docx"
+    document = DocxDocument()
+    for text in ("One ", "two "):
+        paragraph = document.add_paragraph(text)
+        properties = paragraph._p.get_or_add_pPr()
+        run_properties = OxmlElement("w:rPr")
+        run_properties.append(OxmlElement("w:ins"))
+        properties.append(run_properties)
+    document.add_paragraph("three.")
+    document.save(path)
+
+    restored = reject_all_revisions(path, tmp_path / "out.docx")
+
+    assert [paragraph.text for paragraph in DocxDocument(restored).paragraphs] == [
+        "One two three."
     ]

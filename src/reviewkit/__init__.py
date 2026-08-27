@@ -65,6 +65,7 @@ from reviewkit.revision_rejection import RejectRevisionsError, reject_all_revisi
 __all__ = [
     "ANCHOR_LAST",
     "AcceptRevisionsError",
+    "RejectRevisionsError",
     "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
@@ -102,6 +103,7 @@ __all__ = [
     "SignatureBlockStart",
     "accept_all_revisions",
     "apply_reviewed_markup",
+    "reject_all_revisions",
     "canonical_action_dump",
     "comments_for_locator",
     "contains_suggestion_marker",

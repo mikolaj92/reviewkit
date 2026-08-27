@@ -374,6 +374,25 @@ def test_accept_all_revisions_merges_deleted_paragraph_mark(tmp_path: Path) -> N
     ]
 
 
+def test_accept_all_revisions_merges_consecutive_deleted_paragraph_marks(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "merged.docx"
+    docx = DocxDocument()
+    for text in ("One ", "two "):
+        paragraph = docx.add_paragraph(text)
+        properties = paragraph._p.get_or_add_pPr()
+        run_properties = OxmlElement("w:rPr")
+        run_properties.append(OxmlElement("w:del"))
+        properties.append(run_properties)
+    docx.add_paragraph("three.")
+    docx.save(path)
+
+    corrected = accept_all_revisions(path, tmp_path / "out.docx")
+
+    assert _body_paragraph_texts(corrected) == ["One two three."]
+
+
 def test_accept_all_revisions_does_not_merge_run_property_revision(tmp_path: Path) -> None:
     path = tmp_path / "run-property.docx"
     docx = DocxDocument()
