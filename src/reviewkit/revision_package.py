@@ -63,9 +63,9 @@ class RevisionPackageError(RuntimeError):
 
 
 def _is_valid_package_member_name(name: str) -> bool:
-    normalized = name.removeprefix("/")
-    if normalized == "[Content_Types].xml":
+    if name == "[Content_Types].xml":
         return True
+    normalized = name.removeprefix("/")
     if (
         not normalized
         or name.startswith(("/", "\\"))

@@ -257,6 +257,7 @@ def test_revision_operations_reject_xml_after_large_whitespace_prefix(
         "word#customXml/item1",
         "word[customXml/item1",
         "word customXml/item1",
+        "/[Content_Types].xml",
     ],
 )
 @pytest.mark.parametrize(
