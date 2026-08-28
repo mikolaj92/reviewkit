@@ -155,9 +155,51 @@ def _comment_markers_are_complete(path: str | Path, comments: list[DocxComment])
     if any(marker_id not in body_id_set for marker_id in marker_counts):
         return False
     for counts in marker_counts.values():
-        if counts["commentRangeStart"] != counts["commentRangeEnd"]:
+        if any(counts[name] != 1 for name in _COMMENT_MARKER_NAMES):
             return False
-        if any(count > 1 for count in counts.values()):
+    return True
+
+
+def _comment_thread_ids_are_complete(path: str | Path) -> bool:
+    """Return whether comment-thread paragraph IDs are unique and resolvable."""
+    try:
+        with ZipFile(str(path)) as bundle:
+            names = set(bundle.namelist())
+            if _COMMENTS_PART not in names:
+                return True
+            comments_xml = bundle.read(_COMMENTS_PART)
+            extended_xml = (
+                bundle.read(_COMMENTS_EXTENDED_PART)
+                if _COMMENTS_EXTENDED_PART in names
+                else None
+            )
+    except (OSError, BadZipFile, KeyError):
+        return False
+
+    try:
+        comments_root = etree.fromstring(comments_xml)
+    except etree.XMLSyntaxError:
+        return False
+    para_ids = [
+        paragraph.get(f"{{{_W14_NS}}}paraId")
+        for paragraph in comments_root.iter(f"{{{_W_NS}}}p")
+        if paragraph.get(f"{{{_W14_NS}}}paraId") is not None
+    ]
+    if len(set(para_ids)) != len(para_ids):
+        return False
+    if extended_xml is None:
+        return True
+    try:
+        extended_root = etree.fromstring(extended_xml)
+    except etree.XMLSyntaxError:
+        return False
+    known_para_ids = set(para_ids)
+    for element in extended_root.iter(f"{{{_W15_NS}}}commentEx"):
+        para_id = element.get(f"{{{_W15_NS}}}paraId")
+        parent_id = element.get(f"{{{_W15_NS}}}paraIdParent")
+        if para_id not in known_para_ids or (
+            parent_id is not None and parent_id not in known_para_ids
+        ):
             return False
     return True
 
@@ -385,6 +427,8 @@ def _comment_ids_by_para_id(comments_xml: bytes) -> dict[str, str]:
         for paragraph in comment.findall(f"{{{_W_NS}}}p"):
             para_id = paragraph.get(f"{{{_W14_NS}}}paraId")
             if para_id:
+                if para_id in mapping:
+                    return {}
                 mapping[para_id] = comment_id
                 break
     return mapping

@@ -21,6 +21,7 @@ from lxml import etree
 from reviewkit.comments import (
     DocxComment,
     _comment_markers_are_complete,
+    _comment_thread_ids_are_complete,
     comments_for_locator,
     read_comments,
 )
@@ -56,6 +57,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
         _revision_coverage_is_incomplete(source_path, markup_report, revision_ledger)
         or _comment_ids_are_ambiguous(comments)
         or not _comment_markers_are_complete(source_path, comments)
+        or not _comment_thread_ids_are_complete(source_path)
         or any(_comment_anchor_is_unresolved(comment, comments) for comment in comments)
     ):
         revision_ledger = revision_ledger.model_copy(
