@@ -18,7 +18,12 @@ from docx.text.paragraph import Paragraph
 from docxtor import AddressableSpan, DocxDocument as AddressableDocxDocument
 from lxml import etree
 
-from reviewkit.comments import DocxComment, comments_for_locator, read_comments
+from reviewkit.comments import (
+    DocxComment,
+    _comment_markers_are_complete,
+    comments_for_locator,
+    read_comments,
+)
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.markup_purity import MarkupReport, has_tracked_revisions, inspect_markup
 from reviewkit.models import (
@@ -50,6 +55,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
     if (
         _revision_coverage_is_incomplete(source_path, markup_report, revision_ledger)
         or _comment_ids_are_ambiguous(comments)
+        or not _comment_markers_are_complete(source_path, comments)
         or any(_comment_anchor_is_unresolved(comment, comments) for comment in comments)
     ):
         revision_ledger = revision_ledger.model_copy(

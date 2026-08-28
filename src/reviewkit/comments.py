@@ -60,6 +60,9 @@ _THREAD_REL_TARGETS = frozenset(
         "people.xml",
     }
 )
+_COMMENT_MARKER_NAMES = frozenset(
+    {"commentRangeStart", "commentRangeEnd", "commentReference"}
+)
 
 
 @dataclass(frozen=True)
@@ -117,6 +120,46 @@ def comments_for_locator(
     if not locator:
         return []
     return [comment for comment in comments if comment.locator == locator]
+
+
+def _comment_markers_are_complete(path: str | Path, comments: list[DocxComment]) -> bool:
+    """Return whether every source comment marker has one unambiguous body."""
+    body_ids = [comment.id for comment in comments]
+    if len(set(body_ids)) != len(body_ids):
+        return False
+    marker_counts: dict[str, dict[str, int]] = {}
+    try:
+        with ZipFile(str(path)) as bundle:
+            for name in bundle.namelist():
+                if not (name.startswith("word/") and name.endswith(".xml")):
+                    continue
+                root = etree.fromstring(bundle.read(name))
+                for element in root.iter():
+                    if not isinstance(element.tag, str):
+                        continue
+                    qualified = etree.QName(element)
+                    if qualified.namespace != _W_NS or qualified.localname not in _COMMENT_MARKER_NAMES:
+                        continue
+                    marker_id = element.get(f"{{{_W_NS}}}id")
+                    if marker_id is None:
+                        return False
+                    counts = marker_counts.setdefault(
+                        marker_id,
+                        {"commentRangeStart": 0, "commentRangeEnd": 0, "commentReference": 0},
+                    )
+                    counts[qualified.localname] += 1
+    except (OSError, BadZipFile, KeyError, etree.XMLSyntaxError):
+        return False
+
+    body_id_set = set(body_ids)
+    if any(marker_id not in body_id_set for marker_id in marker_counts):
+        return False
+    for counts in marker_counts.values():
+        if counts["commentRangeStart"] != counts["commentRangeEnd"]:
+            return False
+        if any(count > 1 for count in counts.values()):
+            return False
+    return True
 
 
 def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | Path) -> None:

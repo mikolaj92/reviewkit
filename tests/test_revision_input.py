@@ -139,6 +139,25 @@ def test_duplicate_source_comment_ids_fail_closed(tmp_path: Path) -> None:
     assert not output.exists()
 
 
+def test_orphan_source_comment_markers_fail_closed(tmp_path: Path) -> None:
+    # Given: a source with balanced comment markers but no matching comment body.
+    source = tmp_path / "orphan-comment-markers.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_orphan_comment_markers(source)
+
+    # When: ReviewKit reads the source and attempts to publish a review artifact.
+    review_document = load_docx(source)
+    output = tmp_path / "reviewed.docx"
+
+    # Then: orphan markers are refused before output creation.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], output)
+    assert not output.exists()
+
+
 def _append_revisions(path: Path) -> None:
     with ZipFile(path) as archive:
         entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
@@ -192,6 +211,29 @@ def _duplicate_second_comment_id(path: Path) -> None:
             archive.writestr(
                 info,
                 revised_comments_xml if info.filename == "word/comments.xml" else data,
+            )
+
+
+def _append_orphan_comment_markers(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    paragraph.extend(
+        [
+            etree.Element(f"{_W}commentRangeStart", {f"{_W}id": "99"}),
+            etree.Element(f"{_W}commentRangeEnd", {f"{_W}id": "99"}),
+            etree.Element(f"{_W}commentReference", {f"{_W}id": "99"}),
+        ]
+    )
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
             )
 
 

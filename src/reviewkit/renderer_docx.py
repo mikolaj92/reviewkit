@@ -22,7 +22,7 @@ from reviewkit.actions import (
     apply_action_to_text,
     should_apply_to_corrected,
 )
-from reviewkit.comments import restore_comment_thread_parts
+from reviewkit.comments import _comment_markers_are_complete, restore_comment_thread_parts
 from reviewkit.docx_package import (
     normalize_docx_timestamps,
     restore_semantically_unchanged_xml_parts,
@@ -105,6 +105,10 @@ def _assert_complete_revision_coverage(document: ReviewDocument) -> None:
     if document.revision_ledger.coverage != RevisionCoverageState.COMPLETE:
         raise RevisionCoverageError("source revision coverage is incomplete")
     if len({comment.id for comment in document.comments}) != len(document.comments):
+        raise RevisionCoverageError("source comment coverage is incomplete")
+    if document.source_path is not None and not _comment_markers_are_complete(
+        document.source_path, document.comments
+    ):
         raise RevisionCoverageError("source comment coverage is incomplete")
 
 
