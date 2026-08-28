@@ -52,10 +52,20 @@ MAX_PACKAGE_ENTRIES = 4096
 MAX_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 1000
+_XML_BOMS = (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
 
 
 class RevisionPackageError(RuntimeError):
     pass
+
+
+def _needs_xml_validation(name: str, data: bytes) -> bool:
+    if name.casefold().endswith((".xml", ".rels")):
+        return True
+    candidate = data.lstrip(b" \t\r\n")
+    if candidate.startswith(b"<"):
+        return True
+    return any(candidate.startswith(bom + b"<") for bom in _XML_BOMS)
 
 
 def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
@@ -86,7 +96,7 @@ def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
         entries: list[tuple[ZipInfo, bytes]] = []
         for info in infos:
             data = archive.read(info)
-            if info.filename.casefold().endswith((".xml", ".rels")):
+            if _needs_xml_validation(info.filename, data):
                 try:
                     parse_xml(data)
                 except (RevisionPackageError, etree.XMLSyntaxError) as exc:

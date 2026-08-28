@@ -171,6 +171,8 @@ def test_accept_all_revisions_removes_comment_relationship_parts(tmp_path: Path)
         (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1.xml"),
         (reject_all_revisions, RejectRevisionsError, "customXml/item1.XML"),
         (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1.XML"),
+        (reject_all_revisions, RejectRevisionsError, "customXml/item1"),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1"),
     ],
 )
 def test_revision_operations_reject_doctype_in_unprocessed_xml(
