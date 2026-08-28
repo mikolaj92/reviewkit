@@ -1,0 +1,275 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+
+from lxml import etree
+
+from reviewkit.docx_package import _deterministic_zipinfo
+
+_RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+_XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+REVISION_NAMES = (
+    "ins",
+    "del",
+    "moveFrom",
+    "moveTo",
+    "rPrChange",
+    "pPrChange",
+    "sectPrChange",
+    "tblPrChange",
+    "trPrChange",
+    "tcPrChange",
+    "cellIns",
+    "cellDel",
+    "cellMerge",
+    "tblGridChange",
+    "tblPrExChange",
+    "numberingChange",
+    "moveFromRangeStart",
+    "moveFromRangeEnd",
+    "moveToRangeStart",
+    "moveToRangeEnd",
+    "customXmlDelRangeStart",
+    "customXmlDelRangeEnd",
+    "customXmlInsRangeStart",
+    "customXmlInsRangeEnd",
+    "customXmlMoveFromRangeStart",
+    "customXmlMoveFromRangeEnd",
+    "customXmlMoveToRangeStart",
+    "customXmlMoveToRangeEnd",
+    "conflictIns",
+    "conflictDel",
+    "customXmlConflictInsRangeStart",
+    "customXmlConflictInsRangeEnd",
+    "customXmlConflictDelRangeStart",
+    "customXmlConflictDelRangeEnd",
+)
+MAX_PACKAGE_ENTRIES = 4096
+MAX_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 1000
+_XML_BOMS = (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
+_XML_PROBE_BYTES = 64 * 1024
+_XML_ENCODINGS = ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be")
+_OOXML_PART_NAME_CHARS = frozenset("!$&'()*+,-.:;=@_~")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_ASCII_IUNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+
+
+class RevisionPackageError(RuntimeError):
+    pass
+
+
+def _is_valid_package_member_name(name: str) -> bool:
+    if name == "[Content_Types].xml":
+        return True
+    normalized = name.removeprefix("/")
+    if (
+        not normalized
+        or name.startswith(("/", "\\"))
+        or "\\" in name
+        or any(not _is_valid_package_segment(segment) for segment in normalized.split("/"))
+    ):
+        return False
+    return True
+
+
+def _is_valid_package_segment(segment: str) -> bool:
+    if not segment or segment in {".", ".."} or segment.endswith("."):
+        return False
+    offset = 0
+    while offset < len(segment):
+        character = segment[offset]
+        if character == "%":
+            if (
+                offset + 2 >= len(segment)
+                or segment[offset + 1] not in _HEX_DIGITS
+                or segment[offset + 2] not in _HEX_DIGITS
+            ):
+                return False
+            decoded = chr(int(segment[offset + 1 : offset + 3], 16))
+            if decoded in "/\\" or decoded in _ASCII_IUNRESERVED:
+                return False
+            offset += 3
+            continue
+        if not (ord(character) < 128 and (character.isalnum() or character in _OOXML_PART_NAME_CHARS)):
+            return False
+        offset += 1
+    return True
+
+
+def _needs_xml_validation(name: str, data: bytes) -> bool:
+    normalized_name = name.removeprefix("/").casefold()
+    if normalized_name.startswith("customxml/") or normalized_name.endswith((".xml", ".rels")):
+        return True
+    candidate = data[:_XML_PROBE_BYTES].lstrip(b" \t\r\n")
+    if candidate.startswith(b"<") or any(candidate.startswith(bom) for bom in _XML_BOMS):
+        return True
+    for encoding in _XML_ENCODINGS:
+        decoded = data[:_XML_PROBE_BYTES].decode(encoding, errors="ignore")
+        if decoded.lstrip().startswith("<"):
+            return True
+    return False
+
+
+def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
+    with ZipFile(path) as archive:
+        infos = archive.infolist()
+        if len(infos) > MAX_PACKAGE_ENTRIES:
+            raise RevisionPackageError(
+                f"DOCX has {len(infos)} entries; limit is {MAX_PACKAGE_ENTRIES}"
+            )
+        names = [info.filename for info in infos]
+        for name in names:
+            if not _is_valid_package_member_name(name):
+                raise RevisionPackageError(f"DOCX contains invalid package member path: {name}")
+        equivalent_names = [name.lower() for name in names]
+        if len(equivalent_names) != len(set(equivalent_names)):
+            raise RevisionPackageError("DOCX contains duplicate package member names")
+        total = sum(info.file_size for info in infos)
+        if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
+            raise RevisionPackageError(
+                f"DOCX uncompressed size {total} exceeds {MAX_TOTAL_UNCOMPRESSED_BYTES}"
+            )
+        for info in infos:
+            if info.file_size > MAX_ENTRY_UNCOMPRESSED_BYTES:
+                raise RevisionPackageError(
+                    f"DOCX entry {info.filename} uncompressed size exceeds limit"
+                )
+            ratio = info.file_size / max(info.compress_size, 1)
+            if ratio > MAX_COMPRESSION_RATIO:
+                raise RevisionPackageError(
+                    f"DOCX entry {info.filename} compression ratio exceeds limit"
+                )
+        entries: list[tuple[ZipInfo, bytes]] = []
+        for info in infos:
+            data = archive.read(info)
+            if _needs_xml_validation(info.filename, data):
+                try:
+                    parse_xml(data)
+                except (RevisionPackageError, etree.XMLSyntaxError) as exc:
+                    raise RevisionPackageError(
+                        f"DOCX XML part {info.filename} is invalid: {exc}"
+                    ) from exc
+            entries.append((info, data))
+        return entries
+
+
+def parse_xml(data: bytes) -> etree._Element:
+    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
+    root = etree.fromstring(data, parser=parser)
+    if root.getroottree().docinfo.doctype:
+        raise RevisionPackageError("DOCX XML must not contain a DOCTYPE declaration")
+    return root
+
+
+def revision_kinds(root: etree._Element, word_namespace: str) -> set[str]:
+    return {
+        name
+        for name in REVISION_NAMES
+        if next(root.iter(f"{{{word_namespace}}}{name}"), None) is not None
+    }
+
+
+def has_comment_anchors(root: etree._Element, word_namespace: str) -> bool:
+    return any(
+        next(root.iter(f"{{{word_namespace}}}{name}"), None) is not None
+        for name in ("commentReference", "commentRangeStart", "commentRangeEnd")
+    )
+
+
+def serialize(root: etree._Element) -> bytes:
+    return (_XML_DECLARATION + etree.tostring(root, encoding="unicode")).encode()
+
+
+def is_comment_part(name: str) -> bool:
+    normalized = name.removeprefix("/")
+    if not normalized.startswith("word/"):
+        return False
+    basename = normalized.rsplit("/", 1)[-1]
+    if basename == "people.xml" or (
+        basename.startswith("comments") and basename.endswith(".xml")
+    ):
+        return True
+    if normalized.startswith("word/_rels/") and basename.endswith(".xml.rels"):
+        source_part = basename.removesuffix(".rels")
+        return source_part == "people.xml" or (
+            source_part.startswith("comments") and source_part.endswith(".xml")
+        )
+    return False
+
+
+def write_package_atomically(
+    destination: Path,
+    entries: list[tuple[ZipInfo, bytes]],
+    validate: Callable[[Path], None],
+) -> None:
+    with NamedTemporaryFile(
+        dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        with ZipFile(temporary, "w", ZIP_DEFLATED) as output:
+            for info, data in entries:
+                output.writestr(_deterministic_zipinfo(info), data)
+        validate(temporary)
+        temporary.replace(destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def strip_comment_anchors(root: etree._Element, word_namespace: str) -> None:
+    def tag(name: str) -> str:
+        return f"{{{word_namespace}}}{name}"
+
+    for element in list(root.iter(tag("commentRangeStart"), tag("commentRangeEnd"))):
+        _remove(element)
+    for element in list(root.iter(tag("commentReference"))):
+        run = element.getparent()
+        _remove(run if run is not None and run.tag == tag("r") else element)
+
+
+def strip_comment_relationships(data: bytes) -> bytes:
+    root = parse_xml(data)
+    changed = False
+    for relationship in list(root):
+        if relationship.tag != f"{{{_RELATIONSHIPS_NS}}}Relationship":
+            continue
+        target = relationship.get("Target", "").removeprefix("/")
+        relationship_type = relationship.get("Type", "")
+        if "comment" in relationship_type.lower() or target.startswith(
+            ("comments", "word/comments", "people.xml", "word/people.xml")
+        ):
+            root.remove(relationship)
+            changed = True
+    return serialize(root) if changed else data
+
+
+def strip_comment_content_types(data: bytes) -> bytes:
+    root = parse_xml(data)
+    changed = False
+    for override in list(root):
+        if override.tag != f"{{{_CONTENT_TYPES_NS}}}Override":
+            continue
+        part_name = override.get("PartName", "").removeprefix("/")
+        if is_comment_part(part_name):
+            root.remove(override)
+            changed = True
+    return serialize(root) if changed else data
+
+
+def _remove(element: etree._Element) -> None:
+    parent = element.getparent()
+    if parent is None:
+        return
+    if element.tail:
+        previous = element.getprevious()
+        if previous is not None:
+            previous.tail = (previous.tail or "") + element.tail
+        else:
+            parent.text = (parent.text or "") + element.tail
+    parent.remove(element)

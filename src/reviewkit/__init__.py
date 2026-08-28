@@ -62,16 +62,14 @@ from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 from reviewkit.renderer_docx import RenderIntegrityError
 from reviewkit.revisions import (
     AcceptRevisionsError,
-    RejectRevisionsError,
     accept_all_revisions,
     apply_reviewed_markup,
-    reject_all_revisions,
 )
+from reviewkit.revision_rejection import RejectRevisionsError, reject_all_revisions
 
 __all__ = [
     "ANCHOR_LAST",
     "AcceptRevisionsError",
-    "RejectRevisionsError",
     "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
@@ -90,6 +88,7 @@ __all__ = [
     "MockLLMClient",
     "ParagraphInserter",
     "RenderIntegrityError",
+    "RejectRevisionsError",
     "SUGGESTION_MARKER_PREFIX",
     "ReviewAction",
     "ReviewActionType",
@@ -113,7 +112,6 @@ __all__ = [
     "SourceRevisionKind",
     "accept_all_revisions",
     "apply_reviewed_markup",
-    "reject_all_revisions",
     "canonical_action_dump",
     "comments_for_locator",
     "contains_suggestion_marker",
@@ -131,5 +129,6 @@ __all__ = [
     "parse_body_anchor_index",
     "read_comments",
     "read_footnotes",
+    "reject_all_revisions",
     "review_document",
 ]

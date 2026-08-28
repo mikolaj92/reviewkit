@@ -3,6 +3,7 @@ from xml.etree import ElementTree
 from zipfile import ZipFile
 
 import pytest
+import reviewkit
 from docx import Document as DocxDocument
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -19,10 +20,8 @@ from reviewkit.parser_docx import load_docx
 from reviewkit.renderer_docx import render_reviewed_docx
 from reviewkit.revisions import (
     AcceptRevisionsError,
-    RejectRevisionsError,
     accept_all_revisions,
     apply_reviewed_markup,
-    reject_all_revisions,
 )
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -97,6 +96,47 @@ def test_accept_all_revisions_drops_deleted_text(tmp_path: Path) -> None:
     assert "beta" not in _body_paragraph_texts(corrected)[0]
 
 
+def test_reject_all_revisions_restores_inline_replacement_and_is_clean(tmp_path: Path) -> None:
+    source = _saved_docx(tmp_path, "input.docx", "The quick brown fox jumps.")
+    document = load_docx(source)
+    paragraph = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE_TEXT,
+        node_id=paragraph.id,
+        original_text="fox",
+        replacement_text="cat",
+        locator=ReviewLocator(node_id=paragraph.id, char_start=16, char_end=19),
+        status=ActionStatus.APPLIED,
+    )
+    reviewed = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+
+    restored = reviewkit.reject_all_revisions(reviewed, tmp_path / "restored.docx")
+
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == ["The quick brown fox jumps."]
+
+
+def test_reject_all_revisions_restores_original_run_properties(tmp_path: Path) -> None:
+    path = tmp_path / "formatted.docx"
+    docx = DocxDocument()
+    run = docx.add_paragraph().add_run("Clause")
+    run.bold = True
+    run_properties = run._r.get_or_add_rPr()
+    change = OxmlElement("w:rPrChange")
+    original_properties = OxmlElement("w:rPr")
+    original_properties.append(OxmlElement("w:i"))
+    change.append(original_properties)
+    run_properties.append(change)
+    docx.save(path)
+
+    restored = reviewkit.reject_all_revisions(path, tmp_path / "restored.docx")
+
+    restored_run = DocxDocument(restored).paragraphs[0].runs[0]
+    assert restored_run.italic is True
+    assert restored_run.bold is not True
+
+
 def test_accept_all_revisions_clean_copy_is_byte_reproducible(tmp_path: Path) -> None:
     # The clean copy must hash identically for identical input, so downstream attestation /
     # caching stays stable. accept_all_revisions used to copy the reviewed input's per-entry
@@ -152,6 +192,78 @@ def test_accept_all_revisions_keeps_new_paragraph_standalone(tmp_path: Path) -> 
         "§20a. The inserted clause.",
         "Following paragraph.",
     ]
+
+
+def test_reject_all_revisions_removes_inserted_paragraph_and_mark(tmp_path: Path) -> None:
+    source = _saved_docx(tmp_path, "input.docx", "Anchor clause heading.", "Following paragraph.")
+    document = load_docx(source)
+    anchor = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
+        node_id=anchor.id,
+        replacement_text="§20a. The inserted clause.",
+        new_paragraph=True,
+        status=ActionStatus.APPLIED,
+        apply_to_corrected=True,
+    )
+    reviewed = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+
+    restored = reviewkit.reject_all_revisions(reviewed, tmp_path / "restored.docx")
+
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == [
+        "Anchor clause heading.",
+        "Following paragraph.",
+    ]
+
+
+def test_reject_all_revisions_removes_inserted_final_paragraph(tmp_path: Path) -> None:
+    source = _saved_docx(tmp_path, "input.docx", "Anchor clause heading.")
+    document = load_docx(source)
+    anchor = document.sections[0].paragraphs[0]
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.INSERT_AFTER,
+        node_id=anchor.id,
+        replacement_text="§20a. The inserted final clause.",
+        new_paragraph=True,
+        status=ActionStatus.APPLIED,
+        apply_to_corrected=True,
+    )
+    reviewed = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+
+    restored = reviewkit.reject_all_revisions(reviewed, tmp_path / "restored.docx")
+
+    assert inspect_markup(restored).is_clean
+    assert _body_paragraph_texts(restored) == ["Anchor clause heading."]
+
+
+def test_reject_all_revisions_keeps_deleted_drawing_during_paragraph_merge(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "drawing.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph()
+    properties = paragraph._p.get_or_add_pPr()
+    run_properties = OxmlElement("w:rPr")
+    run_properties.append(OxmlElement("w:ins"))
+    properties.append(run_properties)
+    deleted = OxmlElement("w:del")
+    deleted_run = OxmlElement("w:r")
+    deleted_run.append(OxmlElement("w:drawing"))
+    deleted.append(deleted_run)
+    paragraph._p.append(deleted)
+    docx.add_paragraph("Following paragraph.")
+    docx.save(path)
+
+    restored = reviewkit.reject_all_revisions(path, tmp_path / "restored.docx")
+
+    with ZipFile(restored) as archive:
+        document_xml = archive.read("word/document.xml")
+    assert inspect_markup(restored).is_clean
+    assert document_xml.count(b"<w:drawing") == 1
+    assert _body_paragraph_texts(restored) == ["Following paragraph."]
 
 
 def test_accept_all_revisions_multiline_clause_becomes_multiple_paragraphs(
@@ -239,28 +351,60 @@ def test_accept_all_revisions_keeps_comments_when_asked(tmp_path: Path) -> None:
 # --- fail-closed guards ---------------------------------------------------------------
 
 
-def _paragraph_mark(kind: str, paragraph) -> None:
+def test_accept_all_revisions_merges_deleted_paragraph_mark(tmp_path: Path) -> None:
+    path = tmp_path / "merged.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph("A paragraph whose mark is deleted. ")
+    docx.add_paragraph("The next paragraph.")
     properties = paragraph._p.get_or_add_pPr()
     run_properties = OxmlElement("w:rPr")
-    mark = OxmlElement(f"w:{kind}")
+    mark = OxmlElement("w:del")
     mark.set(qn("w:id"), "1")
     mark.set(qn("w:author"), "reviewer")
     mark.set(qn("w:date"), "1970-01-01T00:00:00Z")
     run_properties.append(mark)
     properties.insert(0, run_properties)
-
-
-def test_accept_all_revisions_merges_paragraph_mark_deletion(tmp_path: Path) -> None:
-    path = tmp_path / "merged.docx"
-    docx = DocxDocument()
-    paragraph = docx.add_paragraph("Hello ")
-    _paragraph_mark("del", paragraph)
-    docx.add_paragraph("world.")
     docx.save(path)
 
     corrected = accept_all_revisions(path, tmp_path / "out.docx")
+
     assert inspect_markup(corrected).is_clean
-    assert _body_paragraph_texts(corrected) == ["Hello world."]
+    assert _body_paragraph_texts(corrected) == [
+        "A paragraph whose mark is deleted. The next paragraph."
+    ]
+
+
+def test_accept_all_revisions_merges_consecutive_deleted_paragraph_marks(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "merged.docx"
+    docx = DocxDocument()
+    for text in ("One ", "two "):
+        paragraph = docx.add_paragraph(text)
+        properties = paragraph._p.get_or_add_pPr()
+        run_properties = OxmlElement("w:rPr")
+        run_properties.append(OxmlElement("w:del"))
+        properties.append(run_properties)
+    docx.add_paragraph("three.")
+    docx.save(path)
+
+    corrected = accept_all_revisions(path, tmp_path / "out.docx")
+
+    assert _body_paragraph_texts(corrected) == ["One two three."]
+
+
+def test_accept_all_revisions_does_not_merge_run_property_revision(tmp_path: Path) -> None:
+    path = tmp_path / "run-property.docx"
+    docx = DocxDocument()
+    run = docx.add_paragraph().add_run("Standalone paragraph.")
+    run_properties = run._r.get_or_add_rPr()
+    run_properties.append(OxmlElement("w:del"))
+    docx.save(path)
+
+    corrected = accept_all_revisions(path, tmp_path / "out.docx")
+
+    assert inspect_markup(corrected).is_clean
+    assert _body_paragraph_texts(corrected) == ["Standalone paragraph."]
 
 
 def test_accept_all_revisions_rejects_cell_deletion(tmp_path: Path) -> None:
@@ -318,134 +462,3 @@ def test_accept_all_revisions_clean_document_untouched(tmp_path: Path) -> None:
 
     assert inspect_markup(corrected).is_clean
     assert _body_paragraph_texts(corrected) == ["Nothing to accept here.", "Second line."]
-
-
-def _add_tracked_run(paragraph, tag: str, text: str, *, deleted: bool = False) -> None:
-    wrapper = OxmlElement(tag)
-    wrapper.set(qn("w:id"), "9")
-    wrapper.set(qn("w:author"), "reviewer")
-    run = OxmlElement("w:r")
-    node = OxmlElement("w:delText" if deleted else "w:t")
-    node.text = text
-    run.append(node)
-    wrapper.append(run)
-    paragraph._p.append(wrapper)
-
-
-def test_reject_all_revisions_restores_deleted_text_and_drops_insertions(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "reviewed.docx"
-    docx = DocxDocument()
-    paragraph = docx.add_paragraph("Original clause. ")
-    _add_tracked_run(paragraph, "w:del", "old phrase", deleted=True)
-    _add_tracked_run(paragraph, "w:ins", "lawyer phrase")
-    docx.save(path)
-
-    restored = reject_all_revisions(path, tmp_path / "input.docx")
-    assert inspect_markup(restored).is_clean
-    assert _body_paragraph_texts(restored) == ["Original clause. old phrase"]
-
-
-def test_reject_all_revisions_merges_inserted_paragraph_mark(tmp_path: Path) -> None:
-    path = tmp_path / "reviewed.docx"
-    docx = DocxDocument()
-    first = docx.add_paragraph("Hello ")
-    _paragraph_mark("ins", first)
-    docx.add_paragraph("world.")
-    docx.save(path)
-
-    restored = reject_all_revisions(path, tmp_path / "input.docx")
-    assert inspect_markup(restored).is_clean
-    assert _body_paragraph_texts(restored) == ["Hello world."]
-
-
-def test_reject_all_revisions_merges_consecutive_inserted_paragraph_marks(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "reviewed.docx"
-    docx = DocxDocument()
-    first = docx.add_paragraph("One ")
-    _paragraph_mark("ins", first)
-    second = docx.add_paragraph("two ")
-    _paragraph_mark("ins", second)
-    docx.add_paragraph("three.")
-    docx.save(path)
-
-    restored = reject_all_revisions(path, tmp_path / "input.docx")
-    assert inspect_markup(restored).is_clean
-    assert _body_paragraph_texts(restored) == ["One two three."]
-
-
-def test_reject_all_revisions_drops_empty_numbered_leftover(tmp_path: Path) -> None:
-    path = tmp_path / "reviewed.docx"
-    docx = DocxDocument()
-    docx.add_paragraph("Lead-in.")
-    inserted = docx.add_paragraph()
-    numbering = OxmlElement("w:numPr")
-    ilvl = OxmlElement("w:ilvl")
-    ilvl.set(qn("w:val"), "0")
-    num_id = OxmlElement("w:numId")
-    num_id.set(qn("w:val"), "1")
-    numbering.append(ilvl)
-    numbering.append(num_id)
-    inserted._p.get_or_add_pPr().append(numbering)
-    _add_tracked_run(inserted, "w:ins", "new numbered item")
-    docx.add_paragraph("Tail.")
-    docx.save(path)
-
-    restored = reject_all_revisions(path, tmp_path / "input.docx")
-    assert inspect_markup(restored).is_clean
-    assert _body_paragraph_texts(restored) == ["Lead-in.", "Tail."]
-
-
-def test_reject_all_revisions_keeps_unrelated_empty_numbered_item(tmp_path: Path) -> None:
-    path = tmp_path / "reviewed.docx"
-    docx = DocxDocument()
-    empty = docx.add_paragraph()
-    numbering = OxmlElement("w:numPr")
-    ilvl = OxmlElement("w:ilvl")
-    ilvl.set(qn("w:val"), "0")
-    num_id = OxmlElement("w:numId")
-    num_id.set(qn("w:val"), "1")
-    numbering.append(ilvl)
-    numbering.append(num_id)
-    empty._p.get_or_add_pPr().append(numbering)
-    docx.add_paragraph("Kept.")
-    docx.save(path)
-
-    restored = reject_all_revisions(path, tmp_path / "input.docx")
-    assert inspect_markup(restored).is_clean
-    assert _body_paragraph_texts(restored) == ["", "Kept."]
-
-
-def test_reject_all_revisions_rejects_cell_deletion(tmp_path: Path) -> None:
-    path = tmp_path / "table.docx"
-    docx = DocxDocument()
-    table = docx.add_table(rows=1, cols=1)
-    cell = table.rows[0].cells[0]
-    cell.text = "cell text"
-    tc_properties = cell._tc.get_or_add_tcPr()
-    cell_del = OxmlElement("w:cellDel")
-    cell_del.set(qn("w:id"), "1")
-    cell_del.set(qn("w:author"), "reviewer")
-    cell_del.set(qn("w:date"), "1970-01-01T00:00:00Z")
-    tc_properties.append(cell_del)
-    docx.save(path)
-
-    with pytest.raises(RejectRevisionsError):
-        reject_all_revisions(path, tmp_path / "out.docx")
-    assert not (tmp_path / "out.docx").exists()
-
-
-def test_reject_all_revisions_in_place(tmp_path: Path) -> None:
-    path = tmp_path / "reviewed.docx"
-    docx = DocxDocument()
-    paragraph = docx.add_paragraph("Original clause. ")
-    _add_tracked_run(paragraph, "w:ins", "lawyer phrase")
-    docx.save(path)
-
-    result = reject_all_revisions(path, path)
-    assert result == path
-    assert inspect_markup(path).is_clean
-    assert _body_paragraph_texts(path) == ["Original clause. "]
