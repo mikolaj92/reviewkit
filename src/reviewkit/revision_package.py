@@ -91,7 +91,8 @@ def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
                 or name.startswith(("/", "\\"))
                 or "\\" in name
                 or any(segment in {"", ".", ".."} for segment in name.split("/"))
-                or any(":" in segment for segment in name.split("/"))
+                or "?" in name
+                or "#" in name
             ):
                 raise RevisionPackageError(f"DOCX contains invalid package member path: {name}")
         total = sum(info.file_size for info in infos)
