@@ -250,7 +250,14 @@ def test_revision_operations_reject_xml_after_large_whitespace_prefix(
 
 
 @pytest.mark.parametrize(
-    "member_name", ["word/../customXml/item1", "word?customXml/item1", "word#customXml/item1"]
+    "member_name",
+    [
+        "word/../customXml/item1",
+        "word?customXml/item1",
+        "word#customXml/item1",
+        "word[customXml/item1",
+        "word customXml/item1",
+    ],
 )
 @pytest.mark.parametrize(
     ("operation", "error_type"),
@@ -278,12 +285,13 @@ def test_revision_operations_reject_invalid_package_members(
     assert not (tmp_path / "out.docx").exists()
 
 
-@pytest.mark.parametrize(
-    "operation", [reject_all_revisions, revisions_module.accept_all_revisions]
-)
-def test_revision_operations_allow_colon_in_valid_package_member(tmp_path: Path, operation) -> None:
+@pytest.mark.parametrize("operation", [reject_all_revisions, revisions_module.accept_all_revisions])
+@pytest.mark.parametrize("member_name", ["customXml/item:1.xml", "customXml/item%2Fescaped.xml"])
+def test_revision_operations_allow_valid_package_member_names(
+    tmp_path: Path, operation, member_name: str
+) -> None:
     source = _saved_docx(tmp_path / "source.docx", "old clause")
-    _add_package_part(source, "customXml/item:1.xml", b"<item/>")
+    _add_package_part(source, member_name, b"<item/>")
     out = tmp_path / "out.docx"
 
     operation(source, out)

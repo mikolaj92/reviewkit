@@ -55,10 +55,29 @@ MAX_COMPRESSION_RATIO = 1000
 _XML_BOMS = (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
 _XML_PROBE_BYTES = 64 * 1024
 _XML_ENCODINGS = ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be")
+_OOXML_PART_NAME_CHARS = frozenset("!$%&'()*+,-.:;=@_~/")
 
 
 class RevisionPackageError(RuntimeError):
     pass
+
+
+def _is_valid_package_member_name(name: str) -> bool:
+    normalized = name.removeprefix("/")
+    if normalized == "[Content_Types].xml":
+        return True
+    if (
+        not normalized
+        or name.startswith(("/", "\\"))
+        or "\\" in name
+        or any(segment in {"", ".", ".."} for segment in normalized.split("/"))
+    ):
+        return False
+    return all(
+        ord(character) < 128
+        and (character.isalnum() or character in _OOXML_PART_NAME_CHARS)
+        for character in normalized
+    )
 
 
 def _needs_xml_validation(name: str, data: bytes) -> bool:
@@ -86,14 +105,7 @@ def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
         if len(names) != len(set(names)):
             raise RevisionPackageError("DOCX contains duplicate package member names")
         for name in names:
-            if (
-                not name
-                or name.startswith(("/", "\\"))
-                or "\\" in name
-                or any(segment in {"", ".", ".."} for segment in name.split("/"))
-                or "?" in name
-                or "#" in name
-            ):
+            if not _is_valid_package_member_name(name):
                 raise RevisionPackageError(f"DOCX contains invalid package member path: {name}")
         total = sum(info.file_size for info in infos)
         if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
