@@ -85,6 +85,14 @@ def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
         names = [info.filename for info in infos]
         if len(names) != len(set(names)):
             raise RevisionPackageError("DOCX contains duplicate package member names")
+        for name in names:
+            if (
+                not name
+                or name.startswith(("/", "\\"))
+                or "\\" in name
+                or any(segment in {"", ".", ".."} for segment in name.split("/"))
+            ):
+                raise RevisionPackageError(f"DOCX contains invalid package member path: {name}")
         total = sum(info.file_size for info in infos)
         if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
             raise RevisionPackageError(

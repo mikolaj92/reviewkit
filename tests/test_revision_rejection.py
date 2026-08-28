@@ -249,6 +249,31 @@ def test_revision_operations_reject_xml_after_large_whitespace_prefix(
     assert not (tmp_path / "out.docx").exists()
 
 
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        (reject_all_revisions, RejectRevisionsError),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+    ],
+)
+def test_revision_operations_reject_dot_segment_package_members(
+    tmp_path: Path,
+    operation,
+    error_type: type[Exception],
+) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    _add_package_part(
+        source,
+        "word/../customXml/item1",
+        b"<item/>",
+    )
+
+    with pytest.raises(error_type, match="package member path"):
+        operation(source, tmp_path / "out.docx")
+
+    assert not (tmp_path / "out.docx").exists()
+
+
 @pytest.mark.parametrize("change_name", ["cellIns", "cellMerge"])
 def test_reject_all_revisions_fails_closed_on_cell_structure(
     tmp_path: Path, change_name: str
