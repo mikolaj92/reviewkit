@@ -194,9 +194,14 @@ def _comment_thread_ids_are_complete(path: str | Path) -> bool:
     except etree.XMLSyntaxError:
         return False
     known_para_ids = set(para_ids)
+    seen_para_ids: set[str] = set()
     for element in extended_root.iter(f"{{{_W15_NS}}}commentEx"):
         para_id = element.get(f"{{{_W15_NS}}}paraId")
         parent_id = element.get(f"{{{_W15_NS}}}paraIdParent")
+        if para_id in seen_para_ids:
+            return False
+        if para_id is not None:
+            seen_para_ids.add(para_id)
         if para_id not in known_para_ids or (
             parent_id is not None and parent_id not in known_para_ids
         ):

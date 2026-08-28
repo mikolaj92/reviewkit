@@ -201,6 +201,29 @@ def test_duplicate_source_thread_paragraph_ids_fail_closed(tmp_path: Path) -> No
     assert not output.exists()
 
 
+def test_duplicate_source_thread_entries_fail_closed(tmp_path: Path) -> None:
+    # Given: a threaded source with two sidecar entries for one child paragraph identity.
+    source = tmp_path / "duplicate-thread-entries.docx"
+    document = DocxDocument()
+    for label in ("First", "Second"):
+        paragraph = document.add_paragraph(f"{label}.")
+        document.add_comment(
+            runs=paragraph.runs[0], text=f"{label} note.", author=label, initials=label[0]
+        )
+    document.save(source)
+    _duplicate_thread_comment_ex(source)
+
+    # When: ReviewKit reads the source and attempts to publish a review artifact.
+    review_document = load_docx(source)
+    output = tmp_path / "reviewed.docx"
+
+    # Then: duplicate sidecar identity is refused before output creation.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], output)
+    assert not output.exists()
+
+
 def _append_revisions(path: Path) -> None:
     with ZipFile(path) as archive:
         entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
@@ -311,6 +334,34 @@ def _duplicate_thread_paragraph_id(path: Path) -> None:
     revised_comments_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     extended_xml = (
         b'<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">'
+        b'<w15:commentEx w15:paraId="BBBB0002" w15:paraIdParent="AAAA0001"/>'
+        b"</w15:commentsEx>"
+    )
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_comments_xml if info.filename == "word/comments.xml" else data,
+            )
+        archive.writestr("word/commentsExtended.xml", extended_xml)
+
+
+def _duplicate_thread_comment_ex(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    comments_xml = next(data for info, data in entries if info.filename == "word/comments.xml")
+    root = etree.fromstring(comments_xml)
+    comments = root.findall(f"{_W}comment")
+    assert len(comments) == 2
+    for comment, para_id in zip(comments, ("AAAA0001", "BBBB0002"), strict=True):
+        paragraph = comment.find(f"{_W}p")
+        assert paragraph is not None
+        paragraph.set("{http://schemas.microsoft.com/office/word/2010/wordml}paraId", para_id)
+    revised_comments_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    extended_xml = (
+        b'<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">'
+        b'<w15:commentEx w15:paraId="AAAA0001"/> '
+        b'<w15:commentEx w15:paraId="BBBB0002" w15:paraIdParent="AAAA0001"/> '
         b'<w15:commentEx w15:paraId="BBBB0002" w15:paraIdParent="AAAA0001"/>'
         b"</w15:commentsEx>"
     )
