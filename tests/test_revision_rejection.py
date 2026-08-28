@@ -63,6 +63,38 @@ def _replace_document_xml(path: Path, document_xml: bytes) -> None:
             archive.writestr(info, document_xml if info.filename == "word/document.xml" else data)
 
 
+def _add_comment_relationship_part(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    relationship_part = (
+        b'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        b'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        b'<Relationship Id="rIdComment" '
+        b'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" '
+        b'Target="../comments.xml"/>'
+        b'</Relationships>'
+    )
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        for info, data in entries:
+            archive.writestr(info, data)
+        archive.writestr("word/_rels/comments.xml.rels", relationship_part)
+
+
+def _add_package_part(path: Path, name: str, data: bytes) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    with ZipFile(path, "w", ZIP_DEFLATED) as archive:
+        replaced = False
+        for info, entry_data in entries:
+            if info.filename == name:
+                archive.writestr(info, data)
+                replaced = True
+            else:
+                archive.writestr(info, entry_data)
+        if not replaced:
+            archive.writestr(name, data)
+
+
 def test_revisions_module_preserves_public_reject_api() -> None:
     assert revisions_module.reject_all_revisions is reject_all_revisions
     assert revisions_module.RejectRevisionsError is RejectRevisionsError
@@ -106,6 +138,56 @@ def test_reject_all_revisions_comment_policy(tmp_path: Path) -> None:
 
     assert inspect_markup(stripped).is_clean
     assert inspect_markup(preserved).has_comments
+
+
+def test_reject_all_revisions_removes_comment_relationship_parts(tmp_path: Path) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    reviewed = _reviewed_replacement(source, tmp_path / "reviewed.docx")
+    _add_comment_relationship_part(reviewed)
+
+    stripped = reject_all_revisions(reviewed, tmp_path / "stripped.docx")
+
+    with ZipFile(stripped) as archive:
+        assert "word/comments.xml" not in archive.namelist()
+        assert "word/_rels/comments.xml.rels" not in archive.namelist()
+
+
+def test_accept_all_revisions_removes_comment_relationship_parts(tmp_path: Path) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    reviewed = _reviewed_replacement(source, tmp_path / "reviewed.docx")
+    _add_comment_relationship_part(reviewed)
+
+    cleaned = revisions_module.accept_all_revisions(reviewed, tmp_path / "cleaned.docx")
+
+    with ZipFile(cleaned) as archive:
+        assert "word/comments.xml" not in archive.namelist()
+        assert "word/_rels/comments.xml.rels" not in archive.namelist()
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        (reject_all_revisions, RejectRevisionsError),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+    ],
+)
+def test_revision_operations_reject_doctype_in_unprocessed_xml(
+    tmp_path: Path,
+    operation,
+    error_type: type[Exception],
+) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    custom_xml = (
+        b'<?xml version="1.0"?>'
+        b'<!DOCTYPE item [<!ENTITY payload "unsafe">]>'
+        b'<item>&payload;</item>'
+    )
+    _add_package_part(source, "customXml/item1.xml", custom_xml)
+
+    with pytest.raises(error_type, match="DOCTYPE"):
+        operation(source, tmp_path / "out.docx")
+
+    assert not (tmp_path / "out.docx").exists()
 
 
 @pytest.mark.parametrize("change_name", ["cellIns", "cellMerge"])

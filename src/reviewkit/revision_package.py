@@ -9,7 +9,6 @@ from lxml import etree
 
 from reviewkit.docx_package import _deterministic_zipinfo
 
-_COMMENT_PART_PREFIXES = ("word/comments", "word/people.xml")
 _RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 _XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
@@ -84,7 +83,18 @@ def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
                 raise RevisionPackageError(
                     f"DOCX entry {info.filename} compression ratio exceeds limit"
                 )
-        return [(info, archive.read(info)) for info in infos]
+        entries: list[tuple[ZipInfo, bytes]] = []
+        for info in infos:
+            data = archive.read(info)
+            if info.filename.endswith((".xml", ".rels")):
+                try:
+                    parse_xml(data)
+                except (RevisionPackageError, etree.XMLSyntaxError) as exc:
+                    raise RevisionPackageError(
+                        f"DOCX XML part {info.filename} is invalid: {exc}"
+                    ) from exc
+            entries.append((info, data))
+        return entries
 
 
 def parse_xml(data: bytes) -> etree._Element:
@@ -115,7 +125,20 @@ def serialize(root: etree._Element) -> bytes:
 
 
 def is_comment_part(name: str) -> bool:
-    return name.startswith(_COMMENT_PART_PREFIXES)
+    normalized = name.removeprefix("/")
+    if not normalized.startswith("word/"):
+        return False
+    basename = normalized.rsplit("/", 1)[-1]
+    if basename == "people.xml" or (
+        basename.startswith("comments") and basename.endswith(".xml")
+    ):
+        return True
+    if normalized.startswith("word/_rels/") and basename.endswith(".xml.rels"):
+        source_part = basename.removesuffix(".rels")
+        return source_part == "people.xml" or (
+            source_part.startswith("comments") and source_part.endswith(".xml")
+        )
+    return False
 
 
 def write_package_atomically(
