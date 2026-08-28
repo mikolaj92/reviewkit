@@ -165,16 +165,19 @@ def test_accept_all_revisions_removes_comment_relationship_parts(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
-    ("operation", "error_type"),
+    ("operation", "error_type", "part_name"),
     [
-        (reject_all_revisions, RejectRevisionsError),
-        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+        (reject_all_revisions, RejectRevisionsError, "customXml/item1.xml"),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1.xml"),
+        (reject_all_revisions, RejectRevisionsError, "customXml/item1.XML"),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1.XML"),
     ],
 )
 def test_revision_operations_reject_doctype_in_unprocessed_xml(
     tmp_path: Path,
     operation,
     error_type: type[Exception],
+    part_name: str,
 ) -> None:
     source = _saved_docx(tmp_path / "source.docx", "old clause")
     custom_xml = (
@@ -182,7 +185,7 @@ def test_revision_operations_reject_doctype_in_unprocessed_xml(
         b'<!DOCTYPE item [<!ENTITY payload "unsafe">]>'
         b'<item>&payload;</item>'
     )
-    _add_package_part(source, "customXml/item1.xml", custom_xml)
+    _add_package_part(source, part_name, custom_xml)
 
     with pytest.raises(error_type, match="DOCTYPE"):
         operation(source, tmp_path / "out.docx")

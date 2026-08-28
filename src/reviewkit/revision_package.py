@@ -86,7 +86,7 @@ def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
         entries: list[tuple[ZipInfo, bytes]] = []
         for info in infos:
             data = archive.read(info)
-            if info.filename.endswith((".xml", ".rels")):
+            if info.filename.casefold().endswith((".xml", ".rels")):
                 try:
                     parse_xml(data)
                 except (RevisionPackageError, etree.XMLSyntaxError) as exc:
