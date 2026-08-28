@@ -60,6 +60,9 @@ _THREAD_REL_TARGETS = frozenset(
         "people.xml",
     }
 )
+_COMMENT_MARKER_NAMES = frozenset(
+    {"commentRangeStart", "commentRangeEnd", "commentReference"}
+)
 
 
 @dataclass(frozen=True)
@@ -119,12 +122,100 @@ def comments_for_locator(
     return [comment for comment in comments if comment.locator == locator]
 
 
+def _comment_markers_are_complete(path: str | Path, comments: list[DocxComment]) -> bool:
+    """Return whether every source comment marker has one unambiguous body."""
+    body_ids = [comment.id for comment in comments]
+    if len(set(body_ids)) != len(body_ids):
+        return False
+    marker_counts: dict[str, dict[str, int]] = {}
+    try:
+        with ZipFile(str(path)) as bundle:
+            for name in bundle.namelist():
+                if not (name.startswith("word/") and name.endswith(".xml")):
+                    continue
+                root = etree.fromstring(bundle.read(name))
+                for element in root.iter():
+                    if not isinstance(element.tag, str):
+                        continue
+                    qualified = etree.QName(element)
+                    if qualified.namespace != _W_NS or qualified.localname not in _COMMENT_MARKER_NAMES:
+                        continue
+                    marker_id = element.get(f"{{{_W_NS}}}id")
+                    if marker_id is None:
+                        return False
+                    counts = marker_counts.setdefault(
+                        marker_id,
+                        {"commentRangeStart": 0, "commentRangeEnd": 0, "commentReference": 0},
+                    )
+                    counts[qualified.localname] += 1
+    except (OSError, BadZipFile, KeyError, etree.XMLSyntaxError):
+        return False
+
+    body_id_set = set(body_ids)
+    if any(marker_id not in body_id_set for marker_id in marker_counts):
+        return False
+    for counts in marker_counts.values():
+        if any(counts[name] != 1 for name in _COMMENT_MARKER_NAMES):
+            return False
+    return True
+
+
+def _comment_thread_ids_are_complete(path: str | Path) -> bool:
+    """Return whether comment-thread paragraph IDs are unique and resolvable."""
+    try:
+        with ZipFile(str(path)) as bundle:
+            names = set(bundle.namelist())
+            if _COMMENTS_PART not in names:
+                return True
+            comments_xml = bundle.read(_COMMENTS_PART)
+            extended_xml = (
+                bundle.read(_COMMENTS_EXTENDED_PART)
+                if _COMMENTS_EXTENDED_PART in names
+                else None
+            )
+    except (OSError, BadZipFile, KeyError):
+        return False
+
+    try:
+        comments_root = etree.fromstring(comments_xml)
+    except etree.XMLSyntaxError:
+        return False
+    para_ids = [
+        paragraph.get(f"{{{_W14_NS}}}paraId")
+        for paragraph in comments_root.iter(f"{{{_W_NS}}}p")
+        if paragraph.get(f"{{{_W14_NS}}}paraId") is not None
+    ]
+    if len(set(para_ids)) != len(para_ids):
+        return False
+    if extended_xml is None:
+        return True
+    try:
+        extended_root = etree.fromstring(extended_xml)
+    except etree.XMLSyntaxError:
+        return False
+    known_para_ids = set(para_ids)
+    seen_para_ids: set[str] = set()
+    for element in extended_root.iter(f"{{{_W15_NS}}}commentEx"):
+        para_id = element.get(f"{{{_W15_NS}}}paraId")
+        parent_id = element.get(f"{{{_W15_NS}}}paraIdParent")
+        if para_id in seen_para_ids:
+            return False
+        if para_id is not None:
+            seen_para_ids.add(para_id)
+        if para_id not in known_para_ids or (
+            parent_id is not None and parent_id not in known_para_ids
+        ):
+            return False
+    return True
+
+
 def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | Path) -> None:
     """Copy modern comment-thread parts that python-docx dropped on save.
 
-    ``comments.xml`` is left alone: the renderer appends new review comments
-    there. Only the thread sidecar parts (and the relationships / content-type
-    entries that make Word see them) are restored from the source package.
+    The renderer appends new review comments to ``comments.xml``; existing
+    source comment paragraph IDs are synchronized when thread sidecars require
+    them. Thread sidecar parts (and the relationships / content-type entries
+    that make Word see them) are restored from the source package.
     """
     source = Path(source_path)
     target = Path(rendered_path)
@@ -133,7 +224,7 @@ def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | P
             name: bundle.read(name)
             for name in bundle.namelist()
             if _is_thread_part(name)
-            or name in {_DOCUMENT_RELS_PART, _CONTENT_TYPES_PART}
+            or name in {_COMMENTS_PART, _DOCUMENT_RELS_PART, _CONTENT_TYPES_PART}
         }
 
     if not any(_is_thread_part(name) for name in source_parts):
@@ -148,13 +239,18 @@ def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | P
         for name, data in source_parts.items()
         if _is_thread_part(name) and name not in rendered_names
     }
-    if not missing:
+    restored_comments = _restore_source_comment_paragraph_ids(
+        entries, source_parts[_COMMENTS_PART]
+    )
+    if not missing and restored_comments is None:
         return
 
     restored: list[tuple[Any, bytes]] = []
     for info, data in entries:
         name = info.filename
-        if name == _CONTENT_TYPES_PART:
+        if name == _COMMENTS_PART and restored_comments is not None:
+            data = restored_comments
+        elif name == _CONTENT_TYPES_PART:
             data = _merge_content_type_overrides(
                 data, source_parts.get(_CONTENT_TYPES_PART, b""), missing
             )
@@ -170,6 +266,38 @@ def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | P
     with ZipFile(target, "w") as output:
         for info, data in restored:
             output.writestr(info, data)
+
+
+def _restore_source_comment_paragraph_ids(
+    entries: list[tuple[ZipInfo, bytes]], source_comments: bytes
+) -> bytes | None:
+    rendered_comments = next(
+        (data for info, data in entries if info.filename == _COMMENTS_PART), None
+    )
+    if rendered_comments is None:
+        return None
+    source_root = etree.fromstring(source_comments)
+    rendered_root = etree.fromstring(rendered_comments)
+    source_by_id = {
+        comment.get(f"{{{_W_NS}}}id"): comment
+        for comment in source_root.findall(f"{{{_W_NS}}}comment")
+        if comment.get(f"{{{_W_NS}}}id") is not None
+    }
+    changed = False
+    for rendered_comment in rendered_root.findall(f"{{{_W_NS}}}comment"):
+        source_comment = source_by_id.get(rendered_comment.get(f"{{{_W_NS}}}id"))
+        if source_comment is None:
+            continue
+        for source_paragraph, rendered_paragraph in zip(
+            source_comment.findall(f"{{{_W_NS}}}p"),
+            rendered_comment.findall(f"{{{_W_NS}}}p"),
+            strict=True,
+        ):
+            para_id = source_paragraph.get(f"{{{_W14_NS}}}paraId")
+            if para_id is not None and rendered_paragraph.get(f"{{{_W14_NS}}}paraId") != para_id:
+                rendered_paragraph.set(f"{{{_W14_NS}}}paraId", para_id)
+                changed = True
+    return etree.tostring(rendered_root, xml_declaration=True, encoding="UTF-8") if changed else None
 
 
 def _is_thread_part(name: str) -> bool:
@@ -304,6 +432,8 @@ def _comment_ids_by_para_id(comments_xml: bytes) -> dict[str, str]:
         for paragraph in comment.findall(f"{{{_W_NS}}}p"):
             para_id = paragraph.get(f"{{{_W14_NS}}}paraId")
             if para_id:
+                if para_id in mapping:
+                    return {}
                 mapping[para_id] = comment_id
                 break
     return mapping

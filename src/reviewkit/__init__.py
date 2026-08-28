@@ -47,10 +47,15 @@ from reviewkit.models import (
     ReviewResult,
     ReviewScope,
     ReviewStats,
+    RevisionCoverageState,
+    RevisionCoverageError,
+    RevisionLedger,
+    SourceRevision,
+    SourceRevisionKind,
     canonical_action_dump,
 )
 from reviewkit.comments import DocxComment, comments_for_locator, read_comments
-from reviewkit.parser_docx import DocxFootnote, read_footnotes
+from reviewkit.parser_docx import DocxFootnote, load_docx, read_footnotes
 from reviewkit.pipeline import review_document
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
@@ -99,7 +104,12 @@ __all__ = [
     "ReviewResult",
     "ReviewScope",
     "ReviewStats",
+    "RevisionCoverageState",
+    "RevisionCoverageError",
+    "RevisionLedger",
     "SignatureBlockStart",
+    "SourceRevision",
+    "SourceRevisionKind",
     "accept_all_revisions",
     "apply_reviewed_markup",
     "canonical_action_dump",
@@ -114,6 +124,7 @@ __all__ = [
     "has_tracked_revisions",
     "inspect_markup",
     "is_supported_anchor",
+    "load_docx",
     "load_profile",
     "parse_body_anchor_index",
     "read_comments",

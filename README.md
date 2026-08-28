@@ -225,6 +225,33 @@ Either DOCX render can be turned off per profile via the `outputs` block (see
 [Review Profiles](#review-profiles)); a disabled artifact is skipped and its `ReviewResult`
 path is `None`.
 
+### Revision-aware input
+
+`load_docx()` exposes the document in its effective, post-change view: text inside
+`w:ins` is present and text inside `w:del` is omitted from paragraph text. The original
+revision evidence remains available through the typed `ReviewDocument.revision_ledger`:
+
+```python
+from reviewkit import RevisionCoverageState, load_docx
+
+document = load_docx("input.docx")
+assert document.revision_ledger.coverage is RevisionCoverageState.COMPLETE
+for entry in document.revision_ledger.entries:
+    print(entry.kind, entry.text, entry.locator, entry.revision_id, entry.author, entry.date)
+```
+
+`SourceRevision` entries are domain-neutral and retain inserted/deleted text, stable
+paragraph locators, offsets, and available Word revision metadata. Existing Word comments
+remain in `document.comments` as `DocxComment` values, linked to the same locators; an
+unresolved anchor is represented explicitly with `locator=None`. When the source package
+has incomplete revision or comment coverage, both DOCX renderers raise
+`RevisionCoverageError` before creating an output file. This prevents a partial review
+artifact from being mistaken for a complete projection.
+
+Rendering a reviewed document preserves source revision wrappers, comment bodies, and
+thread sidecars, then adds new review markup with the reviewer identity and collision-free
+revision IDs. The source and generated records can therefore be inspected separately.
+
 ## Anchored Paragraph Insertion
 
 Besides in-place rendering, ReviewKit ships a standalone insertion engine

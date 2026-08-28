@@ -1,5 +1,5 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -125,7 +125,7 @@ wheels = [
 [[package]]
 name = "docxtor"
 version = "0.4.3"
-source = { git = "https://github.com/mikolaj92/Docxtor.git?rev=v0.4.3#523e81ade0b9ee155c35ab175bc62b7979f7eb8a" }
+source = { git = "https://github.com/mikolaj92/Docxtor.git?rev=c98a1911ea6a241aec3f85765b982733d0320d7e#c98a1911ea6a241aec3f85765b982733d0320d7e" }
 dependencies = [
     { name = "pymupdf" },
     { name = "pypdf" },
@@ -588,7 +588,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "docxtor", git = "https://github.com/mikolaj92/Docxtor.git?rev=v0.4.3" },
+    { name = "docxtor", git = "https://github.com/mikolaj92/Docxtor.git?rev=c98a1911ea6a241aec3f85765b982733d0320d7e" },
     { name = "lxml", specifier = ">=4.9" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
