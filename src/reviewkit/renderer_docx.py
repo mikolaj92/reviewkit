@@ -104,6 +104,8 @@ class RenderIntegrityError(RuntimeError):
 def _assert_complete_revision_coverage(document: ReviewDocument) -> None:
     if document.revision_ledger.coverage != RevisionCoverageState.COMPLETE:
         raise RevisionCoverageError("source revision coverage is incomplete")
+    if len({comment.id for comment in document.comments}) != len(document.comments):
+        raise RevisionCoverageError("source comment coverage is incomplete")
 
 
 def _next_review_revision_id(source_path: Path | None) -> int:

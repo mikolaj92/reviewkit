@@ -47,8 +47,10 @@ def load_docx(path: str | Path) -> ReviewDocument:
     effective_texts, revision_ledger = _project_revision_input(addressable_document.spans)
     markup_report = inspect_markup(source_path)
     tracked_revisions = has_tracked_revisions(source_path)
-    if _revision_coverage_is_incomplete(source_path, markup_report, revision_ledger) or any(
-        _comment_anchor_is_unresolved(comment, comments) for comment in comments
+    if (
+        _revision_coverage_is_incomplete(source_path, markup_report, revision_ledger)
+        or _comment_ids_are_ambiguous(comments)
+        or any(_comment_anchor_is_unresolved(comment, comments) for comment in comments)
     ):
         revision_ledger = revision_ledger.model_copy(
             update={"coverage": RevisionCoverageState.INCOMPLETE}
@@ -242,6 +244,10 @@ def _comment_anchor_is_unresolved(comment: DocxComment, comments: list[DocxComme
         return True
     parent = next((candidate for candidate in comments if candidate.id == comment.parent_id), None)
     return parent is None or parent.locator is None
+
+
+def _comment_ids_are_ambiguous(comments: list[DocxComment]) -> bool:
+    return len({comment.id for comment in comments}) != len(comments)
 
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"

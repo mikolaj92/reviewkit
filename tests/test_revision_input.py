@@ -115,6 +115,30 @@ def test_mixed_supported_and_unsupported_revisions_fail_closed(tmp_path: Path) -
     assert not output.exists()
 
 
+def test_duplicate_source_comment_ids_fail_closed(tmp_path: Path) -> None:
+    # Given: a source whose two comment bodies claim the same Word identifier.
+    source = tmp_path / "duplicate-comment-ids.docx"
+    document = DocxDocument()
+    first = document.add_paragraph()
+    first_run = first.add_run("First.")
+    document.add_comment(runs=first_run, text="First note.", author="A", initials="A")
+    second = document.add_paragraph()
+    second_run = second.add_run("Second.")
+    document.add_comment(runs=second_run, text="Second note.", author="B", initials="B")
+    document.save(source)
+    _duplicate_second_comment_id(source)
+
+    # When: ReviewKit reads the source and attempts to publish a review artifact.
+    review_document = load_docx(source)
+    output = tmp_path / "reviewed.docx"
+
+    # Then: ambiguous source-comment identity is refused before output creation.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], output)
+    assert not output.exists()
+
+
 def _append_revisions(path: Path) -> None:
     with ZipFile(path) as archive:
         entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
@@ -151,6 +175,23 @@ def _append_unsupported_move(path: Path) -> None:
             archive.writestr(
                 info,
                 revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _duplicate_second_comment_id(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    comments_xml = next(data for info, data in entries if info.filename == "word/comments.xml")
+    root = etree.fromstring(comments_xml)
+    comments = root.findall(f"{_W}comment")
+    assert len(comments) == 2
+    comments[1].set(f"{_W}id", comments[0].get(f"{_W}id") or "0")
+    revised_comments_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_comments_xml if info.filename == "word/comments.xml" else data,
             )
 
 
