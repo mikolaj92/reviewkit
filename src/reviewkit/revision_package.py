@@ -62,7 +62,8 @@ class RevisionPackageError(RuntimeError):
 
 
 def _needs_xml_validation(name: str, data: bytes) -> bool:
-    if name.casefold().endswith((".xml", ".rels")):
+    normalized_name = name.removeprefix("/").casefold()
+    if normalized_name.startswith("customxml/") or normalized_name.endswith((".xml", ".rels")):
         return True
     candidate = data[:_XML_PROBE_BYTES].lstrip(b" \t\r\n")
     if candidate.startswith(b"<") or any(candidate.startswith(bom) for bom in _XML_BOMS):

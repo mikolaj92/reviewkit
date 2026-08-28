@@ -224,6 +224,31 @@ def test_revision_operations_reject_encoded_extensionless_xml(
     assert not (tmp_path / "out.docx").exists()
 
 
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        (reject_all_revisions, RejectRevisionsError),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+    ],
+)
+def test_revision_operations_reject_xml_after_large_whitespace_prefix(
+    tmp_path: Path,
+    operation,
+    error_type: type[Exception],
+) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    custom_xml = (
+        b" " * 65_537
+        + b'<!DOCTYPE item [<!ENTITY payload "unsafe">]><item>&payload;</item>'
+    )
+    _add_package_part(source, "customXml/item1", custom_xml)
+
+    with pytest.raises(error_type, match="DOCTYPE"):
+        operation(source, tmp_path / "out.docx")
+
+    assert not (tmp_path / "out.docx").exists()
+
+
 @pytest.mark.parametrize("change_name", ["cellIns", "cellMerge"])
 def test_reject_all_revisions_fails_closed_on_cell_structure(
     tmp_path: Path, change_name: str
