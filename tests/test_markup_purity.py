@@ -87,6 +87,26 @@ def test_tracked_change_ins_del_detected(tmp_path: Path, kind: str) -> None:
     assert has_tracked_revisions(path) is True
 
 
+def test_namespace_alias_revision_detected(tmp_path: Path) -> None:
+    # A valid WordprocessingML package may bind the Word namespace to a non-w prefix.
+    path = _docx(
+        tmp_path,
+        {
+            "word/document.xml": (
+                _XML_HEAD
+                + b'<x:document xmlns:x="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                b'<x:body><x:rPrChange w:id="9" xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"/></x:body>'
+                b"</x:document>"
+            )
+        },
+    )
+
+    report = inspect_markup(path)
+
+    assert report.revision_kinds == ("rPrChange",)
+    assert report.revision_parts == ("word/document.xml",)
+
+
 @pytest.mark.parametrize("element", _NON_INS_DEL_REVISIONS)
 def test_move_format_table_revisions_detected(tmp_path: Path, element: str) -> None:
     path = _docx(tmp_path, {"word/document.xml": _document_xml(f'<w:{element} w:id="7"/>'.encode())})

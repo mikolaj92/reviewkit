@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import re
+from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,7 +20,7 @@ from lxml import etree
 
 from reviewkit.comments import DocxComment, comments_for_locator, read_comments
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
-from reviewkit.markup_purity import has_tracked_revisions
+from reviewkit.markup_purity import MarkupReport, has_tracked_revisions, inspect_markup
 from reviewkit.models import (
     RevisionCoverageState,
     RevisionLedger,
@@ -44,8 +45,9 @@ def load_docx(path: str | Path) -> ReviewDocument:
     comments = read_comments(source_path)
     addressable_document = AddressableDocxDocument.open(source_path)
     effective_texts, revision_ledger = _project_revision_input(addressable_document.spans)
+    markup_report = inspect_markup(source_path)
     tracked_revisions = has_tracked_revisions(source_path)
-    if (tracked_revisions and not revision_ledger.entries) or any(
+    if _revision_coverage_is_incomplete(source_path, markup_report, revision_ledger) or any(
         _comment_anchor_is_unresolved(comment, comments) for comment in comments
     ):
         revision_ledger = revision_ledger.model_copy(
@@ -150,6 +152,55 @@ def _project_revision_input(
         {locator: "".join(parts) for locator, parts in effective_parts.items()},
         RevisionLedger(coverage=coverage, entries=tuple(entries)),
     )
+
+
+_SUPPORTED_REVISION_KINDS = frozenset({"ins", "del"})
+_BLOCK_REVISION_CHILDREN = frozenset({"p", "tbl", "tr", "tc"})
+
+
+def _revision_coverage_is_incomplete(
+    source_path: Path, markup_report: MarkupReport, ledger: RevisionLedger
+) -> bool:
+    """Return whether every source revision is represented by the typed projection."""
+    if not markup_report.has_tracked_revisions:
+        return False
+    if set(markup_report.revision_kinds) - _SUPPORTED_REVISION_KINDS:
+        return True
+
+    source_inventory: Counter[tuple[str, str | None, str | None, str | None]] = Counter()
+    with ZipFile(source_path) as bundle:
+        for name in bundle.namelist():
+            if not (name.startswith("word/") and name.endswith(".xml")):
+                continue
+            root = etree.fromstring(bundle.read(name))
+            for element in root.iter():
+                kind = etree.QName(element).localname
+                if kind not in _SUPPORTED_REVISION_KINDS:
+                    continue
+                if any(
+                    etree.QName(child).localname in _BLOCK_REVISION_CHILDREN
+                    for child in element
+                ):
+                    return True
+                source_inventory[
+                    (
+                        kind,
+                        element.get(f"{{{_W_NS}}}id"),
+                        element.get(f"{{{_W_NS}}}author"),
+                        element.get(f"{{{_W_NS}}}date"),
+                    )
+                ] += 1
+
+    ledger_inventory: Counter[tuple[str, str | None, str | None, str | None]] = Counter(
+        (
+            "ins" if entry.kind is SourceRevisionKind.INSERTED else "del",
+            entry.revision_id,
+            entry.author,
+            entry.date,
+        )
+        for entry in ledger.entries
+    )
+    return source_inventory != ledger_inventory
 
 
 def _source_revision(

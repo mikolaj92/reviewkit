@@ -10,9 +10,9 @@ stays with the caller.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
+from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
 from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
@@ -21,25 +21,35 @@ from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
 # emit under Track Changes (ISO/IEC 29500 §17.13): edits (w:ins/w:del), moves
 # (w:moveFrom/w:moveTo), the property-change wrappers (w:*PrChange), the table
 # revision marks (w:cellIns/w:cellDel/w:cellMerge/w:tblGridChange/w:tblPrExChange)
-# and paragraph-numbering revisions (w:numberingChange). The trailing lookahead pins
-# each element name to a delimiter so lookalikes never match:
-# <w:insideH>/<w:insideV> (table borders) are
-# not <w:ins>, <w:tblPrEx> (table property exceptions) is not <w:tblPrExChange>,
-# and the ubiquitous <w:sectPr>/<w:pPr>/<w:rPr>/<w:tcPr>/<w:trPr>/<w:tblPr>
-# property wrappers are not their *Change revisions -- so a clean document, which
-# is full of those wrappers, never trips the detector.
-#
-# The ``w:`` prefix is hard-coded: every mainstream producer (Word, python-docx,
-# LibreOffice, Google Docs export, the Open XML SDK) binds the WordprocessingML
-# namespace to ``w:`` in the parts scanned here, so pinning the prefix keeps the
-# grammar simple without missing real-world markup. A byte scan cannot resolve
-# namespace URIs anyway, and matching an arbitrary ``<*:ins>`` prefix would risk
-# false positives from unrelated namespaces that reuse these local names.
-_REVISION_TAG_RE = re.compile(
-    rb"<w:(ins|del|moveFrom|moveTo|rPrChange|pPrChange|sectPrChange|"
-    rb"tblPrChange|trPrChange|tcPrChange|cellIns|cellDel|cellMerge|"
-    rb"tblGridChange|tblPrExChange|numberingChange)(?=[\s>/])"
+# and paragraph-numbering revisions (w:numberingChange). The XML parser below matches
+# the WordprocessingML namespace URI rather than a particular prefix, so valid packages
+# using an alias such as ``x:ins`` are covered without treating same-named foreign XML as
+# a revision.
+_REVISION_KINDS = frozenset(
+    {
+        "ins",
+        "del",
+        "moveFrom",
+        "moveTo",
+        "moveFromRangeStart",
+        "moveFromRangeEnd",
+        "moveToRangeStart",
+        "moveToRangeEnd",
+        "rPrChange",
+        "pPrChange",
+        "sectPrChange",
+        "tblPrChange",
+        "trPrChange",
+        "tcPrChange",
+        "cellIns",
+        "cellDel",
+        "cellMerge",
+        "tblGridChange",
+        "tblPrExChange",
+        "numberingChange",
+    }
 )
+_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 # Every revision element above appears ONLY in revised content, so there is no
 # need for a part allowlist: scan each ``.xml`` part under ``word/`` and revisions
@@ -49,18 +59,32 @@ _REVISION_TAG_RE = re.compile(
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
 
-# A populated comment element in word/comments.xml. The lookahead keeps
-# <w:commentReference>/<w:commentRangeStart>/<w:commentRangeEnd> (which live in
-# document.xml, not the comments part) from ever being counted as comments.
-_COMMENT_TAG_RE = re.compile(rb"<w:comment(?=[\s>/])")
+# A populated comment element in word/comments.xml. Namespace-aware matching keeps
+# comment references/range markers in document.xml from being counted as comments.
 _COMMENTS_PART = "word/comments.xml"
 
 # The literal ``[SUGGESTION`` text marker reviewkit's own ``suggest`` insertions
 # emit (see :mod:`reviewkit.insertions`). It is written verbatim as run text, so
-# a byte scan over the same ``word/*.xml`` parts as the revision grammar finds
-# every surviving marker, wherever it landed.
+# a byte scan over the same ``word/*.xml`` parts finds every surviving marker,
+# wherever it landed.
 _SUGGESTION_MARKER_BYTES = SUGGESTION_MARKER_PREFIX.encode("ascii")
 _DOCUMENT_PART = "word/document.xml"
+_W_TAG_PREFIX = f"{{{_W_NS}}}"
+
+
+def _word_local_name(tag: object) -> str | None:
+    if not isinstance(tag, str) or not tag.startswith(_W_TAG_PREFIX):
+        return None
+    return tag[len(_W_TAG_PREFIX) :]
+
+
+def _revision_kinds_from_xml(data: bytes) -> set[str]:
+    root = ElementTree.fromstring(data)
+    return {
+        local_name
+        for element in root.iter()
+        if (local_name := _word_local_name(element.tag)) in _REVISION_KINDS
+    }
 
 
 @dataclass(frozen=True)
@@ -125,14 +149,19 @@ def inspect_markup(path: str | Path) -> MarkupReport:
             if not (name.startswith(_CONTENT_PART_PREFIX) and name.endswith(_CONTENT_PART_SUFFIX)):
                 continue
             data = bundle.read(name)
-            found = _REVISION_TAG_RE.findall(data)
+            found = _revision_kinds_from_xml(data)
             if found:
                 revision_parts.append(name)
-                revision_kinds.update(kind.decode("ascii") for kind in found)
+                revision_kinds.update(found)
             if _SUGGESTION_MARKER_BYTES in data:
                 suggestion_parts.append(name)
         if _COMMENTS_PART in names:
-            comment_count = len(_COMMENT_TAG_RE.findall(bundle.read(_COMMENTS_PART)))
+            comments_root = ElementTree.fromstring(bundle.read(_COMMENTS_PART))
+            comment_count = sum(
+                1
+                for element in comments_root.iter()
+                if _word_local_name(element.tag) == "comment"
+            )
     return MarkupReport(
         revision_parts=tuple(sorted(revision_parts)),
         revision_kinds=tuple(sorted(revision_kinds)),

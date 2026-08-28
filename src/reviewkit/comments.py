@@ -122,9 +122,10 @@ def comments_for_locator(
 def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | Path) -> None:
     """Copy modern comment-thread parts that python-docx dropped on save.
 
-    ``comments.xml`` is left alone: the renderer appends new review comments
-    there. Only the thread sidecar parts (and the relationships / content-type
-    entries that make Word see them) are restored from the source package.
+    The renderer appends new review comments to ``comments.xml``; existing
+    source comment paragraph IDs are synchronized when thread sidecars require
+    them. Thread sidecar parts (and the relationships / content-type entries
+    that make Word see them) are restored from the source package.
     """
     source = Path(source_path)
     target = Path(rendered_path)

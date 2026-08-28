@@ -24,7 +24,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 from lxml import etree
 
 from reviewkit.docx_package import _deterministic_zipinfo
-from reviewkit.markup_purity import _REVISION_TAG_RE, inspect_markup
+from reviewkit.markup_purity import _revision_kinds_from_xml, inspect_markup
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
@@ -373,7 +373,7 @@ def _transform_part(
     if drop_comments and name == "[Content_Types].xml":
         return _strip_comment_content_types(data)
 
-    needs_revisions = bool(_REVISION_TAG_RE.search(data))
+    needs_revisions = bool(_revision_kinds_from_xml(data))
     needs_comment_strip = drop_comments and bool(_COMMENT_ANCHOR_RE.search(data))
     if not (needs_revisions or needs_comment_strip):
         return data  # nothing to flatten in this part; copy it through verbatim

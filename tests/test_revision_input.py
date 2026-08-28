@@ -95,6 +95,26 @@ def test_unresolved_source_comment_refuses_reviewed_output(tmp_path: Path) -> No
     assert not output.exists()
 
 
+def test_mixed_supported_and_unsupported_revisions_fail_closed(tmp_path: Path) -> None:
+    # Given: a source with one projected insertion and one unsupported move revision.
+    source = tmp_path / "mixed-revisions.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_revisions(source)
+    _append_unsupported_move(source)
+
+    # When: ReviewKit builds its effective input projection.
+    review_document = load_docx(source)
+
+    # Then: one supported entry cannot mask the unsupported source grammar.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    output = tmp_path / "reviewed.docx"
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], output)
+    assert not output.exists()
+
+
 def _append_revisions(path: Path) -> None:
     with ZipFile(path) as archive:
         entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
@@ -104,6 +124,27 @@ def _append_revisions(path: Path) -> None:
     assert paragraph is not None
     paragraph.append(_revision("ins", "Inserted.", "1"))
     paragraph.append(_revision("del", "Deleted.", "2"))
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_unsupported_move(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    move_from = etree.Element(f"{_W}moveFrom", {f"{_W}id": "3"})
+    run = etree.SubElement(move_from, f"{_W}r")
+    text_node = etree.SubElement(run, f"{_W}t")
+    text_node.text = "Moved."
+    paragraph.append(move_from)
     revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     with ZipFile(path, "w") as archive:
         for info, data in entries:
