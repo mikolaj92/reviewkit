@@ -133,7 +133,7 @@ def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | P
             name: bundle.read(name)
             for name in bundle.namelist()
             if _is_thread_part(name)
-            or name in {_DOCUMENT_RELS_PART, _CONTENT_TYPES_PART}
+            or name in {_COMMENTS_PART, _DOCUMENT_RELS_PART, _CONTENT_TYPES_PART}
         }
 
     if not any(_is_thread_part(name) for name in source_parts):
@@ -148,13 +148,18 @@ def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | P
         for name, data in source_parts.items()
         if _is_thread_part(name) and name not in rendered_names
     }
-    if not missing:
+    restored_comments = _restore_source_comment_paragraph_ids(
+        entries, source_parts[_COMMENTS_PART]
+    )
+    if not missing and restored_comments is None:
         return
 
     restored: list[tuple[Any, bytes]] = []
     for info, data in entries:
         name = info.filename
-        if name == _CONTENT_TYPES_PART:
+        if name == _COMMENTS_PART and restored_comments is not None:
+            data = restored_comments
+        elif name == _CONTENT_TYPES_PART:
             data = _merge_content_type_overrides(
                 data, source_parts.get(_CONTENT_TYPES_PART, b""), missing
             )
@@ -170,6 +175,38 @@ def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | P
     with ZipFile(target, "w") as output:
         for info, data in restored:
             output.writestr(info, data)
+
+
+def _restore_source_comment_paragraph_ids(
+    entries: list[tuple[ZipInfo, bytes]], source_comments: bytes
+) -> bytes | None:
+    rendered_comments = next(
+        (data for info, data in entries if info.filename == _COMMENTS_PART), None
+    )
+    if rendered_comments is None:
+        return None
+    source_root = etree.fromstring(source_comments)
+    rendered_root = etree.fromstring(rendered_comments)
+    source_by_id = {
+        comment.get(f"{{{_W_NS}}}id"): comment
+        for comment in source_root.findall(f"{{{_W_NS}}}comment")
+        if comment.get(f"{{{_W_NS}}}id") is not None
+    }
+    changed = False
+    for rendered_comment in rendered_root.findall(f"{{{_W_NS}}}comment"):
+        source_comment = source_by_id.get(rendered_comment.get(f"{{{_W_NS}}}id"))
+        if source_comment is None:
+            continue
+        for source_paragraph, rendered_paragraph in zip(
+            source_comment.findall(f"{{{_W_NS}}}p"),
+            rendered_comment.findall(f"{{{_W_NS}}}p"),
+            strict=True,
+        ):
+            para_id = source_paragraph.get(f"{{{_W14_NS}}}paraId")
+            if para_id is not None and rendered_paragraph.get(f"{{{_W14_NS}}}paraId") != para_id:
+                rendered_paragraph.set(f"{{{_W14_NS}}}paraId", para_id)
+                changed = True
+    return etree.tostring(rendered_root, xml_declaration=True, encoding="UTF-8") if changed else None
 
 
 def _is_thread_part(name: str) -> bool:

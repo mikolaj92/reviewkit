@@ -8,11 +8,12 @@ from collections import Counter
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-from reviewkit.document import ReviewDocument
+if TYPE_CHECKING:
+    from reviewkit.document import ReviewDocument
 
 
 class ReviewScope(StrEnum):
@@ -20,6 +21,49 @@ class ReviewScope(StrEnum):
     PARAGRAPH = "paragraph"
     SECTION = "section"
     DOCUMENT = "document"
+
+
+class SourceRevisionKind(StrEnum):
+    """The source revision wrapper that owns a ledger entry's text."""
+
+    INSERTED = "inserted"
+    DELETED = "deleted"
+
+
+class RevisionCoverageState(StrEnum):
+    """Whether the source package's revisions have a complete typed projection."""
+
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+
+
+class SourceRevision(BaseModel):
+    """One addressable source revision span projected from Docxtor."""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: SourceRevisionKind
+    text: str
+    locator: str
+    span_id: str
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    revision_id: str | None = None
+    author: str | None = None
+    date: str | None = None
+
+
+class RevisionLedger(BaseModel):
+    """Typed source-revision coverage and entries for one review document."""
+
+    model_config = ConfigDict(frozen=True)
+
+    coverage: RevisionCoverageState
+    entries: tuple[SourceRevision, ...] = ()
+
+
+class RevisionCoverageError(RuntimeError):
+    """Raised before publication when source revision coverage is incomplete."""
 
 
 class ReviewActionType(StrEnum):
@@ -232,7 +276,7 @@ class ReviewStats(BaseModel):
 
 
 class ReviewResult(BaseModel):
-    document: ReviewDocument | None = None
+    document: "ReviewDocument | None" = None
     findings: list[ReviewFinding] = Field(default_factory=list)
     actions: list[ReviewAction] = Field(default_factory=list)
     reviewed_docx: Path | None = None

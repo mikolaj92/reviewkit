@@ -8,6 +8,7 @@ from docx import Document as DocxDocument
 from docx.oxml import OxmlElement
 
 from reviewkit.actions import prepare_actions
+from reviewkit.comments import read_comments
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
 from reviewkit.models import (
     ActionStatus,
@@ -94,6 +95,192 @@ def test_reviewed_docx_marks_every_action_type(
     assert any(text.startswith(f"{label}:") for text in comments), (
         f"{action_type.value}: no comment labelled {label!r}; got {comments}"
     )
+
+
+def test_layers_review_markup_onto_revision_comment_source(tmp_path: Path) -> None:
+    # Given a source with tracked insert/delete markup and a threaded source comment.
+    source = tmp_path / "source.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph("Alpha target")
+    docx.add_comment(
+        runs=paragraph.runs[0], text="Source note", author="Source", initials="SO"
+    )
+    docx.save(source)
+
+    with ZipFile(source) as bundle:
+        parts = {name: bundle.read(name) for name in bundle.namelist()}
+    document_root = ElementTree.fromstring(parts["word/document.xml"])
+    paragraph_xml = document_root.find(f".//{_W}p")
+    assert paragraph_xml is not None
+    source_insert = ElementTree.Element(
+        _W + "ins", {_W + "id": "1", _W + "author": "Source", _W + "date": "2020-01-01T00:00:00Z"}
+    )
+    insert_run = ElementTree.SubElement(source_insert, _W + "r")
+    ElementTree.SubElement(insert_run, _W + "t").text = " inserted"
+    source_delete = ElementTree.Element(
+        _W + "del", {_W + "id": "2", _W + "author": "Source", _W + "date": "2020-01-02T00:00:00Z"}
+    )
+    delete_run = ElementTree.SubElement(source_delete, _W + "r")
+    ElementTree.SubElement(delete_run, _W + "delText").text = " deleted"
+    paragraph_xml.extend((source_insert, source_delete))
+    reply_start = ElementTree.Element(_W + "commentRangeStart", {_W + "id": "1"})
+    reply_end = ElementTree.Element(_W + "commentRangeEnd", {_W + "id": "1"})
+    reply_reference_run = ElementTree.Element(_W + "r")
+    ElementTree.SubElement(
+        reply_reference_run, _W + "commentReference", {_W + "id": "1"}
+    )
+    paragraph_xml.insert(len(paragraph_xml) - 2, reply_start)
+    paragraph_xml.extend((reply_end, reply_reference_run))
+
+    comments_root = ElementTree.fromstring(parts["word/comments.xml"])
+    source_comment = comments_root.find(f"{_W}comment")
+    assert source_comment is not None
+    source_comment_paragraph = source_comment.find(f"{_W}p")
+    assert source_comment_paragraph is not None
+    source_comment_paragraph.set(
+        "{http://schemas.microsoft.com/office/word/2010/wordml}paraId", "AAAA0001"
+    )
+    reply = ElementTree.SubElement(
+        comments_root, _W + "comment", {_W + "id": "1", _W + "author": "Reply", _W + "initials": "RP"}
+    )
+    reply_paragraph = ElementTree.SubElement(
+        reply, _W + "p", {"{http://schemas.microsoft.com/office/word/2010/wordml}paraId": "BBBB0002"}
+    )
+    reply_run = ElementTree.SubElement(reply_paragraph, _W + "r")
+    ElementTree.SubElement(reply_run, _W + "t").text = "Reply note"
+
+    rels_root = ElementTree.fromstring(parts["word/_rels/document.xml.rels"])
+    ElementTree.SubElement(
+        rels_root,
+        "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship",
+        {
+            "Id": "rIdCommentEx",
+            "Type": "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+            "Target": "commentsExtended.xml",
+        },
+    )
+    types_root = ElementTree.fromstring(parts["[Content_Types].xml"])
+    ElementTree.SubElement(
+        types_root,
+        "{http://schemas.openxmlformats.org/package/2006/content-types}Override",
+        {
+            "PartName": "/word/commentsExtended.xml",
+            "ContentType": "application/vnd.ms-word.commentsExtended+xml",
+        },
+    )
+    parts["word/document.xml"] = ElementTree.tostring(document_root, encoding="utf-8", xml_declaration=True)
+    parts["word/comments.xml"] = ElementTree.tostring(comments_root, encoding="utf-8", xml_declaration=True)
+    parts["word/_rels/document.xml.rels"] = ElementTree.tostring(rels_root, encoding="utf-8", xml_declaration=True)
+    parts["[Content_Types].xml"] = ElementTree.tostring(types_root, encoding="utf-8", xml_declaration=True)
+    parts["word/commentsExtended.xml"] = (
+        b'<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">'
+        b'<w15:commentEx w15:paraId="AAAA0001" w15:done="0"/>'
+        b'<w15:commentEx w15:paraId="BBBB0002" w15:paraIdParent="AAAA0001" w15:done="0"/>'
+        b"</w15:commentsEx>"
+    )
+    with ZipFile(source, "w") as bundle:
+        for name, data in parts.items():
+            bundle.writestr(name, data)
+
+    document = load_docx(source)
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id=document.sections[0].paragraphs[0].id,
+        original_text="target",
+        replacement_text="replacement",
+        comment="Generated note",
+        status=ActionStatus.APPLIED,
+    )
+
+    # When an applied review action overlays that paragraph.
+    reviewed = render_reviewed_docx(
+        document, [action], tmp_path / "reviewed.docx", comment_author="Generated"
+    )
+
+    # Then original revision/comment identity survives and new markup uses fresh IDs.
+    assert DocxDocument(str(reviewed)).paragraphs
+    rendered_root = ElementTree.fromstring(_part_xml(reviewed, "word/document.xml"))
+    source_revisions = {
+        (element.tag, element.get(_W + "id"), element.get(_W + "author"), element.get(_W + "date"))
+        for element in rendered_root.iter()
+        if element.tag in {_W + "ins", _W + "del"} and element.get(_W + "author") == "Source"
+    }
+    assert (_W + "ins", "1", "Source", "2020-01-01T00:00:00Z") in source_revisions
+    assert (_W + "del", "2", "Source", "2020-01-02T00:00:00Z") in source_revisions
+    source_texts = {
+        (element.tag, "".join(child.text or "" for child in element.iter()))
+        for element in rendered_root.iter()
+        if element.tag in {_W + "ins", _W + "del"} and element.get(_W + "author") == "Source"
+    }
+    assert (_W + "ins", " inserted") in source_texts
+    assert (_W + "del", " deleted") in source_texts
+    generated_ids = {
+        int(element.get(_W + "id") or "0")
+        for element in rendered_root.iter()
+        if element.tag in {_W + "ins", _W + "del"} and element.get(_W + "author") == "Generated"
+    }
+    assert generated_ids and min(generated_ids) > 2
+    with ZipFile(reviewed) as bundle:
+        assert b"BBBB0002" in bundle.read("word/commentsExtended.xml")
+        assert b'paraIdParent="AAAA0001"' in bundle.read("word/commentsExtended.xml")
+    comments = read_comments(reviewed)
+    by_text = {comment.text: comment for comment in comments}
+    assert by_text["Source note"].locator == "body:p:0"
+    assert by_text["Source note"].anchor_text == "Alpha replacement"
+    assert by_text["Reply note"].parent_id == "0"
+    generated = next(comment for comment in comments if comment.author == "Generated")
+    assert "Generated note" in generated.text
+
+    repeated = render_reviewed_docx(
+        document, [action], tmp_path / "reviewed-repeat.docx", comment_author="Generated"
+    )
+    assert reviewed.read_bytes() == repeated.read_bytes()
+
+
+def test_rejects_effective_locator_after_source_deletion(tmp_path: Path) -> None:
+    # Given an effective-text locator after a source deletion hidden from that projection.
+    source = tmp_path / "source.docx"
+    docx = DocxDocument()
+    paragraph = docx.add_paragraph()
+    paragraph.add_run("Alpha ")
+    paragraph.add_run("target")
+    docx.save(source)
+    with ZipFile(source) as bundle:
+        parts = {name: bundle.read(name) for name in bundle.namelist()}
+    document_root = ElementTree.fromstring(parts["word/document.xml"])
+    paragraph_xml = document_root.find(f".//{_W}p")
+    assert paragraph_xml is not None
+    source_delete = ElementTree.Element(
+        _W + "del", {_W + "id": "1", _W + "author": "Source", _W + "date": "2020-01-01T00:00:00Z"}
+    )
+    delete_run = ElementTree.SubElement(source_delete, _W + "r")
+    ElementTree.SubElement(delete_run, _W + "delText").text = "removed "
+    paragraph_xml.insert(1, source_delete)
+    parts["word/document.xml"] = ElementTree.tostring(document_root, encoding="utf-8", xml_declaration=True)
+    with ZipFile(source, "w") as bundle:
+        for name, data in parts.items():
+            bundle.writestr(name, data)
+
+    document = load_docx(source)
+    target = document.sections[0].paragraphs[0]
+    assert target.text == "Alpha target"
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id=target.id,
+        original_text="target",
+        replacement_text="replacement",
+        locator=ReviewLocator(node_id=target.id, char_start=6, char_end=12),
+        status=ActionStatus.APPLIED,
+    )
+
+    # When renderer coordinates cannot faithfully address the source's raw inline segments.
+    with pytest.raises(RenderIntegrityError, match="would silently drop a tracked edit"):
+        render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
+
+    # Then no reviewed document is emitted with a misplaced edit.
+    assert not (tmp_path / "reviewed.docx").exists()
 
 
 @pytest.mark.parametrize(

@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
+from xml.etree import ElementTree
+from zipfile import ZipFile
 
 from docx import Document as DocxDocument
 from docx.oxml import OxmlElement
@@ -26,7 +28,13 @@ from reviewkit.docx_package import (
     restore_semantically_unchanged_xml_parts,
 )
 from reviewkit.document import ParagraphNode, ReviewDocument
-from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType
+from reviewkit.models import (
+    ActionStatus,
+    RevisionCoverageError,
+    RevisionCoverageState,
+    ReviewAction,
+    ReviewActionType,
+)
 from reviewkit.policy import WRITING_ACTIONS
 from docxtor import (
     InlineSegment as _InlineSegment,  # base mechanical only (text/opaque + rpr/element)
@@ -91,6 +99,30 @@ class RenderIntegrityError(RuntimeError):
     quietly missing edits) into a hard error, so consumers can fail closed on a raised
     render call and trust a successful one without re-parsing the DOCX.
     """
+
+
+def _assert_complete_revision_coverage(document: ReviewDocument) -> None:
+    if document.revision_ledger.coverage != RevisionCoverageState.COMPLETE:
+        raise RevisionCoverageError("source revision coverage is incomplete")
+
+
+def _next_review_revision_id(source_path: Path | None) -> int:
+    if source_path is None:
+        return 1
+
+    largest = 0
+    with ZipFile(source_path) as package:
+        for name in package.namelist():
+            if not name.startswith("word/") or not name.endswith(".xml"):
+                continue
+            root = ElementTree.fromstring(package.read(name))
+            for element in root.iter():
+                if element.tag not in {qn("w:ins"), qn("w:del")}:
+                    continue
+                revision_id = element.get(qn("w:id"))
+                if revision_id is not None and revision_id.isdecimal():
+                    largest = max(largest, int(revision_id))
+    return largest + 1
 
 
 def _describe_action(action: ReviewAction) -> str:
@@ -197,6 +229,7 @@ def render_reviewed_docx(
     comment_initials: str = "RV",
     revision_timestamp: datetime | None = None,
 ) -> Path:
+    _assert_complete_revision_coverage(document)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     _assert_writing_actions_reach_a_paragraph(
@@ -211,7 +244,7 @@ def render_reviewed_docx(
     reviewer = _ReviewerIdentity(
         author=comment_author, initials=comment_initials, revision_date=revision_date
     )
-    revision_id = 1
+    revision_id = _next_review_revision_id(document.source_path)
     # Stand-alone clause insertions (``new_paragraph``) splice NEW sibling paragraphs
     # into the body. _paragraph_for_locator indexes ``docx.paragraphs`` positionally,
     # so splicing mid-pass would shift every later paragraph's index and desync the
@@ -308,6 +341,7 @@ def render_corrected_docx(
     actions: list[ReviewAction],
     output_path: str | Path,
 ) -> Path:
+    _assert_complete_revision_coverage(document)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     _assert_writing_actions_reach_a_paragraph(

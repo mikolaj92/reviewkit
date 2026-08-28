@@ -7,17 +7,25 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import assert_never
 from zipfile import BadZipFile, ZipFile
 
 from docx import Document as DocxDocument
 from docx.oxml.ns import qn
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+from docxtor import AddressableSpan, DocxDocument as AddressableDocxDocument
 from lxml import etree
 
 from reviewkit.comments import DocxComment, comments_for_locator, read_comments
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.markup_purity import has_tracked_revisions
+from reviewkit.models import (
+    RevisionCoverageState,
+    RevisionLedger,
+    SourceRevision,
+    SourceRevisionKind,
+)
 
 # Terminators span Latin (. ! ?) and common non-Latin sentence enders so the sentence
 # tier does not silently disappear for non-Latin-script documents: CJK (。！？), the
@@ -34,6 +42,15 @@ def load_docx(path: str | Path) -> ReviewDocument:
     source_path = Path(path)
     docx = DocxDocument(str(source_path))
     comments = read_comments(source_path)
+    addressable_document = AddressableDocxDocument.open(source_path)
+    effective_texts, revision_ledger = _project_revision_input(addressable_document.spans)
+    tracked_revisions = has_tracked_revisions(source_path)
+    if (tracked_revisions and not revision_ledger.entries) or any(
+        _comment_anchor_is_unresolved(comment, comments) for comment in comments
+    ):
+        revision_ledger = revision_ledger.model_copy(
+            update={"coverage": RevisionCoverageState.INCOMPLETE}
+        )
 
     # Section/paragraph id counters are shared across the body walk and the synthetic
     # header/footer sections so every node keeps a globally unique id. "s1" is reserved
@@ -48,7 +65,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
     # around it and lands under its authoring heading, instead of every table being
     # appended to whatever section happened to be open at the end of the body.
     for docx_paragraph, locator, source in _iter_body_sources(docx):
-        text = str(getattr(docx_paragraph, "text", "")).strip()
+        text = effective_texts.get(locator, str(getattr(docx_paragraph, "text", ""))).strip()
         if not text:
             continue
 
@@ -88,17 +105,92 @@ def load_docx(path: str | Path) -> ReviewDocument:
     # Header/footer paragraphs get their own synthetic sections keyed by source so they
     # are not misread as body prose tacked onto the trailing body section. Locator strings
     # ("header:S:p:P"/"footer:S:p:P") are unchanged, so rendering resolves them identically.
-    sections.extend(_header_footer_sections(docx, section_ids, paragraph_ids, comments))
+    sections.extend(
+        _header_footer_sections(docx, section_ids, paragraph_ids, comments, effective_texts)
+    )
 
     metadata = {
         "paragraph_count": str(sum(len(section.paragraphs) for section in sections)),
         "table_count": str(len(docx.tables)),
         "comment_count": str(len(comments)),
-        "tracked_revisions_detected": str(has_tracked_revisions(source_path)).lower(),
+        "tracked_revisions_detected": str(tracked_revisions).lower(),
     }
     return ReviewDocument(
-        source_path=source_path, sections=sections, metadata=metadata, comments=comments
+        source_path=source_path,
+        sections=sections,
+        metadata=metadata,
+        comments=comments,
+        revision_ledger=revision_ledger,
     )
+
+
+def _project_revision_input(
+    spans: tuple[AddressableSpan, ...],
+) -> tuple[dict[str, str], RevisionLedger]:
+    effective_parts: dict[str, list[str]] = {}
+    entries: list[SourceRevision] = []
+    coverage = RevisionCoverageState.COMPLETE
+    for span in spans:
+        locator = _reviewkit_locator(span.container_id)
+        match span.role:
+            case "insertion":
+                effective_parts.setdefault(locator, []).append(span.text)
+                entries.append(_source_revision(span, locator, SourceRevisionKind.INSERTED))
+            case "deletion":
+                entries.append(_source_revision(span, locator, SourceRevisionKind.DELETED))
+            case "run":
+                effective_parts.setdefault(locator, []).append(span.text)
+            case "hyperlink":
+                effective_parts.setdefault(locator, []).append(span.text)
+                if span.revision_id is not None:
+                    coverage = RevisionCoverageState.INCOMPLETE
+            case unexpected:
+                assert_never(unexpected)
+    return (
+        {locator: "".join(parts) for locator, parts in effective_parts.items()},
+        RevisionLedger(coverage=coverage, entries=tuple(entries)),
+    )
+
+
+def _source_revision(
+    span: AddressableSpan,
+    locator: str,
+    kind: SourceRevisionKind,
+) -> SourceRevision:
+    return SourceRevision(
+        kind=kind,
+        text=span.text,
+        locator=locator,
+        span_id=span.span_id,
+        start_offset=span.start_offset,
+        end_offset=span.end_offset,
+        revision_id=span.revision_id,
+        author=span.revision_author,
+        date=span.revision_date,
+    )
+
+
+def _reviewkit_locator(container_id: str) -> str:
+    parts = container_id.split(":")
+    if len(parts) == 8 and parts[0] == "table" and parts[2] == "r" and parts[4] == "c":
+        return f"table:{parts[1]}:row:{parts[3]}:cell:{parts[5]}:p:{parts[7]}"
+    return container_id
+
+
+def _comment_anchor_is_unresolved(comment: DocxComment, comments: list[DocxComment]) -> bool:
+    """Return whether a source comment has no usable story anchor.
+
+    Word replies normally have no range markers of their own. A reply is anchored through
+    its parent comment when that parent has a stable locator; only an unanchored standalone
+    comment (or a reply whose parent is missing/unanchored) makes revision coverage
+    incomplete.
+    """
+    if comment.locator is not None:
+        return False
+    if comment.parent_id is None:
+        return True
+    parent = next((candidate for candidate in comments if candidate.id == comment.parent_id), None)
+    return parent is None or parent.locator is None
 
 
 _W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -380,6 +472,7 @@ def _header_footer_sections(
     section_ids: Iterator[int],
     paragraph_ids: Iterator[int],
     comments: list[DocxComment],
+    effective_texts: dict[str, str],
 ) -> list[SectionNode]:
     grouped: dict[str, list[tuple[object, str]]] = {}
     for docx_paragraph, locator, source in _iter_header_footer_sources(docx):
@@ -390,7 +483,7 @@ def _header_footer_sections(
         non_empty = [
             (paragraph, locator)
             for paragraph, locator in entries
-            if str(getattr(paragraph, "text", "")).strip()
+            if effective_texts.get(locator, str(getattr(paragraph, "text", ""))).strip()
         ]
         if not non_empty:
             continue
@@ -398,7 +491,7 @@ def _header_footer_sections(
         paragraphs = [
             _paragraph_node(
                 f"p{next(paragraph_ids)}",
-                str(getattr(paragraph, "text", "")).strip(),
+                effective_texts.get(locator, str(getattr(paragraph, "text", ""))).strip(),
                 section_id,
                 locator,
                 source,
@@ -428,5 +521,3 @@ def _iter_header_footer_sources(docx: object) -> Iterator[tuple[object, str, str
             yield paragraph, f"header:{section_index}:p:{paragraph_index}", "header"
         for paragraph_index, paragraph in enumerate(section.footer.paragraphs):
             yield paragraph, f"footer:{section_index}:p:{paragraph_index}", "footer"
-
-

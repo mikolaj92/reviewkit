@@ -8,6 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from reviewkit.comments import DocxComment
+from reviewkit.models import RevisionCoverageState, RevisionLedger, ReviewResult
 
 
 class SentenceNode(BaseModel):
@@ -60,6 +61,9 @@ class ReviewDocument(BaseModel):
     # Structured existing Word comments (anchor + text + author). Empty when
     # the source has none; never a reason to refuse a review.
     comments: list[DocxComment] = Field(default_factory=list)
+    revision_ledger: RevisionLedger = Field(
+        default_factory=lambda: RevisionLedger(coverage=RevisionCoverageState.COMPLETE)
+    )
 
     @property
     def text(self) -> str:
@@ -99,3 +103,6 @@ class ReviewDocument(BaseModel):
 
     def sentence_ids_for_paragraph(self, paragraph: ParagraphNode) -> set[str]:
         return {sentence.id for sentence in paragraph.sentences}
+
+
+ReviewResult.model_rebuild(_types_namespace={"ReviewDocument": ReviewDocument})
