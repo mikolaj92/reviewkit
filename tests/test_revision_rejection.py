@@ -249,6 +249,7 @@ def test_revision_operations_reject_xml_after_large_whitespace_prefix(
     assert not (tmp_path / "out.docx").exists()
 
 
+@pytest.mark.parametrize("member_name", ["word/../customXml/item1", "C:customXml/item1"])
 @pytest.mark.parametrize(
     ("operation", "error_type"),
     [
@@ -260,11 +261,12 @@ def test_revision_operations_reject_dot_segment_package_members(
     tmp_path: Path,
     operation,
     error_type: type[Exception],
+    member_name: str,
 ) -> None:
     source = _saved_docx(tmp_path / "source.docx", "old clause")
     _add_package_part(
         source,
-        "word/../customXml/item1",
+        member_name,
         b"<item/>",
     )
 
