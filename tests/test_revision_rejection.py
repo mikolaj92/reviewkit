@@ -195,6 +195,35 @@ def test_revision_operations_reject_doctype_in_unprocessed_xml(
     assert not (tmp_path / "out.docx").exists()
 
 
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        (reject_all_revisions, RejectRevisionsError),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+    ],
+)
+@pytest.mark.parametrize("encoding", ["utf-8-sig", "utf-16", "utf-16-be", "utf-32", "utf-32-be"])
+def test_revision_operations_reject_encoded_extensionless_xml(
+    tmp_path: Path,
+    operation,
+    error_type: type[Exception],
+    encoding: str,
+) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    declaration_encoding = "UTF-8" if encoding == "utf-8-sig" else "UTF-32" if "32" in encoding else "UTF-16"
+    custom_xml = (
+        f'<?xml version="1.0" encoding="{declaration_encoding}"?>'
+        "  <!DOCTYPE item [<!ENTITY payload \"unsafe\">]>"
+        "<item>&payload;</item>"
+    ).encode(encoding)
+    _add_package_part(source, "customXml/item1", custom_xml)
+
+    with pytest.raises(error_type, match="DOCTYPE"):
+        operation(source, tmp_path / "out.docx")
+
+    assert not (tmp_path / "out.docx").exists()
+
+
 @pytest.mark.parametrize("change_name", ["cellIns", "cellMerge"])
 def test_reject_all_revisions_fails_closed_on_cell_structure(
     tmp_path: Path, change_name: str

@@ -53,6 +53,8 @@ MAX_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
 MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 MAX_COMPRESSION_RATIO = 1000
 _XML_BOMS = (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
+_XML_PROBE_BYTES = 64 * 1024
+_XML_ENCODINGS = ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be")
 
 
 class RevisionPackageError(RuntimeError):
@@ -62,10 +64,14 @@ class RevisionPackageError(RuntimeError):
 def _needs_xml_validation(name: str, data: bytes) -> bool:
     if name.casefold().endswith((".xml", ".rels")):
         return True
-    candidate = data.lstrip(b" \t\r\n")
-    if candidate.startswith(b"<"):
+    candidate = data[:_XML_PROBE_BYTES].lstrip(b" \t\r\n")
+    if candidate.startswith(b"<") or any(candidate.startswith(bom) for bom in _XML_BOMS):
         return True
-    return any(candidate.startswith(bom + b"<") for bom in _XML_BOMS)
+    for encoding in _XML_ENCODINGS:
+        decoded = data[:_XML_PROBE_BYTES].decode(encoding, errors="ignore")
+        if decoded.lstrip().startswith("<"):
+            return True
+    return False
 
 
 def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
