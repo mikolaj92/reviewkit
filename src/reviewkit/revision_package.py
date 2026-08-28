@@ -55,7 +55,9 @@ MAX_COMPRESSION_RATIO = 1000
 _XML_BOMS = (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
 _XML_PROBE_BYTES = 64 * 1024
 _XML_ENCODINGS = ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be")
-_OOXML_PART_NAME_CHARS = frozenset("!$%&'()*+,-.:;=@_~/")
+_OOXML_PART_NAME_CHARS = frozenset("!$&'()*+,-.:;=@_~")
+_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
+_ASCII_IUNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
 
 
 class RevisionPackageError(RuntimeError):
@@ -70,14 +72,34 @@ def _is_valid_package_member_name(name: str) -> bool:
         not normalized
         or name.startswith(("/", "\\"))
         or "\\" in name
-        or any(segment in {"", ".", ".."} for segment in normalized.split("/"))
+        or any(not _is_valid_package_segment(segment) for segment in normalized.split("/"))
     ):
         return False
-    return all(
-        ord(character) < 128
-        and (character.isalnum() or character in _OOXML_PART_NAME_CHARS)
-        for character in normalized
-    )
+    return True
+
+
+def _is_valid_package_segment(segment: str) -> bool:
+    if not segment or segment in {".", ".."} or segment.endswith("."):
+        return False
+    offset = 0
+    while offset < len(segment):
+        character = segment[offset]
+        if character == "%":
+            if (
+                offset + 2 >= len(segment)
+                or segment[offset + 1] not in _HEX_DIGITS
+                or segment[offset + 2] not in _HEX_DIGITS
+            ):
+                return False
+            decoded = chr(int(segment[offset + 1 : offset + 3], 16))
+            if decoded in "/\\" or decoded in _ASCII_IUNRESERVED:
+                return False
+            offset += 3
+            continue
+        if not (ord(character) < 128 and (character.isalnum() or character in _OOXML_PART_NAME_CHARS)):
+            return False
+        offset += 1
+    return True
 
 
 def _needs_xml_validation(name: str, data: bytes) -> bool:
@@ -102,11 +124,12 @@ def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
                 f"DOCX has {len(infos)} entries; limit is {MAX_PACKAGE_ENTRIES}"
             )
         names = [info.filename for info in infos]
-        if len(names) != len(set(names)):
-            raise RevisionPackageError("DOCX contains duplicate package member names")
         for name in names:
             if not _is_valid_package_member_name(name):
                 raise RevisionPackageError(f"DOCX contains invalid package member path: {name}")
+        equivalent_names = [name.lower() for name in names]
+        if len(equivalent_names) != len(set(equivalent_names)):
+            raise RevisionPackageError("DOCX contains duplicate package member names")
         total = sum(info.file_size for info in infos)
         if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
             raise RevisionPackageError(

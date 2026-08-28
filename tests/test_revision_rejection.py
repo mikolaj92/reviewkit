@@ -169,8 +169,8 @@ def test_accept_all_revisions_removes_comment_relationship_parts(tmp_path: Path)
     [
         (reject_all_revisions, RejectRevisionsError, "customXml/item1.xml"),
         (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1.xml"),
-        (reject_all_revisions, RejectRevisionsError, "customXml/item1.XML"),
-        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1.XML"),
+        (reject_all_revisions, RejectRevisionsError, "customXml/item2.XML"),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item2.XML"),
         (reject_all_revisions, RejectRevisionsError, "customXml/item1"),
         (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1"),
     ],
@@ -258,6 +258,11 @@ def test_revision_operations_reject_xml_after_large_whitespace_prefix(
         "word[customXml/item1",
         "word customXml/item1",
         "/[Content_Types].xml",
+        "customXml/item%2Fescaped.xml",
+        "customXml/item%5Cescaped.xml",
+        "customXml/item%41.xml",
+        "customXml/item%.xml",
+        "customXml/item.xml.",
     ],
 )
 @pytest.mark.parametrize(
@@ -287,7 +292,7 @@ def test_revision_operations_reject_invalid_package_members(
 
 
 @pytest.mark.parametrize("operation", [reject_all_revisions, revisions_module.accept_all_revisions])
-@pytest.mark.parametrize("member_name", ["customXml/item:1.xml", "customXml/item%2Fescaped.xml"])
+@pytest.mark.parametrize("member_name", ["customXml/item:1.xml", "customXml/item%20escaped.xml"])
 def test_revision_operations_allow_valid_package_member_names(
     tmp_path: Path, operation, member_name: str
 ) -> None:
@@ -298,6 +303,26 @@ def test_revision_operations_allow_valid_package_member_names(
     operation(source, out)
 
     assert out.exists()
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        (reject_all_revisions, RejectRevisionsError),
+        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError),
+    ],
+)
+def test_revision_operations_reject_case_equivalent_package_members(
+    tmp_path: Path, operation, error_type: type[Exception]
+) -> None:
+    source = _saved_docx(tmp_path / "source.docx", "old clause")
+    _add_package_part(source, "customXml/item.xml", b"<item/>")
+    _add_package_part(source, "customXml/ITEM.XML", b"<item/>")
+
+    with pytest.raises(error_type, match="duplicate package member names"):
+        operation(source, tmp_path / "out.docx")
+
+    assert not (tmp_path / "out.docx").exists()
 
 
 @pytest.mark.parametrize("change_name", ["cellIns", "cellMerge"])
