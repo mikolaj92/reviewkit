@@ -195,10 +195,14 @@ def test_custom_xml_range_revisions_remain_fail_closed(tmp_path: Path) -> None:
 
     # Then: unsupported range grammar cannot be normalized by the text-aware comparison.
     assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
-    output = tmp_path / "reviewed.docx"
-    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
-        render_reviewed_docx(review_document, [], output)
-    assert not output.exists()
+    for renderer, filename in (
+        (render_reviewed_docx, "reviewed.docx"),
+        (render_corrected_docx, "corrected.docx"),
+    ):
+        output = tmp_path / filename
+        with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+            renderer(review_document, [], output)
+        assert not output.exists()
 
 
 def test_indirectly_nested_block_revision_remains_fail_closed(tmp_path: Path) -> None:
@@ -213,6 +217,29 @@ def test_indirectly_nested_block_revision_remains_fail_closed(tmp_path: Path) ->
     review_document = load_docx(source)
 
     # Then: unsupported block-level revision grammar is refused before any output exists.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    reviewed_output = tmp_path / "reviewed.docx"
+    corrected_output = tmp_path / "corrected.docx"
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], reviewed_output)
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_corrected_docx(review_document, [], corrected_output)
+    assert not reviewed_output.exists()
+    assert not corrected_output.exists()
+
+
+def test_direct_block_revision_remains_fail_closed(tmp_path: Path) -> None:
+    # Given: a supported revision wrapper containing a block-level paragraph directly.
+    source = tmp_path / "direct-block-revision.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_direct_block_revision(source)
+
+    # When: ReviewKit builds its effective input projection.
+    review_document = load_docx(source)
+
+    # Then: direct block-level revision grammar is refused before either output exists.
     assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
     reviewed_output = tmp_path / "reviewed.docx"
     corrected_output = tmp_path / "corrected.docx"
@@ -493,6 +520,28 @@ def _append_indirectly_nested_block_revision(path: Path) -> None:
     )
     custom_xml = etree.SubElement(insertion, f"{_W}customXml")
     etree.SubElement(custom_xml, f"{_W}p")
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_direct_block_revision(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    insertion = etree.SubElement(
+        paragraph,
+        f"{_W}ins",
+        {f"{_W}id": "8", f"{_W}author": "Source reviewer"},
+    )
+    etree.SubElement(insertion, f"{_W}p")
     revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     with ZipFile(path, "w") as archive:
         for info, data in entries:
