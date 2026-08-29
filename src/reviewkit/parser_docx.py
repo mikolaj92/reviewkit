@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import itertools
 import re
-from collections import Counter
+from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -171,13 +171,21 @@ _BLOCK_REVISION_CHILDREN = frozenset({"p", "tbl", "tr", "tc"})
 def _revision_coverage_is_incomplete(
     source_path: Path, markup_report: MarkupReport, ledger: RevisionLedger
 ) -> bool:
-    """Return whether every source revision is represented by the typed projection."""
+    """Return whether every text-bearing source revision is represented by the typed projection.
+
+    Word commonly emits empty revision wrappers for paragraph/property bookkeeping and
+    nests a deletion inside an insertion for replacement text. Those wrappers do not own
+    independent text spans, so comparing every wrapper count with Docxtor's text spans
+    falsely marks otherwise addressable documents as incomplete. Compare the direct text
+    owned by each revision identity instead; nested revision text belongs to the inner
+    identity and is deliberately excluded from its parent.
+    """
     if not markup_report.has_tracked_revisions:
         return False
     if set(markup_report.revision_kinds) - _SUPPORTED_REVISION_KINDS:
         return True
 
-    source_inventory: Counter[tuple[str, str | None, str | None, str | None]] = Counter()
+    source_inventory: dict[tuple[str, str | None, str | None, str | None], str] = defaultdict(str)
     with ZipFile(source_path) as bundle:
         for name in bundle.namelist():
             if not (name.startswith("word/") and name.endswith(".xml")):
@@ -188,29 +196,58 @@ def _revision_coverage_is_incomplete(
                 if kind not in _SUPPORTED_REVISION_KINDS:
                     continue
                 if any(
-                    etree.QName(child).localname in _BLOCK_REVISION_CHILDREN
-                    for child in element
+                    etree.QName(descendant).localname in _BLOCK_REVISION_CHILDREN
+                    for descendant in element.iter()
+                    if descendant is not element
                 ):
                     return True
-                source_inventory[
-                    (
-                        kind,
-                        element.get(f"{{{_W_NS}}}id"),
-                        element.get(f"{{{_W_NS}}}author"),
-                        element.get(f"{{{_W_NS}}}date"),
-                    )
-                ] += 1
+                direct_text = _direct_revision_text(element)
+                if direct_text:
+                    source_inventory[
+                        (
+                            kind,
+                            element.get(f"{{{_W_NS}}}id"),
+                            element.get(f"{{{_W_NS}}}author"),
+                            element.get(f"{{{_W_NS}}}date"),
+                        )
+                    ] += direct_text
 
-    ledger_inventory: Counter[tuple[str, str | None, str | None, str | None]] = Counter(
-        (
-            "ins" if entry.kind is SourceRevisionKind.INSERTED else "del",
-            entry.revision_id,
-            entry.author,
-            entry.date,
-        )
-        for entry in ledger.entries
-    )
+    ledger_inventory: dict[tuple[str, str | None, str | None, str | None], str] = defaultdict(str)
+    for entry in ledger.entries:
+        ledger_inventory[
+            (
+                "ins" if entry.kind is SourceRevisionKind.INSERTED else "del",
+                entry.revision_id,
+                entry.author,
+                entry.date,
+            )
+        ] += entry.text
     return source_inventory != ledger_inventory
+
+
+def _direct_revision_text(element: etree._Element) -> str:
+    """Return text/control characters owned directly by one revision wrapper."""
+    parts: list[str] = []
+    for node in element.iter():
+        local = etree.QName(node).localname
+        if local not in {"t", "delText", "tab", "br", "cr"}:
+            continue
+        parent = node.getparent()
+        nested = False
+        while parent is not None and parent is not element:
+            if etree.QName(parent).localname in _SUPPORTED_REVISION_KINDS:
+                nested = True
+                break
+            parent = parent.getparent()
+        if nested:
+            continue
+        if local in {"t", "delText"}:
+            parts.append(node.text or "")
+        elif local == "tab":
+            parts.append("\t")
+        else:
+            parts.append("\n")
+    return "".join(parts)
 
 
 def _source_revision(

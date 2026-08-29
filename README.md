@@ -248,6 +248,11 @@ has incomplete revision or comment coverage, both DOCX renderers raise
 `RevisionCoverageError` before creating an output file. This prevents a partial review
 artifact from being mistaken for a complete projection.
 
+Revision coverage is measured from the text and control characters directly owned by each
+supported revision identity (`kind`, `id`, `author`, and `date`). Empty property/paragraph
+wrappers and nested or split wrappers therefore do not create false incomplete coverage;
+unsupported revision grammar remains fail-closed.
+
 Rendering a reviewed document preserves source revision wrappers, comment bodies, and
 thread sidecars, then adds new review markup with the reviewer identity and collision-free
 revision IDs. The source and generated records can therefore be inspected separately.
