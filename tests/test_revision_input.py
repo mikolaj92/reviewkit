@@ -89,11 +89,37 @@ def test_supported_revision_coverage_matches_text_controls(tmp_path: Path) -> No
     # When: ReviewKit projects effective text and the typed revision ledger.
     review_document = load_docx(source)
 
-    # Then: tabs and line breaks are compared as owned text, not wrapper counts.
+    # Then: tabs, line breaks, and carriage returns are compared as owned text, not wrapper counts.
     assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
     assert [(entry.kind.value, entry.revision_id, entry.text) for entry in review_document.revision_ledger.entries] == [
-        ("inserted", "5", "A\tB\nC"),
+        ("inserted", "5", "A\tB\nC\nD"),
     ]
+
+
+@pytest.mark.parametrize("revision_kind", ["pPrChange", "rPrChange"])
+def test_property_revisions_remain_fail_closed_at_public_boundary(
+    tmp_path: Path, revision_kind: str
+) -> None:
+    # Given: a DOCX carrying an unsupported property-change record.
+    source = tmp_path / f"{revision_kind}.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_property_revision(source, revision_kind)
+
+    # When: ReviewKit parses the source and callers ask either renderer to publish it.
+    review_document = load_docx(source)
+
+    # Then: property revisions fail closed before either renderer creates an artifact.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    for renderer, filename in (
+        (render_reviewed_docx, "reviewed.docx"),
+        (render_corrected_docx, "corrected.docx"),
+    ):
+        output = tmp_path / filename
+        with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+            renderer(review_document, [], output)
+        assert not output.exists()
 
 
 def test_incomplete_revision_coverage_refuses_reviewed_output(tmp_path: Path) -> None:
@@ -173,6 +199,29 @@ def test_custom_xml_range_revisions_remain_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
         render_reviewed_docx(review_document, [], output)
     assert not output.exists()
+
+
+def test_indirectly_nested_block_revision_remains_fail_closed(tmp_path: Path) -> None:
+    # Given: a supported revision wrapper hiding an empty block through a customXml node.
+    source = tmp_path / "nested-block-revision.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_indirectly_nested_block_revision(source)
+
+    # When: ReviewKit builds its effective input projection.
+    review_document = load_docx(source)
+
+    # Then: unsupported block-level revision grammar is refused before any output exists.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    reviewed_output = tmp_path / "reviewed.docx"
+    corrected_output = tmp_path / "corrected.docx"
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], reviewed_output)
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_corrected_docx(review_document, [], corrected_output)
+    assert not reviewed_output.exists()
+    assert not corrected_output.exists()
 
 
 def test_duplicate_source_comment_ids_fail_closed(tmp_path: Path) -> None:
@@ -345,6 +394,43 @@ def _append_revision_controls(path: Path) -> None:
     etree.SubElement(run, f"{_W}br")
     third = etree.SubElement(run, f"{_W}t")
     third.text = "C"
+    etree.SubElement(run, f"{_W}cr")
+    fourth = etree.SubElement(run, f"{_W}t")
+    fourth.text = "D"
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_property_revision(path: Path, kind: str) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    attributes = {
+        f"{_W}id": "7",
+        f"{_W}author": "Source reviewer",
+    }
+    if kind == "pPrChange":
+        properties = paragraph.find(f"{_W}pPr")
+        if properties is None:
+            properties = etree.Element(f"{_W}pPr")
+            paragraph.insert(0, properties)
+        etree.SubElement(properties, f"{_W}{kind}", attributes)
+    else:
+        run = paragraph.find(f"{_W}r")
+        assert run is not None
+        properties = run.find(f"{_W}rPr")
+        if properties is None:
+            properties = etree.Element(f"{_W}rPr")
+            run.insert(0, properties)
+        etree.SubElement(properties, f"{_W}{kind}", attributes)
     revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     with ZipFile(path, "w") as archive:
         for info, data in entries:
@@ -384,6 +470,29 @@ def _append_custom_xml_range(path: Path) -> None:
     assert paragraph is not None
     paragraph.append(etree.Element(f"{_W}customXmlInsRangeStart", {f"{_W}id": "9"}))
     paragraph.append(etree.Element(f"{_W}customXmlInsRangeEnd", {f"{_W}id": "9"}))
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_indirectly_nested_block_revision(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    insertion = etree.SubElement(
+        paragraph,
+        f"{_W}ins",
+        {f"{_W}id": "6", f"{_W}author": "Source reviewer"},
+    )
+    custom_xml = etree.SubElement(insertion, f"{_W}customXml")
+    etree.SubElement(custom_xml, f"{_W}p")
     revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     with ZipFile(path, "w") as archive:
         for info, data in entries:

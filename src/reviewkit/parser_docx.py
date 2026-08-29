@@ -196,8 +196,9 @@ def _revision_coverage_is_incomplete(
                 if kind not in _SUPPORTED_REVISION_KINDS:
                     continue
                 if any(
-                    etree.QName(child).localname in _BLOCK_REVISION_CHILDREN
-                    for child in element
+                    etree.QName(descendant).localname in _BLOCK_REVISION_CHILDREN
+                    for descendant in element.iter()
+                    if descendant is not element
                 ):
                     return True
                 direct_text = _direct_revision_text(element)
