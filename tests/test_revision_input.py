@@ -55,6 +55,47 @@ def test_effective_projection_and_typed_ledger(tmp_path: Path) -> None:
     ]
 
 
+def test_supported_revision_coverage_ignores_empty_and_nested_wrappers(tmp_path: Path) -> None:
+    # Given: supported revisions whose OOXML wrapper count is larger than their text spans.
+    source = tmp_path / "wrapper-noise.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain ")
+    document.save(source)
+    _append_empty_nested_and_split_revisions(source)
+
+    # When: ReviewKit projects effective text and the typed revision ledger.
+    review_document = load_docx(source)
+
+    # Then: direct revision-owned text is complete despite empty/nested wrappers and split spans.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    assert review_document.text == "Plain Inserted."
+    assert [(entry.kind.value, entry.revision_id, entry.text) for entry in review_document.revision_ledger.entries] == [
+        ("inserted", "1", "Inserted."),
+        ("deleted", "4", "Deleted"),
+    ]
+    output = tmp_path / "reviewed.docx"
+    render_reviewed_docx(review_document, [], output)
+    assert output.exists()
+
+
+def test_supported_revision_coverage_matches_text_controls(tmp_path: Path) -> None:
+    # Given: a supported insertion whose visible text includes Word control characters.
+    source = tmp_path / "revision-controls.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain ")
+    document.save(source)
+    _append_revision_controls(source)
+
+    # When: ReviewKit projects effective text and the typed revision ledger.
+    review_document = load_docx(source)
+
+    # Then: tabs and line breaks are compared as owned text, not wrapper counts.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    assert [(entry.kind.value, entry.revision_id, entry.text) for entry in review_document.revision_ledger.entries] == [
+        ("inserted", "5", "A\tB\nC"),
+    ]
+
+
 def test_incomplete_revision_coverage_refuses_reviewed_output(tmp_path: Path) -> None:
     # Given: a parsed document whose source revision roles cannot be fully projected.
     document = ReviewDocument(
@@ -108,6 +149,25 @@ def test_mixed_supported_and_unsupported_revisions_fail_closed(tmp_path: Path) -
     review_document = load_docx(source)
 
     # Then: one supported entry cannot mask the unsupported source grammar.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    output = tmp_path / "reviewed.docx"
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], output)
+    assert not output.exists()
+
+
+def test_custom_xml_range_revisions_remain_fail_closed(tmp_path: Path) -> None:
+    # Given: a supported insertion plus an unsupported Office custom XML range marker.
+    source = tmp_path / "custom-xml-range.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_custom_xml_range(source)
+
+    # When: ReviewKit builds its effective input projection.
+    review_document = load_docx(source)
+
+    # Then: unsupported range grammar cannot be normalized by the text-aware comparison.
     assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
     output = tmp_path / "reviewed.docx"
     with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
@@ -242,6 +302,58 @@ def _append_revisions(path: Path) -> None:
             )
 
 
+def _append_empty_nested_and_split_revisions(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    paragraph.append(_revision("ins", "In", "1"))
+    paragraph.append(_revision("ins", "serted.", "1"))
+    paragraph.append(etree.Element(f"{_W}ins", {f"{_W}id": "2", f"{_W}author": "Source reviewer"}))
+    outer = etree.Element(f"{_W}ins", {f"{_W}id": "3", f"{_W}author": "Source reviewer"})
+    outer.append(_revision("del", "Deleted", "4"))
+    paragraph.append(outer)
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_revision_controls(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    insertion = etree.SubElement(
+        paragraph,
+        f"{_W}ins",
+        {f"{_W}id": "5", f"{_W}author": "Source reviewer"},
+    )
+    run = etree.SubElement(insertion, f"{_W}r")
+    first = etree.SubElement(run, f"{_W}t")
+    first.text = "A"
+    etree.SubElement(run, f"{_W}tab")
+    second = etree.SubElement(run, f"{_W}t")
+    second.text = "B"
+    etree.SubElement(run, f"{_W}br")
+    third = etree.SubElement(run, f"{_W}t")
+    third.text = "C"
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
 def _append_unsupported_move(path: Path) -> None:
     with ZipFile(path) as archive:
         entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
@@ -254,6 +366,24 @@ def _append_unsupported_move(path: Path) -> None:
     text_node = etree.SubElement(run, f"{_W}t")
     text_node.text = "Moved."
     paragraph.append(move_from)
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_custom_xml_range(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    paragraph.append(etree.Element(f"{_W}customXmlInsRangeStart", {f"{_W}id": "9"}))
+    paragraph.append(etree.Element(f"{_W}customXmlInsRangeEnd", {f"{_W}id": "9"}))
     revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     with ZipFile(path, "w") as archive:
         for info, data in entries:
