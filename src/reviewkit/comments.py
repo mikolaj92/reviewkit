@@ -310,10 +310,17 @@ def _is_thread_part(name: str) -> bool:
 
 
 def _comment_anchors(docx: Any) -> dict[str, tuple[str, str]]:
-    """Map comment id -> (paragraph locator, visible anchored text)."""
+    """Map comment id -> (paragraph locator, visible anchored text).
+
+    Word may park ``commentRangeStart`` as a ``w:sdtContent`` child and
+    ``commentRangeEnd`` inside ``w:ins``. Those markers never appear on a
+    paragraph ``_p`` tree, so recover the locator from ``commentReference``
+    when the range walk did not finish the id (#226).
+    """
     open_ids: dict[str, list[str]] = {}
     started_at: dict[str, str] = {}
     finished: dict[str, tuple[str, str]] = {}
+    reference_at: dict[str, str] = {}
 
     for paragraph, locator in _iter_located_paragraphs(docx):
         p_element = getattr(paragraph, "_p", None)
@@ -336,6 +343,10 @@ def _comment_anchors(docx: Any) -> dict[str, tuple[str, str]]:
                     "".join(open_ids.pop(comment_id)),
                 )
                 started_at.pop(comment_id, None)
+            elif tag == qn("w:commentReference"):
+                comment_id = node.get(qn("w:id"))
+                if comment_id is not None:
+                    reference_at.setdefault(comment_id, locator)
             elif open_ids:
                 chunk = _visible_chunk(node)
                 if chunk:
@@ -344,6 +355,9 @@ def _comment_anchors(docx: Any) -> dict[str, tuple[str, str]]:
 
     for comment_id, buffer in open_ids.items():
         finished[comment_id] = (started_at.get(comment_id, ""), "".join(buffer))
+    for comment_id, locator in reference_at.items():
+        if comment_id not in finished and locator:
+            finished[comment_id] = (locator, "")
     return finished
 
 

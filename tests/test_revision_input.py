@@ -313,27 +313,65 @@ def test_mixed_supported_and_unsupported_revisions_fail_closed(tmp_path: Path) -
     assert not output.exists()
 
 
-def test_custom_xml_range_revisions_remain_fail_closed(tmp_path: Path) -> None:
-    # Given: a supported insertion plus an unsupported Office custom XML range marker.
+def test_empty_custom_xml_range_bookmarks_do_not_poison_coverage(tmp_path: Path) -> None:
+    # Given: a text-bearing insertion plus empty customXml ins/del range bookmarks.
     source = tmp_path / "custom-xml-range.docx"
     document = DocxDocument()
     document.add_paragraph("Plain text.")
     document.save(source)
+    _append_revisions(source)
     _append_custom_xml_range(source)
 
     # When: ReviewKit builds its effective input projection.
     review_document = load_docx(source)
 
-    # Then: unsupported range grammar cannot be normalized by the text-aware comparison.
+    # Then: identity-only content-control bookmarks are formatting-only (#226).
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+
+
+def test_custom_xml_range_marker_with_children_remains_fail_closed(tmp_path: Path) -> None:
+    # Given: a customXml ins-range bookmark that owns a child run.
+    source = tmp_path / "custom-xml-range-child.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_custom_xml_range_with_child(source)
+
+    # When: ReviewKit builds its effective input projection.
+    review_document = load_docx(source)
+
+    # Then: a range marker that owns children stays fail-closed.
     assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
-    for renderer, filename in (
-        (render_reviewed_docx, "reviewed.docx"),
-        (render_corrected_docx, "corrected.docx"),
-    ):
-        output = tmp_path / filename
-        with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
-            renderer(review_document, [], output)
-        assert not output.exists()
+    output = tmp_path / "reviewed.docx"
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], output)
+    assert not output.exists()
+
+
+def test_comment_reference_recovers_locator_when_range_start_is_outside_paragraph(
+    tmp_path: Path,
+) -> None:
+    # Given: a comment whose rangeStart sits on sdtContent and rangeEnd inside ins.
+    source = tmp_path / "sdt-comment.docx"
+    document = DocxDocument()
+    paragraph = document.add_paragraph()
+    run = paragraph.add_run("Anchored.")
+    document.add_comment(
+        runs=run,
+        text="Source note.",
+        author="Source reviewer",
+        initials="SR",
+    )
+    document.save(source)
+    _move_comment_start_onto_sdt_content(source)
+
+    # When: ReviewKit reads comments.
+    review_document = load_docx(source)
+
+    # Then: commentReference still supplies a paragraph locator (#226).
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    assert len(review_document.comments) == 1
+    assert review_document.comments[0].locator is not None
 
 
 def test_indirectly_nested_block_revision_remains_fail_closed(tmp_path: Path) -> None:
@@ -784,8 +822,68 @@ def _append_custom_xml_range(path: Path) -> None:
     root = etree.fromstring(document_xml)
     paragraph = root.find(f".//{_W}p")
     assert paragraph is not None
-    paragraph.append(etree.Element(f"{_W}customXmlInsRangeStart", {f"{_W}id": "9"}))
+    paragraph.append(
+        etree.Element(
+            f"{_W}customXmlInsRangeStart",
+            {f"{_W}id": "9", f"{_W}author": "Source reviewer", f"{_W}date": "2026-01-01T00:00:00Z"},
+        )
+    )
     paragraph.append(etree.Element(f"{_W}customXmlInsRangeEnd", {f"{_W}id": "9"}))
+    paragraph.append(
+        etree.Element(
+            f"{_W}customXmlDelRangeStart",
+            {f"{_W}id": "10", f"{_W}author": "Source reviewer", f"{_W}date": "2026-01-01T00:00:00Z"},
+        )
+    )
+    paragraph.append(etree.Element(f"{_W}customXmlDelRangeEnd", {f"{_W}id": "10"}))
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_custom_xml_range_with_child(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    start = etree.Element(f"{_W}customXmlInsRangeStart", {f"{_W}id": "9"})
+    run = etree.SubElement(start, f"{_W}r")
+    text_node = etree.SubElement(run, f"{_W}t")
+    text_node.text = "Hidden."
+    paragraph.append(start)
+    paragraph.append(etree.Element(f"{_W}customXmlInsRangeEnd", {f"{_W}id": "9"}))
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _move_comment_start_onto_sdt_content(path: Path) -> None:
+    """Park commentRangeStart on sdtContent; leave end and reference on the paragraph."""
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    start = root.find(f".//{_W}commentRangeStart")
+    assert start is not None
+    body = root.find(f"{_W}body")
+    assert body is not None
+    sdt = etree.Element(f"{_W}sdt")
+    content = etree.SubElement(sdt, f"{_W}sdtContent")
+    parent = start.getparent()
+    assert parent is not None
+    parent.remove(start)
+    content.append(start)
+    body.insert(0, sdt)
     revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     with ZipFile(path, "w") as archive:
         for info, data in entries:
