@@ -165,6 +165,8 @@ def _project_revision_input(
 
 
 _SUPPORTED_REVISION_KINDS = frozenset({"ins", "del"})
+_FORMATTING_PROPERTY_CHANGES = frozenset({"pPrChange", "rPrChange"})
+_PROPERTY_CHANGE_SNAPSHOT = {"pPrChange": "pPr", "rPrChange": "rPr"}
 _BLOCK_REVISION_CHILDREN = frozenset({"p", "tbl", "tr", "tc"})
 
 
@@ -179,10 +181,16 @@ def _revision_coverage_is_incomplete(
     falsely marks otherwise addressable documents as incomplete. Compare the direct text
     owned by each revision identity instead; nested revision text belongs to the inner
     identity and is deliberately excluded from its parent.
+
+    Empty ``pPrChange`` / ``rPrChange`` records are the same class of bookkeeping: they
+    snapshot previous run/paragraph properties and own no text. They must not poison
+    coverage when every text-bearing ``ins`` / ``del`` is already in the ledger. A
+    property change that owns text, nested ``ins`` / ``del``, block children, or
+    children other than the matching ``pPr`` / ``rPr`` snapshot stays fail-closed.
     """
     if not markup_report.has_tracked_revisions:
         return False
-    if set(markup_report.revision_kinds) - _SUPPORTED_REVISION_KINDS:
+    if set(markup_report.revision_kinds) - _SUPPORTED_REVISION_KINDS - _FORMATTING_PROPERTY_CHANGES:
         return True
 
     source_inventory: dict[tuple[str, str | None, str | None, str | None], str] = defaultdict(str)
@@ -193,6 +201,10 @@ def _revision_coverage_is_incomplete(
             root = etree.fromstring(bundle.read(name))
             for element in root.iter():
                 kind = etree.QName(element).localname
+                if kind in _FORMATTING_PROPERTY_CHANGES:
+                    if _formatting_property_change_is_unsafe(element, kind):
+                        return True
+                    continue
                 if kind not in _SUPPORTED_REVISION_KINDS:
                     continue
                 if any(
@@ -248,6 +260,26 @@ def _direct_revision_text(element: etree._Element) -> str:
         else:
             parts.append("\n")
     return "".join(parts)
+
+
+def _formatting_property_change_is_unsafe(element: etree._Element, kind: str) -> bool:
+    """Return whether a property-change record owns text or unexpected children.
+
+    Word stores the previous ``pPr`` / ``rPr`` snapshot as the only child of an
+    empty formatting-only change. Anything else is unsupported revision grammar.
+    """
+    expected_snapshot = _PROPERTY_CHANGE_SNAPSHOT[kind]
+    children = list(element)
+    if len(children) != 1 or etree.QName(children[0]).localname != expected_snapshot:
+        return True
+    if any(
+        etree.QName(descendant).localname in _BLOCK_REVISION_CHILDREN
+        or etree.QName(descendant).localname in _SUPPORTED_REVISION_KINDS
+        for descendant in element.iter()
+        if descendant is not element
+    ):
+        return True
+    return bool(_direct_revision_text(element))
 
 
 def _source_revision(

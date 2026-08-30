@@ -250,8 +250,10 @@ artifact from being mistaken for a complete projection.
 
 Revision coverage is measured from the text and control characters directly owned by each
 supported revision identity (`kind`, `id`, `author`, and `date`). Empty property/paragraph
-wrappers and nested or split wrappers therefore do not create false incomplete coverage;
-unsupported revision grammar remains fail-closed.
+wrappers, empty formatting-only `pPrChange` / `rPrChange` snapshots, and nested or split
+wrappers therefore do not create false incomplete coverage. A property change that owns
+text, nested `ins` / `del`, or unexpected children stays fail-closed, as does every other
+unsupported revision grammar.
 
 Rendering a reviewed document preserves source revision wrappers, comment bodies, and
 thread sidecars, then adds new review markup with the reviewer identity and collision-free

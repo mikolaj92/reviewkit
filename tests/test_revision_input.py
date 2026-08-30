@@ -97,10 +97,10 @@ def test_supported_revision_coverage_matches_text_controls(tmp_path: Path) -> No
 
 
 @pytest.mark.parametrize("revision_kind", ["pPrChange", "rPrChange"])
-def test_property_revisions_remain_fail_closed_at_public_boundary(
+def test_empty_formatting_property_changes_do_not_poison_coverage(
     tmp_path: Path, revision_kind: str
 ) -> None:
-    # Given: a DOCX carrying an unsupported property-change record.
+    # Given: a DOCX carrying an empty formatting-only property-change snapshot.
     source = tmp_path / f"{revision_kind}.docx"
     document = DocxDocument()
     document.add_paragraph("Plain text.")
@@ -110,7 +110,59 @@ def test_property_revisions_remain_fail_closed_at_public_boundary(
     # When: ReviewKit parses the source and callers ask either renderer to publish it.
     review_document = load_docx(source)
 
-    # Then: property revisions fail closed before either renderer creates an artifact.
+    # Then: bookkeeping property changes without owned text stay complete and publishable.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    assert review_document.text == "Plain text."
+    for renderer, filename in (
+        (render_reviewed_docx, "reviewed.docx"),
+        (render_corrected_docx, "corrected.docx"),
+    ):
+        output = tmp_path / filename
+        renderer(review_document, [], output)
+        assert output.exists()
+
+
+def test_empty_formatting_property_change_with_supported_revisions_is_complete(
+    tmp_path: Path,
+) -> None:
+    # Given: text-bearing ins/del plus an empty pPrChange snapshot, as Word emits them together.
+    source = tmp_path / "property-and-text-revisions.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain ")
+    document.save(source)
+    _append_revisions(source)
+    _append_property_revision(source, "pPrChange")
+
+    # When: ReviewKit projects effective text and the typed revision ledger.
+    review_document = load_docx(source)
+
+    # Then: the formatting-only record does not mask or poison the supported text inventory.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    assert review_document.text == "Plain Inserted."
+    assert [(entry.kind.value, entry.text) for entry in review_document.revision_ledger.entries] == [
+        ("inserted", "Inserted."),
+        ("deleted", "Deleted."),
+    ]
+    output = tmp_path / "reviewed.docx"
+    render_reviewed_docx(review_document, [], output)
+    assert output.exists()
+
+
+@pytest.mark.parametrize("revision_kind", ["pPrChange", "rPrChange"])
+def test_property_change_that_owns_text_remains_fail_closed(
+    tmp_path: Path, revision_kind: str
+) -> None:
+    # Given: a property-change record that owns visible text instead of a formatting snapshot.
+    source = tmp_path / f"{revision_kind}-owns-text.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_property_revision_with_text(source, revision_kind)
+
+    # When: ReviewKit parses the source and callers ask either renderer to publish it.
+    review_document = load_docx(source)
+
+    # Then: a text-bearing property change stays incomplete and unpublished.
     assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
     for renderer, filename in (
         (render_reviewed_docx, "reviewed.docx"),
@@ -120,6 +172,47 @@ def test_property_revisions_remain_fail_closed_at_public_boundary(
         with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
             renderer(review_document, [], output)
         assert not output.exists()
+
+
+def test_property_change_with_nested_revision_remains_fail_closed(tmp_path: Path) -> None:
+    # Given: a pPrChange whose snapshot hides a nested insertion.
+    source = tmp_path / "property-nested-revision.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_property_revision_with_nested_insertion(source)
+
+    # When: ReviewKit builds its effective input projection.
+    review_document = load_docx(source)
+
+    # Then: nested revision grammar inside a property change is refused before output exists.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    output = tmp_path / "reviewed.docx"
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], output)
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("revision_kind", ["pPrChange", "rPrChange"])
+def test_malformed_property_change_without_snapshot_remains_fail_closed(
+    tmp_path: Path, revision_kind: str
+) -> None:
+    # Given: a property-change wrapper with no matching pPr/rPr snapshot child.
+    source = tmp_path / f"{revision_kind}-malformed.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_malformed_property_revision(source, revision_kind)
+
+    # When: ReviewKit parses the source and callers ask either renderer to publish it.
+    review_document = load_docx(source)
+
+    # Then: unexpected property-change children stay fail-closed.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
+    output = tmp_path / "reviewed.docx"
+    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
+        render_reviewed_docx(review_document, [], output)
+    assert not output.exists()
 
 
 def test_incomplete_revision_coverage_refuses_reviewed_output(tmp_path: Path) -> None:
@@ -444,12 +537,12 @@ def _append_property_revision(path: Path, kind: str) -> None:
         f"{_W}id": "7",
         f"{_W}author": "Source reviewer",
     }
+    snapshot_kind = "pPr" if kind == "pPrChange" else "rPr"
     if kind == "pPrChange":
         properties = paragraph.find(f"{_W}pPr")
         if properties is None:
             properties = etree.Element(f"{_W}pPr")
             paragraph.insert(0, properties)
-        etree.SubElement(properties, f"{_W}{kind}", attributes)
     else:
         run = paragraph.find(f"{_W}r")
         assert run is not None
@@ -457,7 +550,94 @@ def _append_property_revision(path: Path, kind: str) -> None:
         if properties is None:
             properties = etree.Element(f"{_W}rPr")
             run.insert(0, properties)
-        etree.SubElement(properties, f"{_W}{kind}", attributes)
+    change = etree.SubElement(properties, f"{_W}{kind}", attributes)
+    snapshot = etree.SubElement(change, f"{_W}{snapshot_kind}")
+    etree.SubElement(snapshot, f"{_W}{'jc' if kind == 'pPrChange' else 'b'}")
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_property_revision_with_text(path: Path, kind: str) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    change = etree.SubElement(
+        paragraph,
+        f"{_W}{kind}",
+        {f"{_W}id": "8", f"{_W}author": "Source reviewer"},
+    )
+    snapshot = etree.SubElement(change, f"{_W}{'pPr' if kind == 'pPrChange' else 'rPr'}")
+    run = etree.SubElement(snapshot, f"{_W}r")
+    text_node = etree.SubElement(run, f"{_W}t")
+    text_node.text = "Hidden."
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_property_revision_with_nested_insertion(path: Path) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    properties = paragraph.find(f"{_W}pPr")
+    if properties is None:
+        properties = etree.Element(f"{_W}pPr")
+        paragraph.insert(0, properties)
+    change = etree.SubElement(
+        properties,
+        f"{_W}pPrChange",
+        {f"{_W}id": "9", f"{_W}author": "Source reviewer"},
+    )
+    snapshot = etree.SubElement(change, f"{_W}pPr")
+    snapshot.append(_revision("ins", "Hidden.", "10"))
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_malformed_property_revision(path: Path, kind: str) -> None:
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    if kind == "pPrChange":
+        properties = paragraph.find(f"{_W}pPr")
+        if properties is None:
+            properties = etree.Element(f"{_W}pPr")
+            paragraph.insert(0, properties)
+    else:
+        run = paragraph.find(f"{_W}r")
+        assert run is not None
+        properties = run.find(f"{_W}rPr")
+        if properties is None:
+            properties = etree.Element(f"{_W}rPr")
+            run.insert(0, properties)
+    etree.SubElement(
+        properties,
+        f"{_W}{kind}",
+        {f"{_W}id": "11", f"{_W}author": "Source reviewer"},
+    )
     revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     with ZipFile(path, "w") as archive:
         for info, data in entries:
