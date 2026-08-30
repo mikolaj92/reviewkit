@@ -374,6 +374,31 @@ def test_comment_reference_recovers_locator_when_range_start_is_outside_paragrap
     assert review_document.comments[0].locator is not None
 
 
+def test_nested_sdt_comment_paragraph_still_gets_a_locator(tmp_path: Path) -> None:
+    # Given: the whole comment paragraph lives inside nested w:sdt, so python-docx
+    # omits it from docx.paragraphs / iter_inner_content.
+    source = tmp_path / "nested-sdt-comment.docx"
+    document = DocxDocument()
+    paragraph = document.add_paragraph()
+    run = paragraph.add_run("Anchored.")
+    document.add_comment(
+        runs=run,
+        text="Source note.",
+        author="Source reviewer",
+        initials="SR",
+    )
+    document.save(source)
+    _wrap_comment_paragraph_in_nested_sdt(source)
+
+    # When: ReviewKit reads comments from package XML (#228).
+    review_document = load_docx(source)
+
+    # Then: complete markers still yield a locator even though python-docx hid the paragraph.
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    assert len(review_document.comments) == 1
+    assert review_document.comments[0].locator is not None
+
+
 def test_indirectly_nested_block_revision_remains_fail_closed(tmp_path: Path) -> None:
     # Given: a supported revision wrapper hiding an empty block through a customXml node.
     source = tmp_path / "nested-block-revision.docx"
@@ -858,6 +883,38 @@ def _append_custom_xml_range_with_child(path: Path) -> None:
     text_node.text = "Hidden."
     paragraph.append(start)
     paragraph.append(etree.Element(f"{_W}customXmlInsRangeEnd", {f"{_W}id": "9"}))
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _wrap_comment_paragraph_in_nested_sdt(path: Path) -> None:
+    """Hide the comment paragraph inside nested w:sdt so python-docx omits it."""
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    reference = root.find(f".//{_W}commentReference")
+    assert reference is not None
+    paragraph = reference
+    while paragraph is not None and etree.QName(paragraph).localname != "p":
+        paragraph = paragraph.getparent()
+    assert paragraph is not None
+    parent = paragraph.getparent()
+    assert parent is not None
+    index = list(parent).index(paragraph)
+    inner = etree.Element(f"{_W}sdt")
+    inner_content = etree.SubElement(inner, f"{_W}sdtContent")
+    outer = etree.Element(f"{_W}sdt")
+    outer_content = etree.SubElement(outer, f"{_W}sdtContent")
+    parent.remove(paragraph)
+    inner_content.append(paragraph)
+    outer_content.append(inner)
+    parent.insert(index, outer)
     revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     with ZipFile(path, "w") as archive:
         for info, data in entries:
