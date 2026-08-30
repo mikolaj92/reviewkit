@@ -167,6 +167,14 @@ def _project_revision_input(
 _SUPPORTED_REVISION_KINDS = frozenset({"ins", "del"})
 _FORMATTING_PROPERTY_CHANGES = frozenset({"pPrChange", "rPrChange"})
 _PROPERTY_CHANGE_SNAPSHOT = {"pPrChange": "pPr", "rPrChange": "rPr"}
+_EMPTY_CUSTOM_XML_RANGE_MARKERS = frozenset(
+    {
+        "customXmlInsRangeStart",
+        "customXmlInsRangeEnd",
+        "customXmlDelRangeStart",
+        "customXmlDelRangeEnd",
+    }
+)
 _BLOCK_REVISION_CHILDREN = frozenset({"p", "tbl", "tr", "tc"})
 
 
@@ -190,10 +198,20 @@ def _revision_coverage_is_incomplete(
     A property change that owns text, nests a text-bearing ``ins`` / ``del``, has
     block children, or children other than the matching ``pPr`` / ``rPr`` snapshot
     stays fail-closed.
+
+    Empty ``customXmlInsRange*`` / ``customXmlDelRange*`` bookmarks are the same
+    bookkeeping class around content controls: identity attributes only, no
+    children, no owned text (#226). ``customXmlMoveFrom`` / ``customXmlMoveTo``
+    stay fail-closed.
     """
     if not markup_report.has_tracked_revisions:
         return False
-    if set(markup_report.revision_kinds) - _SUPPORTED_REVISION_KINDS - _FORMATTING_PROPERTY_CHANGES:
+    if (
+        set(markup_report.revision_kinds)
+        - _SUPPORTED_REVISION_KINDS
+        - _FORMATTING_PROPERTY_CHANGES
+        - _EMPTY_CUSTOM_XML_RANGE_MARKERS
+    ):
         return True
 
     source_inventory: dict[tuple[str, str | None, str | None, str | None], str] = defaultdict(str)
@@ -206,6 +224,10 @@ def _revision_coverage_is_incomplete(
                 kind = etree.QName(element).localname
                 if kind in _FORMATTING_PROPERTY_CHANGES:
                     if _formatting_property_change_is_unsafe(element, kind):
+                        return True
+                    continue
+                if kind in _EMPTY_CUSTOM_XML_RANGE_MARKERS:
+                    if _empty_custom_xml_range_is_unsafe(element):
                         return True
                     continue
                 if kind not in _SUPPORTED_REVISION_KINDS:
@@ -295,6 +317,17 @@ def _property_toggle_revision_is_unsafe(element: etree._Element) -> bool:
 
     Word emits ``w:rPr/w:del`` (and ``w:ins``) with author/date/id and no
     children. Any child element or owned text is nested revision grammar.
+    """
+    if list(element):
+        return True
+    return bool(_direct_revision_text(element))
+
+
+def _empty_custom_xml_range_is_unsafe(element: etree._Element) -> bool:
+    """Empty customXml ins/del range bookmarks own no text (#226).
+
+    Word emits identity-only start/end bookmarks around content controls.
+    Any child element or owned text is nested revision grammar.
     """
     if list(element):
         return True
