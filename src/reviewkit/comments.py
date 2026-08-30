@@ -93,7 +93,7 @@ def read_comments(path: str | Path) -> list[DocxComment]:
     except (OSError, PackageNotFoundError):
         return []
 
-    anchors = _comment_anchors(docx)
+    anchors = _comment_anchors(docx, path)
     parents = _comment_parent_ids(path)
     comments: list[DocxComment] = []
     for comment in docx.comments:
@@ -309,13 +309,15 @@ def _is_thread_part(name: str) -> bool:
     return name.startswith(_THREAD_PART_PREFIXES)
 
 
-def _comment_anchors(docx: Any) -> dict[str, tuple[str, str]]:
+def _comment_anchors(docx: Any, path: str | Path | None = None) -> dict[str, tuple[str, str]]:
     """Map comment id -> (paragraph locator, visible anchored text).
 
     Word may park ``commentRangeStart`` as a ``w:sdtContent`` child and
     ``commentRangeEnd`` inside ``w:ins``. Those markers never appear on a
     paragraph ``_p`` tree, so recover the locator from ``commentReference``
-    when the range walk did not finish the id (#226).
+    when the range walk did not finish the id (#226). Nested ``w:sdt`` can
+    hide the whole paragraph from python-docx; fall back to package XML
+    markers in that case (#228).
     """
     open_ids: dict[str, list[str]] = {}
     started_at: dict[str, str] = {}
@@ -358,7 +360,30 @@ def _comment_anchors(docx: Any) -> dict[str, tuple[str, str]]:
     for comment_id, locator in reference_at.items():
         if comment_id not in finished and locator:
             finished[comment_id] = (locator, "")
+    if path is not None:
+        for comment_id in _package_comment_reference_ids(path):
+            current = finished.get(comment_id)
+            if current is None or not current[0]:
+                finished[comment_id] = (f"sdt:comment:{comment_id}", "")
     return finished
+
+
+def _package_comment_reference_ids(path: str | Path) -> set[str]:
+    """Comment ids that still have a ``commentReference`` in package XML."""
+    found: set[str] = set()
+    try:
+        with ZipFile(str(path)) as bundle:
+            for name in bundle.namelist():
+                if not (name.startswith("word/") and name.endswith(".xml")):
+                    continue
+                root = etree.fromstring(bundle.read(name))
+                for element in root.iter(f"{{{_W_NS}}}commentReference"):
+                    comment_id = element.get(f"{{{_W_NS}}}id")
+                    if comment_id is not None:
+                        found.add(comment_id)
+    except (OSError, BadZipFile, KeyError, etree.XMLSyntaxError):
+        return set()
+    return found
 
 
 def _visible_chunk(node: Any) -> str:
