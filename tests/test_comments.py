@@ -23,6 +23,12 @@ _COMMENTS_EXTENDED_TYPE = "application/vnd.ms-word.commentsExtended+xml"
 _COMMENTS_EXTENDED_REL = (
     "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"
 )
+_PEOPLE_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml"
+)
+_PEOPLE_REL = (
+    "http://schemas.microsoft.com/office/2011/relationships/people"
+)
 
 _CLAUSE = (
     "Umowa zostaje zawarta na czas nieokreślony. "
@@ -224,3 +230,69 @@ def test_comments_for_locator_filters(tmp_path: Path) -> None:
     ]
     assert [comment.id for comment in comments_for_locator(comments, "body:p:1")] == ["1"]
     assert comments_for_locator(comments, None) == []
+
+def _people_only_docx(path: Path) -> Path:
+    """Tracked-revision package with people.xml and no comments.xml (#222)."""
+    docx = DocxDocument()
+    docx.add_paragraph(_CLAUSE)
+    docx.save(path)
+    with ZipFile(path) as bundle:
+        members = {name: bundle.read(name) for name in bundle.namelist()}
+    people = (
+        "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>"
+        f'<w15:people xmlns:w15="{_W15}">'
+        '<w15:person w15:author="Reviewer">'
+        '<w15:presenceInfo w15:providerId="None" w15:userId="reviewer"/>'
+        "</w15:person>"
+        "</w15:people>"
+    ).encode("utf-8")
+    rels_root = etree.fromstring(members["word/_rels/document.xml.rels"])
+    rel = etree.SubElement(rels_root, f"{_REL}Relationship")
+    rel.set("Id", "rIdPeople")
+    rel.set("Type", _PEOPLE_REL)
+    rel.set("Target", "people.xml")
+    types_root = etree.fromstring(members["[Content_Types].xml"])
+    override = etree.SubElement(types_root, f"{_CT}Override")
+    override.set("PartName", "/word/people.xml")
+    override.set("ContentType", _PEOPLE_TYPE)
+    members["word/people.xml"] = people
+    members["word/_rels/document.xml.rels"] = etree.tostring(
+        rels_root, xml_declaration=True, encoding="UTF-8"
+    )
+    members["[Content_Types].xml"] = etree.tostring(
+        types_root, xml_declaration=True, encoding="UTF-8"
+    )
+    with ZipFile(path, "w") as bundle:
+        for name, data in members.items():
+            bundle.writestr(name, data)
+    return path
+
+
+def test_render_reviewed_docx_creates_comments_when_source_has_people_only(
+    tmp_path: Path,
+) -> None:
+    """#222: people.xml without comments.xml is valid Word, not a KeyError."""
+    path = _people_only_docx(tmp_path / "people-only.docx")
+    with ZipFile(path) as bundle:
+        names = set(bundle.namelist())
+    assert "word/people.xml" in names
+    assert "word/comments.xml" not in names
+
+    document = load_docx(path)
+    action = ReviewAction(
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.COMMENT,
+        node_id=document.sections[0].paragraphs[0].id,
+        comment="Reviewer note on a source that never had comments.",
+    )
+    reviewed = render_reviewed_docx(document, [action], tmp_path / "people-reviewed.docx")
+
+    with ZipFile(reviewed) as bundle:
+        names = set(bundle.namelist())
+        comments_xml = bundle.read("word/comments.xml")
+        people_xml = bundle.read("word/people.xml")
+    assert "word/people.xml" in names
+    assert b"Reviewer note on a source that never had comments." in comments_xml
+    assert b"Reviewer" in people_xml
+    rendered = DocxDocument(str(reviewed))
+    assert any("never had comments" in comment.text for comment in rendered.comments)

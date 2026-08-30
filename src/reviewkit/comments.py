@@ -215,7 +215,9 @@ def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | P
     The renderer appends new review comments to ``comments.xml``; existing
     source comment paragraph IDs are synchronized when thread sidecars require
     them. Thread sidecar parts (and the relationships / content-type entries
-    that make Word see them) are restored from the source package.
+    that make Word see them) are restored from the source package. A source
+    with ``people.xml`` (or other thread sidecars) and no ``comments.xml`` is
+    valid Word; skip paragraph-id sync instead of KeyError (#222).
     """
     source = Path(source_path)
     target = Path(rendered_path)
@@ -239,8 +241,11 @@ def restore_comment_thread_parts(source_path: str | Path, rendered_path: str | P
         for name, data in source_parts.items()
         if _is_thread_part(name) and name not in rendered_names
     }
-    restored_comments = _restore_source_comment_paragraph_ids(
-        entries, source_parts[_COMMENTS_PART]
+    source_comments = source_parts.get(_COMMENTS_PART)
+    restored_comments = (
+        _restore_source_comment_paragraph_ids(entries, source_comments)
+        if source_comments is not None
+        else None
     )
     if not missing and restored_comments is None:
         return
