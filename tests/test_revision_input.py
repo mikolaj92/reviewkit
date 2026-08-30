@@ -148,6 +148,44 @@ def test_empty_formatting_property_change_with_supported_revisions_is_complete(
     assert output.exists()
 
 
+def test_rprchange_snapshot_empty_del_toggle_is_complete(tmp_path: Path) -> None:
+    """#224: empty w:del inside rPrChange/rPr is a Word property toggle, not text."""
+    source = tmp_path / "rprchange-del-toggle.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain ")
+    document.save(source)
+    _append_revisions(source)
+    _append_rprchange_with_empty_del_toggle(source)
+
+    review_document = load_docx(source)
+
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    assert review_document.text == "Plain Inserted."
+    assert [(entry.kind.value, entry.text) for entry in review_document.revision_ledger.entries] == [
+        ("inserted", "Inserted."),
+        ("deleted", "Deleted."),
+    ]
+    output = tmp_path / "reviewed.docx"
+    render_reviewed_docx(review_document, [], output)
+    assert output.exists()
+
+
+def test_rprchange_snapshot_property_toggle_with_fonts_is_complete(tmp_path: Path) -> None:
+    """#224: rFonts/sz plus empty w:del in the rPr snapshot is still formatting-only."""
+    source = tmp_path / "rprchange-fonts-del-toggle.docx"
+    document = DocxDocument()
+    document.add_paragraph("Plain text.")
+    document.save(source)
+    _append_rprchange_with_fonts_and_empty_del(source)
+
+    review_document = load_docx(source)
+
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    output = tmp_path / "reviewed.docx"
+    render_reviewed_docx(review_document, [], output)
+    assert output.exists()
+
+
 @pytest.mark.parametrize("revision_kind", ["pPrChange", "rPrChange"])
 def test_property_change_that_owns_text_remains_fail_closed(
     tmp_path: Path, revision_kind: str
@@ -553,6 +591,77 @@ def _append_property_revision(path: Path, kind: str) -> None:
     change = etree.SubElement(properties, f"{_W}{kind}", attributes)
     snapshot = etree.SubElement(change, f"{_W}{snapshot_kind}")
     etree.SubElement(snapshot, f"{_W}{'jc' if kind == 'pPrChange' else 'b'}")
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_rprchange_with_empty_del_toggle(path: Path) -> None:
+    """Word run-property toggle: empty w:del inside rPrChange/rPr (#224)."""
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    run = paragraph.find(f"{_W}r")
+    assert run is not None
+    properties = run.find(f"{_W}rPr")
+    if properties is None:
+        properties = etree.Element(f"{_W}rPr")
+        run.insert(0, properties)
+    change = etree.SubElement(
+        properties,
+        f"{_W}rPrChange",
+        {f"{_W}id": "12", f"{_W}author": "Source reviewer"},
+    )
+    snapshot = etree.SubElement(change, f"{_W}rPr")
+    etree.SubElement(
+        snapshot,
+        f"{_W}del",
+        {f"{_W}id": "13", f"{_W}author": "Source reviewer"},
+    )
+    revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+    with ZipFile(path, "w") as archive:
+        for info, data in entries:
+            archive.writestr(
+                info,
+                revised_document_xml if info.filename == "word/document.xml" else data,
+            )
+
+
+def _append_rprchange_with_fonts_and_empty_del(path: Path) -> None:
+    """rPr snapshot with rFonts/sz plus empty w:del toggle (#224)."""
+    with ZipFile(path) as archive:
+        entries = [(info, archive.read(info.filename)) for info in archive.infolist()]
+    document_xml = next(data for info, data in entries if info.filename == "word/document.xml")
+    root = etree.fromstring(document_xml)
+    paragraph = root.find(f".//{_W}p")
+    assert paragraph is not None
+    run = paragraph.find(f"{_W}r")
+    assert run is not None
+    properties = run.find(f"{_W}rPr")
+    if properties is None:
+        properties = etree.Element(f"{_W}rPr")
+        run.insert(0, properties)
+    change = etree.SubElement(
+        properties,
+        f"{_W}rPrChange",
+        {f"{_W}id": "14", f"{_W}author": "Source reviewer"},
+    )
+    snapshot = etree.SubElement(change, f"{_W}rPr")
+    etree.SubElement(
+        snapshot,
+        f"{_W}del",
+        {f"{_W}id": "15", f"{_W}author": "Source reviewer"},
+    )
+    etree.SubElement(snapshot, f"{_W}rFonts", {f"{_W}ascii": "Calibri"})
+    etree.SubElement(snapshot, f"{_W}sz", {f"{_W}val": "24"})
+    etree.SubElement(snapshot, f"{_W}szCs", {f"{_W}val": "24"})
     revised_document_xml = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
     with ZipFile(path, "w") as archive:
         for info, data in entries:

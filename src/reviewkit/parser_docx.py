@@ -184,9 +184,12 @@ def _revision_coverage_is_incomplete(
 
     Empty ``pPrChange`` / ``rPrChange`` records are the same class of bookkeeping: they
     snapshot previous run/paragraph properties and own no text. They must not poison
-    coverage when every text-bearing ``ins`` / ``del`` is already in the ledger. A
-    property change that owns text, nested ``ins`` / ``del``, block children, or
-    children other than the matching ``pPr`` / ``rPr`` snapshot stays fail-closed.
+    coverage when every text-bearing ``ins`` / ``del`` is already in the ledger. Word
+    also stores property toggles as empty ``w:ins`` / ``w:del`` inside that snapshot
+    (identity attributes only, no owned text). Those are still formatting-only.
+    A property change that owns text, nests a text-bearing ``ins`` / ``del``, has
+    block children, or children other than the matching ``pPr`` / ``rPr`` snapshot
+    stays fail-closed.
     """
     if not markup_report.has_tracked_revisions:
         return False
@@ -266,18 +269,34 @@ def _formatting_property_change_is_unsafe(element: etree._Element, kind: str) ->
     """Return whether a property-change record owns text or unexpected children.
 
     Word stores the previous ``pPr`` / ``rPr`` snapshot as the only child of an
-    empty formatting-only change. Anything else is unsupported revision grammar.
+    empty formatting-only change. Empty ``w:ins`` / ``w:del`` inside that
+    snapshot are property toggles (identity attributes only). Nested revisions
+    that own text, runs, or block children stay fail-closed.
     """
     expected_snapshot = _PROPERTY_CHANGE_SNAPSHOT[kind]
     children = list(element)
     if len(children) != 1 or etree.QName(children[0]).localname != expected_snapshot:
         return True
-    if any(
-        etree.QName(descendant).localname in _BLOCK_REVISION_CHILDREN
-        or etree.QName(descendant).localname in _SUPPORTED_REVISION_KINDS
-        for descendant in element.iter()
-        if descendant is not element
-    ):
+    for descendant in element.iter():
+        if descendant is element:
+            continue
+        local = etree.QName(descendant).localname
+        if local in _BLOCK_REVISION_CHILDREN:
+            return True
+        if local in _SUPPORTED_REVISION_KINDS and _property_toggle_revision_is_unsafe(
+            descendant
+        ):
+            return True
+    return bool(_direct_revision_text(element))
+
+
+def _property_toggle_revision_is_unsafe(element: etree._Element) -> bool:
+    """Empty snapshot ``ins`` / ``del`` are formatting toggles, not text revisions.
+
+    Word emits ``w:rPr/w:del`` (and ``w:ins``) with author/date/id and no
+    children. Any child element or owned text is nested revision grammar.
+    """
+    if list(element):
         return True
     return bool(_direct_revision_text(element))
 
