@@ -8,7 +8,6 @@ from collections.abc import Sequence
 from docxtor import (
     DocxFactsSnapshot,
     ParagraphFact,
-    ReviewCoverage,
     docx_facts,
     inventory_review_markup,
     read_core_keywords,
@@ -24,7 +23,7 @@ from reviewkit.policy import WRITING_ACTIONS
 class IncorporatedCommentOutcome:
     comment_id: str
     text: str
-    revision_kinds: tuple[str, ...]
+    revision_kinds: tuple[str, ...] = ()
     locator: str | None = None
 
 
@@ -56,8 +55,13 @@ def incorporated_comment_outcomes(
 ) -> tuple[IncorporatedCommentOutcome, ...]:
     data = _bytes(source)
     inventory = inventory_review_markup(data)
-    if inventory.coverage is not ReviewCoverage.COMPLETE:
-        detail = "; ".join(item.message for item in inventory.diagnostics)
+    fatal = tuple(
+        item
+        for item in inventory.diagnostics
+        if item.code in {"package_unreadable", "comments_unreadable"}
+    )
+    if fatal:
+        detail = "; ".join(item.message for item in fatal)
         raise ValueError(f"review markup coverage is incomplete: {detail}")
     comments = {item.comment_id: item for item in inventory.comments}
     return tuple(
