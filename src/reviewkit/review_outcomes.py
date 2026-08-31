@@ -158,6 +158,22 @@ def strip_metadata_marker(source: str | Path | bytes, *, prefix: str) -> bytes:
 
 
 def _rendered_revisions(source: str | Path) -> list[tuple[str, str, str | None]]:
+    inventory = inventory_review_markup(_bytes(source))
+    supported = {
+        "ins",
+        "del",
+        "pPrChange",
+        "rPrChange",
+        "customXmlInsRangeStart",
+        "customXmlInsRangeEnd",
+        "customXmlDelRangeStart",
+        "customXmlDelRangeEnd",
+    }
+    unsupported = {item.raw_kind for item in inventory.revisions} - supported
+    if unsupported:
+        raise ValueError(
+            "rendered DOCX contains unsupported revision markup: " + ", ".join(sorted(unsupported))
+        )
     document = load_docx(source)
     return [
         (
