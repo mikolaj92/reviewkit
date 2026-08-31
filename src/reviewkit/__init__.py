@@ -26,6 +26,18 @@ from reviewkit.insertions import (
     contains_suggestion_marker,
     format_suggestion_text,
 )
+from reviewkit.review_outcomes import (
+    IncorporatedCommentOutcome,
+    RenderedActionAssessment,
+    ReviewChangeMetrics,
+    assess_rendered_actions,
+    incorporated_comment_outcomes,
+    measure_review_changes,
+    read_metadata_marker,
+    revision_signatures,
+    set_metadata_marker,
+    strip_metadata_marker,
+)
 from reviewkit.finality import (
     ReviewFinalityAssessment,
     ReviewFinalityStatus,
@@ -156,4 +168,14 @@ __all__ = [
     "read_footnotes",
     "reject_all_revisions",
     "review_document",
+    "IncorporatedCommentOutcome",
+    "RenderedActionAssessment",
+    "ReviewChangeMetrics",
+    "assess_rendered_actions",
+    "incorporated_comment_outcomes",
+    "measure_review_changes",
+    "read_metadata_marker",
+    "revision_signatures",
+    "set_metadata_marker",
+    "strip_metadata_marker",
 ]
