@@ -102,9 +102,7 @@ def test_layers_review_markup_onto_revision_comment_source(tmp_path: Path) -> No
     source = tmp_path / "source.docx"
     docx = DocxDocument()
     paragraph = docx.add_paragraph("Alpha target")
-    docx.add_comment(
-        runs=paragraph.runs[0], text="Source note", author="Source", initials="SO"
-    )
+    docx.add_comment(runs=paragraph.runs[0], text="Source note", author="Source", initials="SO")
     docx.save(source)
 
     with ZipFile(source) as bundle:
@@ -126,9 +124,7 @@ def test_layers_review_markup_onto_revision_comment_source(tmp_path: Path) -> No
     reply_start = ElementTree.Element(_W + "commentRangeStart", {_W + "id": "1"})
     reply_end = ElementTree.Element(_W + "commentRangeEnd", {_W + "id": "1"})
     reply_reference_run = ElementTree.Element(_W + "r")
-    ElementTree.SubElement(
-        reply_reference_run, _W + "commentReference", {_W + "id": "1"}
-    )
+    ElementTree.SubElement(reply_reference_run, _W + "commentReference", {_W + "id": "1"})
     paragraph_xml.insert(len(paragraph_xml) - 2, reply_start)
     paragraph_xml.extend((reply_end, reply_reference_run))
 
@@ -141,10 +137,14 @@ def test_layers_review_markup_onto_revision_comment_source(tmp_path: Path) -> No
         "{http://schemas.microsoft.com/office/word/2010/wordml}paraId", "AAAA0001"
     )
     reply = ElementTree.SubElement(
-        comments_root, _W + "comment", {_W + "id": "1", _W + "author": "Reply", _W + "initials": "RP"}
+        comments_root,
+        _W + "comment",
+        {_W + "id": "1", _W + "author": "Reply", _W + "initials": "RP"},
     )
     reply_paragraph = ElementTree.SubElement(
-        reply, _W + "p", {"{http://schemas.microsoft.com/office/word/2010/wordml}paraId": "BBBB0002"}
+        reply,
+        _W + "p",
+        {"{http://schemas.microsoft.com/office/word/2010/wordml}paraId": "BBBB0002"},
     )
     reply_run = ElementTree.SubElement(reply_paragraph, _W + "r")
     ElementTree.SubElement(reply_run, _W + "t").text = "Reply note"
@@ -168,10 +168,18 @@ def test_layers_review_markup_onto_revision_comment_source(tmp_path: Path) -> No
             "ContentType": "application/vnd.ms-word.commentsExtended+xml",
         },
     )
-    parts["word/document.xml"] = ElementTree.tostring(document_root, encoding="utf-8", xml_declaration=True)
-    parts["word/comments.xml"] = ElementTree.tostring(comments_root, encoding="utf-8", xml_declaration=True)
-    parts["word/_rels/document.xml.rels"] = ElementTree.tostring(rels_root, encoding="utf-8", xml_declaration=True)
-    parts["[Content_Types].xml"] = ElementTree.tostring(types_root, encoding="utf-8", xml_declaration=True)
+    parts["word/document.xml"] = ElementTree.tostring(
+        document_root, encoding="utf-8", xml_declaration=True
+    )
+    parts["word/comments.xml"] = ElementTree.tostring(
+        comments_root, encoding="utf-8", xml_declaration=True
+    )
+    parts["word/_rels/document.xml.rels"] = ElementTree.tostring(
+        rels_root, encoding="utf-8", xml_declaration=True
+    )
+    parts["[Content_Types].xml"] = ElementTree.tostring(
+        types_root, encoding="utf-8", xml_declaration=True
+    )
     parts["word/commentsExtended.xml"] = (
         b'<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">'
         b'<w15:commentEx w15:paraId="AAAA0001" w15:done="0"/>'
@@ -257,7 +265,9 @@ def test_rejects_effective_locator_after_source_deletion(tmp_path: Path) -> None
     delete_run = ElementTree.SubElement(source_delete, _W + "r")
     ElementTree.SubElement(delete_run, _W + "delText").text = "removed "
     paragraph_xml.insert(1, source_delete)
-    parts["word/document.xml"] = ElementTree.tostring(document_root, encoding="utf-8", xml_declaration=True)
+    parts["word/document.xml"] = ElementTree.tostring(
+        document_root, encoding="utf-8", xml_declaration=True
+    )
     with ZipFile(source, "w") as bundle:
         for name, data in parts.items():
             bundle.writestr(name, data)
@@ -526,9 +536,7 @@ def test_reviewed_docx_comment_carries_a_references_line(tmp_path: Path) -> None
     reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
 
     comments = _comment_texts(reviewed_path)
-    assert any(
-        "References: art. 385(1), unlabelled-source" in text for text in comments
-    ), comments
+    assert any("References: art. 385(1), unlabelled-source" in text for text in comments), comments
 
 
 def test_reviewed_docx_interleaves_several_tracked_edits_in_one_paragraph(tmp_path: Path) -> None:
@@ -600,17 +608,13 @@ def test_reviewed_docx_interleaves_several_tracked_edits_in_one_paragraph(tmp_pa
 
     # Tracked revisions are present (Word w:del / w:ins). Exact revision-id
     # allocation is owned by the Docxtor mechanical layer and may reuse ids.
-    revision_tags = [
-        child.tag for child in paragraph_xml if child.tag in {f"{_W}del", f"{_W}ins"}
-    ]
+    revision_tags = [child.tag for child in paragraph_xml if child.tag in {f"{_W}del", f"{_W}ins"}]
     assert revision_tags.count(f"{_W}del") == 2
     assert revision_tags.count(f"{_W}ins") == 2
 
     # Comment ranges still pair (start ids match end ids).
     start_ids = [
-        child.get(f"{_W}id")
-        for child in paragraph_xml
-        if child.tag == f"{_W}commentRangeStart"
+        child.get(f"{_W}id") for child in paragraph_xml if child.tag == f"{_W}commentRangeStart"
     ]
     end_ids = [
         child.get(f"{_W}id") for child in paragraph_xml if child.tag == f"{_W}commentRangeEnd"
@@ -1088,9 +1092,7 @@ def _numbered_docx_with_foreign_xml_declaration(tmp_path: Path) -> Path:
     docx.add_paragraph("Second item", style="List Number")
     docx.save(generated_path)
 
-    with ZipFile(generated_path) as incoming, ZipFile(
-        source_path, "w", ZIP_DEFLATED
-    ) as outgoing:
+    with ZipFile(generated_path) as incoming, ZipFile(source_path, "w", ZIP_DEFLATED) as outgoing:
         for info in incoming.infolist():
             payload = incoming.read(info.filename)
             if info.filename == "word/numbering.xml":
@@ -1137,9 +1139,7 @@ def test_reviewed_render_with_text_action_preserves_untouched_numbering_part(
         status=ActionStatus.NOT_APPLIED,
     )
 
-    reviewed_path = render_reviewed_docx(
-        document, [action], tmp_path / "reviewed.docx"
-    )
+    reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
 
     assert _part_bytes(reviewed_path, "word/numbering.xml") == _part_bytes(
         source_path, "word/numbering.xml"
@@ -1192,9 +1192,9 @@ def test_precise_comment_anchor_survives_opaque_segment_before_the_quote(tmp_pat
         tmp_path / "reviewed.docx",
     )
 
-    paragraph_xml = ElementTree.fromstring(
-        _part_xml(reviewed_path, "word/document.xml")
-    ).find(f".//{_W}p")
+    paragraph_xml = ElementTree.fromstring(_part_xml(reviewed_path, "word/document.xml")).find(
+        f".//{_W}p"
+    )
     assert paragraph_xml is not None
     # Only "target" is inside the comment range - not the whole paragraph.
     assert _commented_run_text(paragraph_xml) == "target"
@@ -1497,9 +1497,7 @@ def test_applied_replace_covering_opaque_tab_raises_instead_of_misrendering(
     # even landed at the paragraph END). A hand-built APPLIED action that bypasses
     # prepare must fail closed in BOTH renderers, never mis-render.
     document = load_docx(_tabbed_docx(tmp_path))
-    action = _writing_action(
-        id="a-tab", original_text=original, replacement_text=replacement
-    )
+    action = _writing_action(id="a-tab", original_text=original, replacement_text=replacement)
 
     with pytest.raises(RenderIntegrityError, match="a-tab"):
         renderer(document, [action], tmp_path / "out.docx")
@@ -1540,9 +1538,7 @@ def test_hyperlink_edit_demotes_to_conflict_and_both_artifacts_render(
     assert paragraph.text == "See the appendix for details."
     assert paragraph.opaque_ranges == [(4, 16)]
 
-    action = _safe_edit(
-        action_type=ReviewActionType.DELETE_TEXT, original_text="the appendix"
-    )
+    action = _safe_edit(action_type=ReviewActionType.DELETE_TEXT, original_text="the appendix")
     prepared = prepare_actions(document, _auto_profile(), [action])
     assert prepared[0].status == ActionStatus.CONFLICT
 

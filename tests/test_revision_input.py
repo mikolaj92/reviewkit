@@ -71,7 +71,10 @@ def test_supported_revision_coverage_ignores_empty_and_nested_wrappers(tmp_path:
     # Then: direct revision-owned text is complete despite empty/nested wrappers and split spans.
     assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
     assert review_document.text == "Plain Inserted."
-    assert [(entry.kind.value, entry.revision_id, entry.text) for entry in review_document.revision_ledger.entries] == [
+    assert [
+        (entry.kind.value, entry.revision_id, entry.text)
+        for entry in review_document.revision_ledger.entries
+    ] == [
         ("inserted", "1", "Inserted."),
         ("deleted", "4", "Deleted"),
     ]
@@ -93,7 +96,10 @@ def test_supported_revision_coverage_matches_text_controls(tmp_path: Path) -> No
 
     # Then: tabs, line breaks, and carriage returns are compared as owned text, not wrapper counts.
     assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
-    assert [(entry.kind.value, entry.revision_id, entry.text) for entry in review_document.revision_ledger.entries] == [
+    assert [
+        (entry.kind.value, entry.revision_id, entry.text)
+        for entry in review_document.revision_ledger.entries
+    ] == [
         ("inserted", "5", "A\tB\nC\nD"),
     ]
 
@@ -141,7 +147,9 @@ def test_empty_formatting_property_change_with_supported_revisions_is_complete(
     # Then: the formatting-only record does not mask or poison the supported text inventory.
     assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
     assert review_document.text == "Plain Inserted."
-    assert [(entry.kind.value, entry.text) for entry in review_document.revision_ledger.entries] == [
+    assert [
+        (entry.kind.value, entry.text) for entry in review_document.revision_ledger.entries
+    ] == [
         ("inserted", "Inserted."),
         ("deleted", "Deleted."),
     ]
@@ -163,7 +171,9 @@ def test_rprchange_snapshot_empty_del_toggle_is_complete(tmp_path: Path) -> None
 
     assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
     assert review_document.text == "Plain Inserted."
-    assert [(entry.kind.value, entry.text) for entry in review_document.revision_ledger.entries] == [
+    assert [
+        (entry.kind.value, entry.text) for entry in review_document.revision_ledger.entries
+    ] == [
         ("inserted", "Inserted."),
         ("deleted", "Deleted."),
     ]
@@ -887,7 +897,11 @@ def _append_custom_xml_range(path: Path) -> None:
     paragraph.append(
         etree.Element(
             f"{_W}customXmlDelRangeStart",
-            {f"{_W}id": "10", f"{_W}author": "Source reviewer", f"{_W}date": "2026-01-01T00:00:00Z"},
+            {
+                f"{_W}id": "10",
+                f"{_W}author": "Source reviewer",
+                f"{_W}date": "2026-01-01T00:00:00Z",
+            },
         )
     )
     paragraph.append(etree.Element(f"{_W}customXmlDelRangeEnd", {f"{_W}id": "10"}))

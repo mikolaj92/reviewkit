@@ -53,6 +53,8 @@ from docxtor import (
     _index_at_visible_offset as _base_index_at_visible_offset,
     _copy_segment as _base_copy_segment,
 )
+
+
 # ------------------------------------------------------------------
 # Delegation to docxtor for pure mechanical DOCX (addressing, run splitting,
 # visible offset math, rPr/opaque preservation). reviewkit owns only the
@@ -84,6 +86,7 @@ def _lift_list(base_list: list[_InlineSegment]) -> list[_Segment]:
 
 def _to_base_list(review_list: list[_Segment]) -> list[_InlineSegment]:
     return [_review_to_inline(s) for s in review_list]
+
 
 _SegmentKind = Literal["text", "ins", "del", "opaque"]
 
@@ -455,7 +458,6 @@ def _apply_clean_corrections(paragraph: Any, actions: list[ReviewAction]) -> Non
         _append_text_run(parent, segment.text, segment.rpr)
 
 
-
 def _save_docx(docx: Any, path: Path) -> None:
     """Write through Docxtor when the renderer opened an addressable source.
 
@@ -496,8 +498,7 @@ def _is_block_paragraph_insert(action: ReviewAction) -> bool:
     return (
         action.new_paragraph
         and _is_trackable_edit(action)
-        and action.action_type
-        in {ReviewActionType.INSERT_BEFORE, ReviewActionType.INSERT_AFTER}
+        and action.action_type in {ReviewActionType.INSERT_BEFORE, ReviewActionType.INSERT_AFTER}
     )
 
 
@@ -518,8 +519,7 @@ def _add_reviewed_runs(
     for action in _trackable_actions_in_application_order(actions):
         segments, revision_id, tracked = _track_action(segments, action, revision_id)
         if not tracked and (
-            action.status == ActionStatus.APPLIED
-            or not _anchored_in_text(pristine_text, action)
+            action.status == ActionStatus.APPLIED or not _anchored_in_text(pristine_text, action)
         ):
             # An APPLIED edit must ALWAYS appear as a tracked change (it is what
             # corrected.docx applies), and any edit that cannot even anchor in the
@@ -615,10 +615,14 @@ def _track_action(
         elif len(selected_text) != end - start:
             return segments, revision_id, False
         replacement: list[_Segment] = deleted
-        if action.action_type in {
-            ReviewActionType.REPLACE_TEXT,
-            ReviewActionType.REPLACE,
-        } and action.replacement_text:
+        if (
+            action.action_type
+            in {
+                ReviewActionType.REPLACE_TEXT,
+                ReviewActionType.REPLACE,
+            }
+            and action.replacement_text
+        ):
             replacement.append(
                 _Segment("ins", action.replacement_text, _rpr_at(segments, start), action.id)
             )
@@ -652,8 +656,10 @@ def _track_action(
             if action.action_type == ReviewActionType.INSERT_AFTER:
                 offset += len(action.original_text)
         else:
-            offset = 0 if action.action_type == ReviewActionType.INSERT_BEFORE else _visible_len(
-                segments
+            offset = (
+                0
+                if action.action_type == ReviewActionType.INSERT_BEFORE
+                else _visible_len(segments)
             )
         insert = _Segment(
             "ins",
@@ -705,7 +711,6 @@ def _align_locators_to_visible_text(
 def _paragraph_segments(paragraph: Any) -> list[_Segment]:
     base = paragraph_to_inline_segments(paragraph)
     return _lift_list(base)
-
 
 
 def _replace_visible_range(
@@ -1109,18 +1114,14 @@ def _append_unanchored_scope_comments(
             _add_comment(docx, marker, comment, reviewer)
 
 
-def _scope_paragraphs(
-    document: ReviewDocument, action: ReviewAction
-) -> list[ParagraphNode]:
+def _scope_paragraphs(document: ReviewDocument, action: ReviewAction) -> list[ParagraphNode]:
     if action.node_id == document.id:
         return list(document.iter_paragraphs())
     section = next((section for section in document.sections if section.id == action.node_id), None)
     return list(section.paragraphs) if section is not None else []
 
 
-def _add_comment(
-    docx: Any, paragraph: Any, text: str, reviewer: _ReviewerIdentity
-) -> None:
+def _add_comment(docx: Any, paragraph: Any, text: str, reviewer: _ReviewerIdentity) -> None:
     runs = paragraph.runs
     if not runs:
         paragraph.add_run("")

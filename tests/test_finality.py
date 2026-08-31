@@ -44,9 +44,7 @@ def test_no_findings_is_final() -> None:
 
 
 def test_applied_action_for_each_finding_is_final() -> None:
-    assessment = assess_review_finality(
-        finding_ids=["finding-1"], actions=[_action()]
-    )
+    assessment = assess_review_finality(finding_ids=["finding-1"], actions=[_action()])
     assert assessment.status is ReviewFinalityStatus.FINAL
     assert assessment.applied_edits == 1
 
@@ -77,9 +75,7 @@ def test_unmapped_applied_edit_needs_review() -> None:
 
 @pytest.mark.parametrize("status", [ActionStatus.NEEDS_HUMAN_DECISION, ActionStatus.CONFLICT])
 def test_unresolved_writing_action_needs_review(status: ActionStatus) -> None:
-    assessment = assess_review_finality(
-        finding_ids=["finding-1"], actions=[_action(status=status)]
-    )
+    assessment = assess_review_finality(finding_ids=["finding-1"], actions=[_action(status=status)])
     assert assessment.status is ReviewFinalityStatus.NEEDS_REVIEW
     assert assessment.reason == "unresolved_review_actions"
 

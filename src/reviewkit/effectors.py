@@ -31,9 +31,7 @@ class ReviewEffector:
         self.actions: list[ReviewAction] = []
         self.findings: list[ReviewFinding] = []
 
-    def register_response(
-        self, node_id: str, scope: ReviewScope, response: Any
-    ) -> None:
+    def register_response(self, node_id: str, scope: ReviewScope, response: Any) -> None:
         """Called by detectors after they get an LLM response for a node."""
         self._responses[node_id] = response
         self._scopes[node_id] = scope
@@ -57,9 +55,7 @@ class ReviewEffector:
         if hasattr(response, "missing_elements"):
             _extend_unique(self.state.missing_elements, response.missing_elements)
 
-    def apply_takt_decision(
-        self, node_id: str, decision: TaktDecision
-    ) -> list[ReviewAction]:
+    def apply_takt_decision(self, node_id: str, decision: TaktDecision) -> list[ReviewAction]:
         """Turn one takt decision into zero or more ReviewActions with status."""
         if node_id not in self._responses:
             return []
@@ -69,11 +65,7 @@ class ReviewEffector:
         produced: list[ReviewAction] = []
 
         if decision.has_interlock:
-            reason = (
-                decision.interlock.reason
-                if decision.interlock
-                else "takt interlock"
-            )
+            reason = decision.interlock.reason if decision.interlock else "takt interlock"
             for ca in candidate_actions:
                 status = (
                     ActionStatus.NEEDS_HUMAN_DECISION

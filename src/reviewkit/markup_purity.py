@@ -112,9 +112,7 @@ def inspect_markup(path: str | Path) -> MarkupReport:
         if not (name.startswith(_CONTENT_PART_PREFIX) and name.endswith(_CONTENT_PART_SUFFIX)):
             continue
         root = parse_xml(data)
-        found = set().union(
-            *(revision_kinds(root, namespace) for namespace in _WORD_NAMESPACES)
-        )
+        found = set().union(*(revision_kinds(root, namespace) for namespace in _WORD_NAMESPACES))
         if found:
             revision_parts.append(name)
             found_revision_kinds.update(found)

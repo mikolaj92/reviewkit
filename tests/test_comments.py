@@ -20,20 +20,11 @@ _REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _CT = "{http://schemas.openxmlformats.org/package/2006/content-types}"
 _W15 = "http://schemas.microsoft.com/office/word/2012/wordml"
 _COMMENTS_EXTENDED_TYPE = "application/vnd.ms-word.commentsExtended+xml"
-_COMMENTS_EXTENDED_REL = (
-    "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"
-)
-_PEOPLE_TYPE = (
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml"
-)
-_PEOPLE_REL = (
-    "http://schemas.microsoft.com/office/2011/relationships/people"
-)
+_COMMENTS_EXTENDED_REL = "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"
+_PEOPLE_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.people+xml"
+_PEOPLE_REL = "http://schemas.microsoft.com/office/2011/relationships/people"
 
-_CLAUSE = (
-    "Umowa zostaje zawarta na czas nieokreślony. "
-    "Okres wypowiedzenia wynosi 3 miesiące."
-)
+_CLAUSE = "Umowa zostaje zawarta na czas nieokreślony. Okres wypowiedzenia wynosi 3 miesiące."
 _LAWYER_NOTE = "sprawdzić czy to jest w umowie"
 
 
@@ -103,9 +94,18 @@ def _inject_comment_thread(path: Path) -> Path:
     with ZipFile(path, "w") as bundle:
         for name, data in other.items():
             bundle.writestr(name, data)
-        bundle.writestr("word/comments.xml", etree.tostring(comments_root, xml_declaration=True, encoding="UTF-8"))
-        bundle.writestr("word/_rels/document.xml.rels", etree.tostring(rels_root, xml_declaration=True, encoding="UTF-8"))
-        bundle.writestr("[Content_Types].xml", etree.tostring(types_root, xml_declaration=True, encoding="UTF-8"))
+        bundle.writestr(
+            "word/comments.xml",
+            etree.tostring(comments_root, xml_declaration=True, encoding="UTF-8"),
+        )
+        bundle.writestr(
+            "word/_rels/document.xml.rels",
+            etree.tostring(rels_root, xml_declaration=True, encoding="UTF-8"),
+        )
+        bundle.writestr(
+            "[Content_Types].xml",
+            etree.tostring(types_root, xml_declaration=True, encoding="UTF-8"),
+        )
         bundle.writestr("word/commentsExtended.xml", extended)
     return path
 
@@ -171,8 +171,12 @@ def test_render_reviewed_docx_keeps_existing_comment_and_adds_review(tmp_path: P
     ids = {marker[1] for marker in _comment_markers(reviewed)}
     assert "0" in ids
     assert "1" in ids
-    starts = [comment_id for kind, comment_id in _comment_markers(reviewed) if kind == "commentRangeStart"]
-    ends = [comment_id for kind, comment_id in _comment_markers(reviewed) if kind == "commentRangeEnd"]
+    starts = [
+        comment_id for kind, comment_id in _comment_markers(reviewed) if kind == "commentRangeStart"
+    ]
+    ends = [
+        comment_id for kind, comment_id in _comment_markers(reviewed) if kind == "commentRangeEnd"
+    ]
     assert starts.count("0") == 1
     assert ends.count("0") == 1
 
@@ -225,11 +229,16 @@ def test_read_comments_table_cell_gets_table_locator(tmp_path: Path) -> None:
 
 def test_comments_for_locator_filters(tmp_path: Path) -> None:
     comments = [
-        DocxComment(id="0", author="A", initials="A", text="one", locator="body:p:0", anchor_text="x"),
-        DocxComment(id="1", author="B", initials="B", text="two", locator="body:p:1", anchor_text="y"),
+        DocxComment(
+            id="0", author="A", initials="A", text="one", locator="body:p:0", anchor_text="x"
+        ),
+        DocxComment(
+            id="1", author="B", initials="B", text="two", locator="body:p:1", anchor_text="y"
+        ),
     ]
     assert [comment.id for comment in comments_for_locator(comments, "body:p:1")] == ["1"]
     assert comments_for_locator(comments, None) == []
+
 
 def _people_only_docx(path: Path) -> Path:
     """Tracked-revision package with people.xml and no comments.xml (#222)."""

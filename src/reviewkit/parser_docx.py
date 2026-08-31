@@ -319,9 +319,7 @@ def _formatting_property_change_is_unsafe(element: etree._Element, kind: str) ->
         local = etree.QName(descendant).localname
         if local in _BLOCK_REVISION_CHILDREN:
             return True
-        if local in _SUPPORTED_REVISION_KINDS and _property_toggle_revision_is_unsafe(
-            descendant
-        ):
+        if local in _SUPPORTED_REVISION_KINDS and _property_toggle_revision_is_unsafe(descendant):
             return True
     return bool(_direct_revision_text(element))
 
@@ -478,9 +476,7 @@ def split_sentences_with_spans(text: str) -> list[tuple[str, int, int]]:
     return [(stripped, start, start + len(stripped))]
 
 
-def _append_span(
-    spans: list[tuple[str, int, int]], text: str, start: int, end: int
-) -> None:
+def _append_span(spans: list[tuple[str, int, int]], text: str, start: int, end: int) -> None:
     segment = text[start:end]
     stripped = segment.strip()
     if not stripped:
@@ -695,4 +691,3 @@ def _story_sections(
             )
         )
     return sections
-

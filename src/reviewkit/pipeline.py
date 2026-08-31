@@ -45,7 +45,9 @@ def review_document(
     """
     # Accept an already-built profile as well as a folder path: callers that construct or cache
     # a ReviewProfile in memory shouldn't be forced to round-trip it through disk.
-    profile = profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
+    profile = (
+        profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
+    )
     document = load_docx(input_path)
     reviewer = TaktReviewer(
         profile=profile,

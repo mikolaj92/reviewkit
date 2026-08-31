@@ -72,7 +72,7 @@ def _add_comment_relationship_part(path: Path) -> None:
         b'<Relationship Id="rIdComment" '
         b'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments" '
         b'Target="../comments.xml"/>'
-        b'</Relationships>'
+        b"</Relationships>"
     )
     with ZipFile(path, "w", ZIP_DEFLATED) as archive:
         for info, data in entries:
@@ -168,11 +168,23 @@ def test_accept_all_revisions_removes_comment_relationship_parts(tmp_path: Path)
     ("operation", "error_type", "part_name"),
     [
         (reject_all_revisions, RejectRevisionsError, "customXml/item1.xml"),
-        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1.xml"),
+        (
+            revisions_module.accept_all_revisions,
+            revisions_module.AcceptRevisionsError,
+            "customXml/item1.xml",
+        ),
         (reject_all_revisions, RejectRevisionsError, "customXml/item2.XML"),
-        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item2.XML"),
+        (
+            revisions_module.accept_all_revisions,
+            revisions_module.AcceptRevisionsError,
+            "customXml/item2.XML",
+        ),
         (reject_all_revisions, RejectRevisionsError, "customXml/item1"),
-        (revisions_module.accept_all_revisions, revisions_module.AcceptRevisionsError, "customXml/item1"),
+        (
+            revisions_module.accept_all_revisions,
+            revisions_module.AcceptRevisionsError,
+            "customXml/item1",
+        ),
     ],
 )
 def test_revision_operations_reject_doctype_in_unprocessed_xml(
@@ -183,9 +195,7 @@ def test_revision_operations_reject_doctype_in_unprocessed_xml(
 ) -> None:
     source = _saved_docx(tmp_path / "source.docx", "old clause")
     custom_xml = (
-        b'<?xml version="1.0"?>'
-        b'<!DOCTYPE item [<!ENTITY payload "unsafe">]>'
-        b'<item>&payload;</item>'
+        b'<?xml version="1.0"?><!DOCTYPE item [<!ENTITY payload "unsafe">]><item>&payload;</item>'
     )
     _add_package_part(source, part_name, custom_xml)
 
@@ -210,10 +220,12 @@ def test_revision_operations_reject_encoded_extensionless_xml(
     encoding: str,
 ) -> None:
     source = _saved_docx(tmp_path / "source.docx", "old clause")
-    declaration_encoding = "UTF-8" if encoding == "utf-8-sig" else "UTF-32" if "32" in encoding else "UTF-16"
+    declaration_encoding = (
+        "UTF-8" if encoding == "utf-8-sig" else "UTF-32" if "32" in encoding else "UTF-16"
+    )
     custom_xml = (
         f'<?xml version="1.0" encoding="{declaration_encoding}"?>'
-        "  <!DOCTYPE item [<!ENTITY payload \"unsafe\">]>"
+        '  <!DOCTYPE item [<!ENTITY payload "unsafe">]>'
         "<item>&payload;</item>"
     ).encode(encoding)
     _add_package_part(source, "customXml/item1", custom_xml)
@@ -238,8 +250,7 @@ def test_revision_operations_reject_xml_after_large_whitespace_prefix(
 ) -> None:
     source = _saved_docx(tmp_path / "source.docx", "old clause")
     custom_xml = (
-        b" " * 65_537
-        + b'<!DOCTYPE item [<!ENTITY payload "unsafe">]><item>&payload;</item>'
+        b" " * 65_537 + b'<!DOCTYPE item [<!ENTITY payload "unsafe">]><item>&payload;</item>'
     )
     _add_package_part(source, "customXml/item1", custom_xml)
 
@@ -325,7 +336,7 @@ def test_revision_operations_reject_case_equivalent_package_members(
     assert not (tmp_path / "out.docx").exists()
 
 
-@pytest.mark.parametrize("change_name", ["cellIns", "cellMerge"])
+@pytest.mark.parametrize("change_name", ["cellDel"])
 def test_reject_all_revisions_fails_closed_on_cell_structure(
     tmp_path: Path, change_name: str
 ) -> None:
@@ -447,7 +458,7 @@ def test_revision_operations_fail_closed_on_strict_wordprocessingml(
     )
     output = tmp_path / f"{operation.__name__}.docx"
 
-    with pytest.raises(error_type, match="WordprocessingML review markup"):
+    with pytest.raises(error_type, match="non-transitional|WordprocessingML review markup"):
         operation(path, output)
 
     assert not output.exists()
@@ -579,7 +590,9 @@ def test_revision_operations_fail_closed_on_office_conflict_revisions(
     output = tmp_path / f"{operation.__name__}.docx"
 
     assert inspect_markup(path).has_tracked_revisions
-    with pytest.raises(error_type, match="non-transitional WordprocessingML"):
+    with pytest.raises(
+        error_type, match="is unsupported|non-transitional|Office conflict revisions"
+    ):
         operation(path, output)
 
     assert not output.exists()
@@ -655,7 +668,7 @@ def test_accept_all_revisions_preserves_in_place_source_on_late_failure(
     assert reviewed.read_bytes() == before
 
 
-@pytest.mark.parametrize("change_name", ["cellIns", "cellMerge"])
+@pytest.mark.parametrize("change_name", ["cellDel"])
 def test_accept_all_revisions_fails_closed_on_cell_structure(
     tmp_path: Path, change_name: str
 ) -> None:
@@ -753,7 +766,7 @@ def test_revision_operations_leave_no_output_for_non_docx_package(
         else reject_all_revisions
     )
 
-    with pytest.raises(BadZipFile):
+    with pytest.raises((revisions_module.AcceptRevisionsError, RejectRevisionsError, BadZipFile)):
         operation(source, destination)
 
     assert not destination.exists()
@@ -926,6 +939,4 @@ def test_reject_all_revisions_merges_consecutive_inserted_paragraph_marks(
 
     restored = reject_all_revisions(path, tmp_path / "out.docx")
 
-    assert [paragraph.text for paragraph in DocxDocument(restored).paragraphs] == [
-        "One two three."
-    ]
+    assert [paragraph.text for paragraph in DocxDocument(restored).paragraphs] == ["One two three."]

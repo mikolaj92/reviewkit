@@ -401,10 +401,8 @@ def test_accept_all_revisions_does_not_merge_run_property_revision(tmp_path: Pat
     run_properties.append(OxmlElement("w:del"))
     docx.save(path)
 
-    corrected = accept_all_revisions(path, tmp_path / "out.docx")
-
-    assert inspect_markup(corrected).is_clean
-    assert _body_paragraph_texts(corrected) == ["Standalone paragraph."]
+    with pytest.raises(AcceptRevisionsError):
+        accept_all_revisions(path, tmp_path / "out.docx")
 
 
 def test_accept_all_revisions_rejects_cell_deletion(tmp_path: Path) -> None:

@@ -225,14 +225,16 @@ def _priority_rank(value: str, order: dict[str, int]) -> int:
     return order.get(value.strip().lower(), max(order.values(), default=0) + 1)
 
 
-def _sensitive_text_changed(
-    action: ReviewAction, *, node_text: str, changed_text: str
-) -> bool:
+def _sensitive_text_changed(action: ReviewAction, *, node_text: str, changed_text: str) -> bool:
     if action.action_type not in WRITING_ACTIONS or node_text == changed_text:
         return False
     touched_text = " ".join(
         part
-        for part in [action.original_text, action.replacement_text, _located_text(node_text, action)]
+        for part in [
+            action.original_text,
+            action.replacement_text,
+            _located_text(node_text, action),
+        ]
         if part
     )
     return bool(_SENSITIVE_TEXT_PATTERN.search(touched_text))

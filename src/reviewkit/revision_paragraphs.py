@@ -81,10 +81,7 @@ def drop_inserted_numbering_leftover(
         )
     ).strip()
     properties = paragraph.find(_tag(word_namespace, "pPr"))
-    numbered = (
-        properties is not None
-        and properties.find(_tag(word_namespace, "numPr")) is not None
-    )
+    numbered = properties is not None and properties.find(_tag(word_namespace, "numPr")) is not None
     # Word may leave a manually typed list token outside ``w:ins`` while tracking
     # the new point's text. Its presence in this exact insertion-owning paragraph
     # is the provenance that links the otherwise bare token to the rejected point.
@@ -115,8 +112,7 @@ def drop_paired_range_revision_markers(
         for start_name, _end_name in _RANGE_REVISION_PAIRS
     }
     ends = {
-        _tag(word_namespace, end_name): start_name
-        for start_name, end_name in _RANGE_REVISION_PAIRS
+        _tag(word_namespace, end_name): start_name for start_name, end_name in _RANGE_REVISION_PAIRS
     }
     relevant = [element for element in root.iter() if element.tag in starts or element.tag in ends]
     markers: list[etree._Element] = []

@@ -58,6 +58,8 @@ REVISION_NAMES = (
     "customXmlConflictDelRangeStart",
     "customXmlConflictDelRangeEnd",
 )
+
+
 class RevisionPackageError(RuntimeError):
     pass
 
@@ -114,9 +116,7 @@ def is_comment_part(name: str) -> bool:
     if not normalized.startswith("word/"):
         return False
     basename = normalized.rsplit("/", 1)[-1]
-    if basename == "people.xml" or (
-        basename.startswith("comments") and basename.endswith(".xml")
-    ):
+    if basename == "people.xml" or (basename.startswith("comments") and basename.endswith(".xml")):
         return True
     if normalized.startswith("word/_rels/") and basename.endswith(".xml.rels"):
         source_part = basename.removesuffix(".rels")
