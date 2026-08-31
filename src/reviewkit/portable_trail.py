@@ -72,4 +72,7 @@ def strip_portable_review_trail(
 
 
 def write_portable_review_trail(path: str | Path, data: bytes) -> Path:
-    return write_publication_bytes(path, data)
+    target = Path(path)
+    if target.is_file() and target.read_bytes() == data:
+        return target
+    return write_publication_bytes(target, data)
