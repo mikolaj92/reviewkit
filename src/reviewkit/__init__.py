@@ -26,6 +26,11 @@ from reviewkit.insertions import (
     contains_suggestion_marker,
     format_suggestion_text,
 )
+from reviewkit.finality import (
+    ReviewFinalityAssessment,
+    ReviewFinalityStatus,
+    assess_review_finality,
+)
 from reviewkit.llm import LLMClient, MockLLMClient
 from reviewkit.markup_purity import (
     MarkupReport,
@@ -101,6 +106,8 @@ __all__ = [
     "ReviewDimension",
     "ReviewDocument",
     "ReviewFinding",
+    "ReviewFinalityAssessment",
+    "ReviewFinalityStatus",
     "ReviewLocator",
     "ReviewProfile",
     "ReviewReference",
@@ -116,6 +123,7 @@ __all__ = [
     "SourceRevisionKind",
     "accept_all_revisions",
     "apply_reviewed_markup",
+    "assess_review_finality",
     "canonical_action_dump",
     "comments_for_locator",
     "contains_suggestion_marker",
