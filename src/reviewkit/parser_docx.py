@@ -6,7 +6,7 @@ import itertools
 import re
 from collections import defaultdict
 from collections.abc import Iterator
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import assert_never
 from zipfile import BadZipFile, ZipFile
@@ -24,7 +24,7 @@ from reviewkit.comments import (
     _comment_markers_are_complete,
     _comment_thread_ids_are_complete,
     comments_for_locator,
-    read_comments,
+    comments_from_document,
 )
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.markup_purity import MarkupReport, has_tracked_revisions, inspect_markup
@@ -48,26 +48,9 @@ _TRAILING_WORD_RE = re.compile(r"(\w+)$", re.UNICODE)
 
 def load_docx(path: str | Path) -> ReviewDocument:
     source_path = Path(path)
-    comments = read_comments(source_path)
     addressable_document = AddressableDocxDocument.open(source_path)
     docx = addressable_document._doc
-    docxtor_comments = {comment.comment_id: comment for comment in addressable_document.comments}
-    comments = [
-        replace(
-            comment,
-            locator=(
-                docxtor_comments[comment.id].locator
-                if comment.id in docxtor_comments and docxtor_comments[comment.id].locator is not None
-                else comment.locator
-            ),
-            anchor_text=(
-                docxtor_comments[comment.id].anchor_text
-                if comment.id in docxtor_comments and docxtor_comments[comment.id].anchor_text
-                else comment.anchor_text
-            ),
-        )
-        for comment in comments
-    ]
+    comments = comments_from_document(addressable_document)
     effective_texts, revision_ledger = _project_revision_input(addressable_document.spans)
     markup_report = inspect_markup(source_path)
     tracked_revisions = has_tracked_revisions(source_path)

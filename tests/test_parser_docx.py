@@ -4,12 +4,11 @@ from zipfile import ZipFile
 
 from docx import Document as DocxDocument
 
+from reviewkit import DocxComment, read_comments
 from reviewkit.parser_docx import (
-    DocxComment,
     DocxFootnote,
     _is_heading,
     load_docx,
-    read_comments,
     read_footnotes,
     split_sentences,
 )
