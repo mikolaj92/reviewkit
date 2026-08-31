@@ -41,6 +41,7 @@ from reviewkit.models import (
 )
 from reviewkit.policy import WRITING_ACTIONS
 from docxtor import (
+    DocxDocument as AddressableDocxDocument,
     InlineSegment as _InlineSegment,  # base mechanical only (text/opaque + rpr/element)
     paragraph_to_inline_segments,
     _advances_offset as _base_advances_offset,
@@ -249,7 +250,12 @@ def render_reviewed_docx(
     _assert_writing_actions_reach_a_paragraph(
         document, actions, _is_trackable_edit, "reviewed.docx"
     )
-    docx = DocxDocument(str(document.source_path)) if document.source_path else DocxDocument()
+    if document.source_path is not None:
+        addressable = AddressableDocxDocument.open(document.source_path)
+        docx = addressable._doc
+        docx._reviewkit_addressable = addressable
+    else:
+        docx = DocxDocument()
     revision_date = (
         _DEFAULT_REVISION_DATE
         if revision_timestamp is None
@@ -260,9 +266,7 @@ def render_reviewed_docx(
     )
     revision_id = _next_review_revision_id(document.source_path)
     # Stand-alone clause insertions (``new_paragraph``) splice NEW sibling paragraphs
-    # into the body. _paragraph_for_locator indexes ``docx.paragraphs`` positionally,
-    # so splicing mid-pass would shift every later paragraph's index and desync the
-    # remaining locators. We hold each resolved anchor element and splice against those
+    # into the body. We hold each Docxtor-resolved anchor element and splice against those
     # stable references only after every locator has been resolved (just before save).
     deferred_block_inserts: list[tuple[Any, ReviewAction]] = []
 
@@ -364,7 +368,12 @@ def render_corrected_docx(
     # Apply the accepted edits onto a copy of the ORIGINAL document so tables,
     # headers/footers, images, styles and section structure are preserved. Only
     # fall back to a blank document when there is no source to copy from.
-    docx = DocxDocument(str(document.source_path)) if document.source_path else DocxDocument()
+    if document.source_path is not None:
+        addressable = AddressableDocxDocument.open(document.source_path)
+        docx = addressable._doc
+        docx._reviewkit_addressable = addressable
+    else:
+        docx = DocxDocument()
     has_source = document.source_path is not None
 
     for section in document.sections:
@@ -451,22 +460,9 @@ def _apply_clean_corrections(paragraph: Any, actions: list[ReviewAction]) -> Non
 def _paragraph_for_locator(docx: Any, locator: str | None) -> Any | None:
     if not locator:
         return None
-
-    parts = locator.split(":")
-    try:
-        if parts[:2] == ["body", "p"]:
-            return docx.paragraphs[int(parts[2])]
-        if parts[:1] == ["table"]:
-            table = docx.tables[int(parts[1])]
-            row = table.rows[int(parts[3])]
-            cell = row.cells[int(parts[5])]
-            return cell.paragraphs[int(parts[7])]
-        if parts[:1] == ["header"]:
-            return docx.sections[int(parts[1])].header.paragraphs[int(parts[3])]
-        if parts[:1] == ["footer"]:
-            return docx.sections[int(parts[1])].footer.paragraphs[int(parts[3])]
-    except (IndexError, ValueError):
-        return None
+    addressable = getattr(docx, "_reviewkit_addressable", None)
+    if isinstance(addressable, AddressableDocxDocument):
+        return addressable.resolve_paragraph(locator)
     return None
 
 

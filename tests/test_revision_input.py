@@ -397,6 +397,10 @@ def test_nested_sdt_comment_paragraph_still_gets_a_locator(tmp_path: Path) -> No
     assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
     assert len(review_document.comments) == 1
     assert review_document.comments[0].locator is not None
+    paragraphs = list(review_document.iter_paragraphs())
+    assert [paragraph.text for paragraph in paragraphs] == ["Anchored."]
+    assert paragraphs[0].locator == "body:p:0"
+    assert paragraphs[0].comments[0].text == "Source note."
 
 
 def test_indirectly_nested_block_revision_remains_fail_closed(tmp_path: Path) -> None:
