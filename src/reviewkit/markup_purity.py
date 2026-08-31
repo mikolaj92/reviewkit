@@ -15,7 +15,12 @@ from pathlib import Path
 from zipfile import BadZipFile
 
 from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
-from reviewkit.revision_package import parse_xml, read_package_entries, revision_kinds
+from reviewkit.revision_package import (
+    RevisionPackageError,
+    parse_xml,
+    read_package_entries,
+    revision_kinds,
+)
 
 _CONTENT_PART_PREFIX = "word/"
 _CONTENT_PART_SUFFIX = ".xml"
@@ -88,7 +93,17 @@ def inspect_markup(path: str | Path) -> MarkupReport:
     found_revision_kinds: set[str] = set()
     suggestion_parts: list[str] = []
     comment_count = 0
-    entries = read_package_entries(Path(path))
+    source = Path(path)
+    # Preserve the public inspection contract while neutral package IO is owned
+    # by Docxtor: filesystem failures remain OSError and non-ZIP input remains BadZipFile.
+    if not source.exists():
+        raise FileNotFoundError(source)
+    try:
+        entries = read_package_entries(source)
+    except RevisionPackageError as exc:
+        if not source.read_bytes().startswith(b"PK"):
+            raise BadZipFile(f"not a DOCX package: {source}") from exc
+        raise
     names = {info.filename for info, _data in entries}
     if _DOCUMENT_PART not in names:
         raise BadZipFile(f"not a DOCX package: missing {_DOCUMENT_PART} in {path}")
