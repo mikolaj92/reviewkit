@@ -178,4 +178,19 @@ __all__ = [
     "revision_signatures",
     "set_metadata_marker",
     "strip_metadata_marker",
+    "PortableReviewTrailError",
+    "PortableReviewTrailProfile",
+    "append_portable_review_trail",
+    "has_portable_review_trail",
+    "strip_portable_review_trail",
+    "write_portable_review_trail",
 ]
+
+from .portable_trail import (
+    PortableReviewTrailError,
+    PortableReviewTrailProfile,
+    append_portable_review_trail,
+    has_portable_review_trail,
+    strip_portable_review_trail,
+    write_portable_review_trail,
+)
