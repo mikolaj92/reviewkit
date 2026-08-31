@@ -72,3 +72,19 @@ def test_metadata_marker_and_change_metrics(tmp_path: Path) -> None:
     metrics = measure_review_changes(before, after)
     assert metrics.before_paragraphs == metrics.after_paragraphs
     assert metrics.before_text_sha256 == metrics.after_text_sha256
+
+
+def test_change_metrics_separate_text_from_block_order(tmp_path: Path) -> None:
+    before = tmp_path / "before.docx"
+    after = tmp_path / "after.docx"
+    left = Document()
+    left.add_paragraph("body")
+    left.add_table(rows=1, cols=1).cell(0, 0).text = "cell"
+    left.save(before)
+    right = Document()
+    right.add_table(rows=1, cols=1).cell(0, 0).text = "cell"
+    right.add_paragraph("body")
+    right.save(after)
+    metrics = measure_review_changes(before, after)
+    assert metrics.before_text_sha256 == metrics.after_text_sha256
+    assert metrics.before_structure_sha256 != metrics.after_structure_sha256

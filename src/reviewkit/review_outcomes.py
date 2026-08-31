@@ -224,16 +224,18 @@ def _revision_hash(kind: str, text: str, locator: str | None) -> str:
 
 
 def _text_hash(paragraphs: Sequence[ParagraphFact]) -> str:
-    payload = "".join(f"{len(item.text)}:{item.text}" for item in paragraphs)
+    payload = "".join(f"{len(text)}:{text}" for text in sorted(item.text for item in paragraphs))
     return sha256(payload.encode()).hexdigest()
 
 
 def _structure_hash(snapshot: DocxFactsSnapshot) -> str:
-    payload = "|".join(
+    blocks = "|".join(snapshot.structure.body_block_ids)
+    surfaces = "|".join(
         f"{surface.part_name}:{surface.xml_path}:{surface.element_qname}"
         for surface in snapshot.surfaces
         if surface.part_name == "word/document.xml"
     )
+    payload = f"{blocks}||{surfaces}"
     return sha256(payload.encode()).hexdigest()
 
 
