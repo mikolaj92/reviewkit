@@ -374,3 +374,39 @@ def _stable_id(prefix: str, parts: list[Any]) -> str:
     payload = json.dumps(parts, ensure_ascii=False, sort_keys=True, default=str)
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
     return f"{prefix}-{digest}"
+
+class ReviewFailureClass(StrEnum):
+    """Attributable fail-closed class for one bounded semantic-review unit."""
+
+    SCHEMA_MISMATCH = "schema_mismatch"
+    TIMEOUT = "timeout"
+    UNSUPPORTED_SHAPE = "unsupported_shape"
+    OVERSIZE_UNIT = "oversize_unit"
+
+
+class ReviewBoundError(RuntimeError):
+    """Fail-closed bound for one review unit. Never carries source document text."""
+
+    def __init__(
+        self,
+        *,
+        failure_class: ReviewFailureClass,
+        node_id: str,
+        budget: int | None = None,
+        retry_count: int = 0,
+        reason: str = "",
+    ) -> None:
+        self.failure_class = failure_class
+        self.node_id = node_id
+        self.budget = budget
+        self.retry_count = retry_count
+        self.reason = reason
+        parts = [f"review bound {failure_class.value}", f"node={node_id}"]
+        if budget is not None:
+            parts.append(f"budget={budget}")
+        if retry_count:
+            parts.append(f"retries={retry_count}")
+        if reason:
+            parts.append(reason)
+        super().__init__(" ".join(parts))
+

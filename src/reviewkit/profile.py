@@ -98,6 +98,8 @@ class ReviewProfile(BaseModel):
     action_policy: ActionPolicyConfig = Field(default_factory=ActionPolicyConfig)
     action_policies: dict[str, ActionPolicyConfig] = Field(default_factory=dict)
     outputs: OutputConfig = Field(default_factory=OutputConfig)
+    section_char_budget: int = 4000
+    max_review_retries: int = 1
     profile_path: Path | None = None
     markdown_files: dict[str, str] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
