@@ -187,6 +187,8 @@ def _project_revision_input(
                     coverage = RevisionCoverageState.INCOMPLETE
             case unexpected:
                 assert_never(unexpected)
+    for entry in entries:
+        effective_parts.setdefault(entry.locator, [])
     return (
         {locator: "".join(parts) for locator, parts in effective_parts.items()},
         RevisionLedger(coverage=coverage, entries=tuple(entries)),
