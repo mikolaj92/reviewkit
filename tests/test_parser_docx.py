@@ -129,7 +129,7 @@ def test_docx_parser_reads_table_paragraphs_with_locators(tmp_path: Path) -> Non
 
     paragraph = document.sections[0].paragraphs[0]
     assert paragraph.text == "Treść w tabeli."
-    assert paragraph.locator == "table:0:row:0:cell:0:p:0"
+    assert paragraph.locator == "table:0:r:0:c:0:p:0"
 
 
 def test_table_lands_under_its_authoring_section(tmp_path: Path) -> None:
@@ -152,9 +152,9 @@ def test_table_lands_under_its_authoring_section(tmp_path: Path) -> None:
     first_locators = [p.locator for p in by_title["First section"].paragraphs]
     second_locators = [p.locator for p in by_title["Second section"].paragraphs]
 
-    assert "table:0:row:0:cell:0:p:0" in first_locators
+    assert "table:0:r:0:c:0:p:0" in first_locators
     assert "body:p:1" in first_locators  # "Intro paragraph." keeps its true body index
-    assert first_locators == ["body:p:1", "table:0:row:0:cell:0:p:0"]
+    assert first_locators == ["body:p:1", "table:0:r:0:c:0:p:0"]
     assert second_locators == ["body:p:3"]  # heading at p:2 consumes an index
 
 

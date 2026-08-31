@@ -1,6 +1,6 @@
 [project]
 name = "reviewkit"
-version = "0.15.4"
+version = "0.15.5"
 description = "Hierarchical human-like document review workflow engine"
 readme = "README.md"
 authors = [
@@ -27,7 +27,7 @@ dependencies = [
     "typer>=0.26.7",
     # Required cascade engine; binding/import failures propagate (no local fallback).
     "takt @ git+https://github.com/mikolaj92/takt.git@v0.3.1",
-    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@v0.4.4",
+    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@v0.4.14",
 ]
 
 [project.scripts]

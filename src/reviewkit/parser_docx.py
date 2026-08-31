@@ -6,16 +6,17 @@ import itertools
 import re
 from collections import defaultdict
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import assert_never
 from zipfile import BadZipFile, ZipFile
 
-from docx import Document as DocxDocument
 from docx.oxml.ns import qn
-from docx.table import Table
-from docx.text.paragraph import Paragraph
-from docxtor import AddressableSpan, DocxDocument as AddressableDocxDocument
+from docxtor import (
+    AddressableSpan,
+    DocxDocument as AddressableDocxDocument,
+    TextSegment as AddressableTextSegment,
+)
 from lxml import etree
 
 from reviewkit.comments import (
@@ -47,9 +48,26 @@ _TRAILING_WORD_RE = re.compile(r"(\w+)$", re.UNICODE)
 
 def load_docx(path: str | Path) -> ReviewDocument:
     source_path = Path(path)
-    docx = DocxDocument(str(source_path))
     comments = read_comments(source_path)
     addressable_document = AddressableDocxDocument.open(source_path)
+    docx = addressable_document._doc
+    docxtor_comments = {comment.comment_id: comment for comment in addressable_document.comments}
+    comments = [
+        replace(
+            comment,
+            locator=(
+                docxtor_comments[comment.id].locator
+                if comment.id in docxtor_comments and docxtor_comments[comment.id].locator is not None
+                else comment.locator
+            ),
+            anchor_text=(
+                docxtor_comments[comment.id].anchor_text
+                if comment.id in docxtor_comments and docxtor_comments[comment.id].anchor_text
+                else comment.anchor_text
+            ),
+        )
+        for comment in comments
+    ]
     effective_texts, revision_ledger = _project_revision_input(addressable_document.spans)
     markup_report = inspect_markup(source_path)
     tracked_revisions = has_tracked_revisions(source_path)
@@ -73,11 +91,16 @@ def load_docx(path: str | Path) -> ReviewDocument:
     sections: list[SectionNode] = []
     current = SectionNode(id="s1")
 
-    # Walk the body in true document order so a table interleaves with the paragraphs
-    # around it and lands under its authoring heading, instead of every table being
-    # appended to whatever section happened to be open at the end of the body.
-    for docx_paragraph, locator, source in _iter_body_sources(docx):
-        text = effective_texts.get(locator, str(getattr(docx_paragraph, "text", ""))).strip()
+    # Docxtor owns mechanical addressing. Sort its body/table segments by the global
+    # paragraph index so tables remain interleaved with surrounding body paragraphs.
+    for segment in sorted(
+        _iter_review_segments(addressable_document.segments, body=True),
+        key=lambda item: item.paragraph_index if item.paragraph_index is not None else -1,
+    ):
+        locator = segment.container_id or ""
+        source = _segment_source(locator)
+        docx_paragraph = addressable_document.resolve_paragraph(locator)
+        text = effective_texts.get(locator, segment.text).strip()
         if not text:
             continue
 
@@ -118,7 +141,13 @@ def load_docx(path: str | Path) -> ReviewDocument:
     # are not misread as body prose tacked onto the trailing body section. Locator strings
     # ("header:S:p:P"/"footer:S:p:P") are unchanged, so rendering resolves them identically.
     sections.extend(
-        _header_footer_sections(docx, section_ids, paragraph_ids, comments, effective_texts)
+        _story_sections(
+            addressable_document,
+            section_ids,
+            paragraph_ids,
+            comments,
+            effective_texts,
+        )
     )
 
     metadata = {
@@ -618,81 +647,63 @@ def _descendant_visible_text(element: object) -> str:
     return "".join(parts)
 
 
-def _iter_body_sources(docx: object) -> Iterator[tuple[object, str, str]]:
-    # ``iter_inner_content`` yields body ``<w:p>`` and ``<w:tbl>`` children in true document
-    # order, so a table is emitted at its real position (between the paragraphs that surround
-    # it) rather than after all paragraphs. Separate paragraph/table counters keep the emitted
-    # locators identical to the previous scheme: ``paragraph_index`` matches ``docx.paragraphs``
-    # (which excludes table paragraphs) and ``table_index`` matches ``docx.tables``.
-    paragraph_index = 0
-    table_index = 0
-    for block in docx.iter_inner_content():  # type: ignore[attr-defined]
-        if isinstance(block, Paragraph):
-            yield block, f"body:p:{paragraph_index}", "body"
-            paragraph_index += 1
-        elif isinstance(block, Table):
-            yield from _iter_table_sources(block, table_index)
-            table_index += 1
+def _iter_review_segments(
+    segments: tuple[AddressableTextSegment, ...], *, body: bool
+) -> Iterator[AddressableTextSegment]:
+    for segment in segments:
+        locator = segment.container_id or ""
+        is_body_story = locator.startswith(("body:", "table:"))
+        if is_body_story is body:
+            yield segment
 
 
-def _iter_table_sources(table: Table, table_index: int) -> Iterator[tuple[object, str, str]]:
-    # A merged cell is yielded by ``row.cells`` once per grid position it spans (across
-    # columns AND rows), so walk each underlying ``<w:tc>`` exactly once at its first grid
-    # position - otherwise merged cells (ubiquitous in forms and contracts) are reviewed
-    # twice, edited twice, and inflate paragraph_count. The set holds the lxml element
-    # proxies (not ``id()``, whose value is reused after GC) so identity is stable and
-    # unique per physical cell.
-    seen_cells: set[object] = set()
-    for row_index, row in enumerate(table.rows):
-        for cell_index, cell in enumerate(row.cells):
-            if cell._tc in seen_cells:
-                continue
-            seen_cells.add(cell._tc)
-            for paragraph_index, paragraph in enumerate(cell.paragraphs):
-                locator = f"table:{table_index}:row:{row_index}:cell:{cell_index}:p:{paragraph_index}"
-                yield paragraph, locator, "table"
+def _segment_source(locator: str) -> str:
+    return locator.split(":", 1)[0]
 
 
-def _header_footer_sections(
-    docx: object,
+def _story_sections(
+    addressable_document: AddressableDocxDocument,
     section_ids: Iterator[int],
     paragraph_ids: Iterator[int],
     comments: list[DocxComment],
     effective_texts: dict[str, str],
 ) -> list[SectionNode]:
-    grouped: dict[str, list[tuple[object, str]]] = {}
-    for docx_paragraph, locator, source in _iter_header_footer_sources(docx):
-        grouped.setdefault(source, []).append((docx_paragraph, locator))
+    grouped: dict[str, list[AddressableTextSegment]] = {}
+    for segment in _iter_review_segments(addressable_document.segments, body=False):
+        locator = segment.container_id or ""
+        source = _segment_source(locator)
+        if source in {"comment", "footnote", "endnote"}:
+            continue
+        grouped.setdefault(source, []).append(segment)
 
     sections: list[SectionNode] = []
     for source, entries in grouped.items():
         non_empty = [
-            (paragraph, locator)
-            for paragraph, locator in entries
-            if effective_texts.get(locator, str(getattr(paragraph, "text", ""))).strip()
+            segment
+            for segment in entries
+            if effective_texts.get(segment.container_id or "", segment.text).strip()
         ]
         if not non_empty:
             continue
         section_id = f"s{next(section_ids)}"
-        paragraphs = [
-            _paragraph_node(
-                f"p{next(paragraph_ids)}",
-                effective_texts.get(locator, str(getattr(paragraph, "text", ""))).strip(),
-                section_id,
-                locator,
-                source,
-                _opaque_ranges(paragraph),
-                comments_for_locator(comments, locator),
+        paragraphs: list[ParagraphNode] = []
+        for segment in non_empty:
+            locator = segment.container_id or ""
+            paragraph = addressable_document.resolve_paragraph(locator)
+            paragraphs.append(
+                _paragraph_node(
+                    f"p{next(paragraph_ids)}",
+                    effective_texts.get(locator, segment.text).strip(),
+                    section_id,
+                    locator,
+                    source,
+                    _opaque_ranges(paragraph),
+                    comments_for_locator(comments, locator),
+                )
             )
-            for paragraph, locator in non_empty
-        ]
         sections.append(
             SectionNode(
                 id=section_id,
-                # No fabricated title: capitalizing the source ("Header"/"Footer") injected an
-                # English word into the reviewable tree, which the LLM would see as document
-                # prose -- a language leak in the language-blind core. The header/footer
-                # distinction is preserved in metadata["source"] below.
                 title=None,
                 metadata={"source": source},
                 paragraphs=paragraphs,
@@ -700,10 +711,3 @@ def _header_footer_sections(
         )
     return sections
 
-
-def _iter_header_footer_sources(docx: object) -> Iterator[tuple[object, str, str]]:
-    for section_index, section in enumerate(getattr(docx, "sections", [])):
-        for paragraph_index, paragraph in enumerate(section.header.paragraphs):
-            yield paragraph, f"header:{section_index}:p:{paragraph_index}", "header"
-        for paragraph_index, paragraph in enumerate(section.footer.paragraphs):
-            yield paragraph, f"footer:{section_index}:p:{paragraph_index}", "footer"
