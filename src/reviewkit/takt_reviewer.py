@@ -36,6 +36,7 @@ from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
 from reviewkit.state import ReviewState
 from reviewkit.takt_client import TaktClient
+from reviewkit.review_bounds import bound_document_sections
 from reviewkit.takt_types import RawSignal
 
 
@@ -60,6 +61,7 @@ class TaktReviewer:
     def review(
         self, document: ReviewDocument
     ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
+        document = bound_document_sections(document, self.profile.section_char_budget)
         state = ReviewState()
         effector = ReviewEffector(state)
 

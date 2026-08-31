@@ -37,6 +37,8 @@ from reviewkit.markup_purity import (
 from reviewkit.models import (
     ActionStatus,
     EvidenceRef,
+    ReviewBoundError,
+    ReviewFailureClass,
     ReviewAction,
     ReviewActionType,
     ReviewDimension,
@@ -92,6 +94,8 @@ __all__ = [
     "SUGGESTION_MARKER_PREFIX",
     "ReviewAction",
     "ReviewActionType",
+    "ReviewBoundError",
+    "ReviewFailureClass",
     "ReviewContext",
     "ReviewContextProvider",
     "ReviewDimension",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -82,7 +83,8 @@ def test_cli_rejects_missing_llm_configuration(tmp_path: Path) -> None:
     )
 
     assert result.exit_code != 0
-    assert "--llm is required" in result.output
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--llm is required" in plain
 
 
 def test_cli_accepts_injected_llm_factory(tmp_path: Path) -> None:

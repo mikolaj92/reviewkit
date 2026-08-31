@@ -17,14 +17,17 @@ from reviewkit.document import (
 )
 from reviewkit.llm import LLMClient
 from reviewkit.models import (
-    ReviewAction,
-    ReviewScope,
-    SentenceReviewResponse,
-    ParagraphReviewResponse,
-    SectionReviewResponse,
     DocumentReviewResponse,
+    ParagraphReviewResponse,
+    ReviewAction,
+    ReviewBoundError,
+    ReviewFailureClass,
+    ReviewScope,
+    SectionReviewResponse,
+    SentenceReviewResponse,
 )
 from reviewkit.profile import ReviewProfile
+from reviewkit.review_bounds import validate_review_payload
 from reviewkit.prompts import (
     document_review_prompt,
     paragraph_review_prompt,
@@ -97,7 +100,33 @@ class BaseLLMDetector:
         self._document = document
 
     def _complete(self, messages: list[dict[str, str]], schema: type) -> Any:
-        return self.llm.complete_json(messages, schema)
+        node_id = getattr(self, "_active_node_id", None) or getattr(
+            getattr(self, "_document", None), "id", "unknown"
+        )
+        retries = 0
+        last_error: Exception | None = None
+        max_retries = max(0, int(self.profile.max_review_retries))
+        while retries <= max_retries:
+            try:
+                payload = self.llm.complete_json(messages, schema)
+                return validate_review_payload(
+                    payload,
+                    schema,
+                    node_id=str(node_id),
+                    retry_count=retries,
+                )
+            except ReviewBoundError:
+                raise
+            except TimeoutError as exc:
+                last_error = exc
+                retries += 1
+                continue
+        raise ReviewBoundError(
+            failure_class=ReviewFailureClass.TIMEOUT,
+            node_id=str(node_id),
+            retry_count=retries,
+            reason="provider timeout",
+        ) from last_error
 
     def detect(self, node: Any) -> list[RawSignal]:
         inner = getattr(node, "inner", node)
@@ -124,6 +153,7 @@ class BaseLLMDetector:
             node=inner,
         )
 
+        self._active_node_id = node_id
         if self.scope == ReviewScope.SENTENCE:
             prompt = sentence_review_prompt(self.profile, self.state, inner, context)
             resp = self._complete(prompt, SentenceReviewResponse)
