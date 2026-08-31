@@ -51,8 +51,7 @@ def _lower_actions_for_prompt(
         return [
             action
             for action in actions
-            if action.scope == ReviewScope.SENTENCE
-            and action.node_id in paragraph_sentence_ids
+            if action.scope == ReviewScope.SENTENCE and action.node_id in paragraph_sentence_ids
         ]
     if scope == ReviewScope.SECTION:
         if not isinstance(inner, SectionNode):
@@ -61,8 +60,7 @@ def _lower_actions_for_prompt(
         return [
             action
             for action in actions
-            if action.scope == ReviewScope.PARAGRAPH
-            and action.node_id in section_paragraph_ids
+            if action.scope == ReviewScope.PARAGRAPH and action.node_id in section_paragraph_ids
         ]
     if scope == ReviewScope.DOCUMENT:
         if not isinstance(inner, ReviewDocument):
@@ -71,8 +69,7 @@ def _lower_actions_for_prompt(
         return [
             action
             for action in actions
-            if action.scope == ReviewScope.SECTION
-            and action.node_id in document_section_ids
+            if action.scope == ReviewScope.SECTION and action.node_id in document_section_ids
         ]
     return []
 
@@ -162,23 +159,17 @@ class BaseLLMDetector:
         lower = self.lower_actions_for_prompt
 
         if self.scope == ReviewScope.PARAGRAPH:
-            prompt = paragraph_review_prompt(
-                self.profile, self.state, inner, lower, context
-            )
+            prompt = paragraph_review_prompt(self.profile, self.state, inner, lower, context)
             resp = self._complete(prompt, ParagraphReviewResponse)
             return _response_to_signals(resp, node_id, "llm_paragraph", self.scope)
 
         if self.scope == ReviewScope.SECTION:
-            prompt = section_review_prompt(
-                self.profile, self.state, inner, lower, context
-            )
+            prompt = section_review_prompt(self.profile, self.state, inner, lower, context)
             resp = self._complete(prompt, SectionReviewResponse)
             return _response_to_signals(resp, node_id, "llm_section", self.scope)
 
         if self.scope == ReviewScope.DOCUMENT:
-            prompt = document_review_prompt(
-                self.profile, self.state, inner, lower, context
-            )
+            prompt = document_review_prompt(self.profile, self.state, inner, lower, context)
             resp = self._complete(prompt, DocumentReviewResponse)
             return _response_to_signals(resp, node_id, "llm_document", self.scope)
 

@@ -36,9 +36,7 @@ def _document(*paragraphs: str) -> ReviewDocument:
         )
         for index, text in enumerate(paragraphs)
     ]
-    return ReviewDocument(
-        sections=[SectionNode(id="s1", locator="body:p:0", paragraphs=nodes)]
-    )
+    return ReviewDocument(sections=[SectionNode(id="s1", locator="body:p:0", paragraphs=nodes)])
 
 
 def test_list_payload_is_unsupported_shape_not_section_response() -> None:

@@ -43,7 +43,11 @@ def apply_action_to_text(text: str, action: ReviewAction) -> str:
     original = action.original_text or ""
     replacement = action.replacement_text or ""
 
-    if action.locator and action.locator.char_start is not None and action.locator.char_end is not None:
+    if (
+        action.locator
+        and action.locator.char_start is not None
+        and action.locator.char_end is not None
+    ):
         start = action.locator.char_start
         end = action.locator.char_end
         if action.action_type in {ReviewActionType.REPLACE_TEXT, ReviewActionType.REPLACE}:
@@ -160,9 +164,7 @@ def actions_for_paragraph(
     return selected
 
 
-def _scope_paragraphs(
-    document: ReviewDocument, action: ReviewAction
-) -> list[ParagraphNode]:
+def _scope_paragraphs(document: ReviewDocument, action: ReviewAction) -> list[ParagraphNode]:
     """Ordered paragraphs that a section/document-scoped action ranges over."""
     if action.node_id == document.id:
         return list(document.iter_paragraphs())
@@ -207,8 +209,10 @@ def _rebase_sentence_action(
     base = _sentence_base_offset(paragraph, sentence)
     locator = action.locator
 
-    if base is not None and locator is not None and (
-        locator.char_start is not None or locator.char_end is not None
+    if (
+        base is not None
+        and locator is not None
+        and (locator.char_start is not None or locator.char_end is not None)
     ):
         updates: dict[str, Any] = {"node_id": paragraph.id}
         if locator.char_start is not None:
@@ -484,9 +488,7 @@ def _demote_edits_over_opaque_content(
     return result
 
 
-def _span_touches_opaque(
-    span: tuple[int, int], opaque_ranges: list[tuple[int, int]]
-) -> bool:
+def _span_touches_opaque(span: tuple[int, int], opaque_ranges: list[tuple[int, int]]) -> bool:
     start, end = span
     for opaque_start, opaque_end in opaque_ranges:
         if start == end:
@@ -554,15 +556,23 @@ def _conflict_reason(document: ReviewDocument, action: ReviewAction) -> str | No
         ReviewActionType.INSERT_BEFORE,
         ReviewActionType.INSERT_AFTER,
     }:
-        if action.action_type not in {
-            ReviewActionType.INSERT_TEXT,
-            ReviewActionType.INSERT_BEFORE,
-        } and not action.replacement_text:
+        if (
+            action.action_type
+            not in {
+                ReviewActionType.INSERT_TEXT,
+                ReviewActionType.INSERT_BEFORE,
+            }
+            and not action.replacement_text
+        ):
             return "replacement_text is required for this action"
-        if action.action_type in {
-            ReviewActionType.INSERT_TEXT,
-            ReviewActionType.INSERT_BEFORE,
-        } and action.replacement_text is None:
+        if (
+            action.action_type
+            in {
+                ReviewActionType.INSERT_TEXT,
+                ReviewActionType.INSERT_BEFORE,
+            }
+            and action.replacement_text is None
+        ):
             return "replacement_text is required for this action"
 
     return None
@@ -575,9 +585,7 @@ def _is_scope_level_node(document: ReviewDocument, node_id: str) -> bool:
     return any(section.id == node_id for section in document.sections)
 
 
-def _unanchorable_scope_edit_reason(
-    document: ReviewDocument, action: ReviewAction
-) -> str | None:
+def _unanchorable_scope_edit_reason(document: ReviewDocument, action: ReviewAction) -> str | None:
     """Reason a section/document-scoped writing action cannot be applied deterministically.
 
     A scope-level writing action carrying ``original_text`` is routed to the paragraph
@@ -596,8 +604,7 @@ def _unanchorable_scope_edit_reason(
     if not action.original_text:
         return "section/document-scoped edits require original_text to anchor to a paragraph"
     if any(
-        action.original_text in paragraph.text
-        for paragraph in _scope_paragraphs(document, action)
+        action.original_text in paragraph.text for paragraph in _scope_paragraphs(document, action)
     ):
         return None
     return (
@@ -616,9 +623,7 @@ def _missing_anchor_reason(node_text: str, action: ReviewAction) -> str | None:
         return None
     if not action.original_text or action.original_text in node_text:
         return None
-    return (
-        f"original_text must match exactly once in node {action.node_id}; found 0 matches"
-    )
+    return f"original_text must match exactly once in node {action.node_id}; found 0 matches"
 
 
 def _ambiguous_match_reason(node_text: str, action: ReviewAction) -> str | None:

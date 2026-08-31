@@ -153,8 +153,13 @@ class ReviewFinding(BaseModel):
         if not self.finding_id:
             self.finding_id = _stable_id(
                 "finding",
-                [self.node_id, self.title, self.description, _dimension_key(self.dimension),
-                 self.severity],
+                [
+                    self.node_id,
+                    self.title,
+                    self.description,
+                    _dimension_key(self.dimension),
+                    self.severity,
+                ],
             )
         return self
 
@@ -211,8 +216,14 @@ class ReviewAction(BaseModel):
         if not self.id:
             self.id = _stable_id(
                 "action",
-                [self.node_id, self.scope, self.action_type, self.original_text,
-                 self.replacement_text, self.comment],
+                [
+                    self.node_id,
+                    self.scope,
+                    self.action_type,
+                    self.original_text,
+                    self.replacement_text,
+                    self.comment,
+                ],
             )
         return self
 
@@ -306,9 +317,7 @@ class ReviewResult(BaseModel):
         # materialized as a first-class report array rather than left for consumers to
         # hand-filter out of the raw actions list.
         return [
-            action
-            for action in self.actions
-            if action.status == ActionStatus.NEEDS_HUMAN_DECISION
+            action for action in self.actions if action.status == ActionStatus.NEEDS_HUMAN_DECISION
         ]
 
     def to_report_dict(self) -> dict[str, Any]:
@@ -375,6 +384,7 @@ def _stable_id(prefix: str, parts: list[Any]) -> str:
     digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
     return f"{prefix}-{digest}"
 
+
 class ReviewFailureClass(StrEnum):
     """Attributable fail-closed class for one bounded semantic-review unit."""
 
@@ -409,4 +419,3 @@ class ReviewBoundError(RuntimeError):
         if reason:
             parts.append(reason)
         super().__init__(" ".join(parts))
-

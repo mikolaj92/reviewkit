@@ -124,9 +124,7 @@ def test_profile_rejects_unknown_keys_instead_of_silently_dropping_them() -> Non
         ReviewProfile.model_validate({**base, "reviewer_roel": "typo"})
 
     with pytest.raises(ValidationError, match="require_llm_apply_hnt"):
-        ReviewProfile.model_validate(
-            {**base, "action_policy": {"require_llm_apply_hnt": True}}
-        )
+        ReviewProfile.model_validate({**base, "action_policy": {"require_llm_apply_hnt": True}})
 
     with pytest.raises(ValidationError, match="preserv"):
         ProtectedPatternConfig.model_validate(
@@ -207,7 +205,9 @@ def test_report_exposes_needs_human_decision_escalation_queue(tmp_path: Path) ->
     _ = result.save_json(report_path)
     payload = json.loads(report_path.read_text(encoding="utf-8"))
 
-    assert [a["comment_text"] for a in payload["needs_human_decision"]] == ["Ambiguous edit — decide."]
+    assert [a["comment_text"] for a in payload["needs_human_decision"]] == [
+        "Ambiguous edit — decide."
+    ]
     assert payload["actions_by_status"]["needs_human_decision"] == 1
 
 
@@ -1391,7 +1391,9 @@ def test_prepare_demotes_first_occurrence_overlap_under_non_unique_match() -> No
             apply_hint=True,
         )
 
-    prepared = prepare_actions(document, profile, [_delete("a-abc", "abc"), _delete("a-bca", "bca")])
+    prepared = prepare_actions(
+        document, profile, [_delete("a-abc", "abc"), _delete("a-bca", "bca")]
+    )
 
     assert [action.status for action in prepared] == [
         ActionStatus.CONFLICT,

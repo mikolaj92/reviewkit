@@ -55,9 +55,10 @@ def _write_relative_namespace_docx(tmp_path: Path) -> Path:
     docx.add_paragraph("First item", style="List Number")
     docx.add_paragraph("Second item", style="List Number")
     docx.save(str(generated))
-    with zipfile.ZipFile(generated) as incoming, zipfile.ZipFile(
-        source, "w", zipfile.ZIP_DEFLATED
-    ) as outgoing:
+    with (
+        zipfile.ZipFile(generated) as incoming,
+        zipfile.ZipFile(source, "w", zipfile.ZIP_DEFLATED) as outgoing,
+    ):
         for info in incoming.infolist():
             payload = incoming.read(info.filename)
             if info.filename == "word/numbering.xml":
@@ -87,9 +88,7 @@ def test_restore_preserves_source_bytes_for_equivalent_relative_namespace_xml(
 ) -> None:
     # Given semantically equivalent custom XML with different serialization.
     source = _write_xml_package(tmp_path / "source.docx", _RELATIVE_NAMESPACE_XML)
-    rendered = _write_xml_package(
-        tmp_path / "rendered.docx", _EQUIVALENT_RELATIVE_NAMESPACE_XML
-    )
+    rendered = _write_xml_package(tmp_path / "rendered.docx", _EQUIVALENT_RELATIVE_NAMESPACE_XML)
 
     # When source-byte restoration compares the two valid relative-namespace parts.
     restore_semantically_unchanged_xml_parts(source, rendered)

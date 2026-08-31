@@ -132,9 +132,7 @@ def _is_unresolved_action(
     *,
     unresolved_categories: AbstractSet[str],
 ) -> bool:
-    if not (
-        action.action_type in WRITING_ACTIONS or action.category in unresolved_categories
-    ):
+    if not (action.action_type in WRITING_ACTIONS or action.category in unresolved_categories):
         return False
     if action.status in {ActionStatus.NEEDS_HUMAN_DECISION, ActionStatus.CONFLICT}:
         return True

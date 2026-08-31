@@ -504,9 +504,7 @@ def test_action_referencing_unknown_finding_id_is_reported_as_warning(tmp_path: 
         out_corrected=tmp_path / "corrected.docx",
     )
 
-    assert result.warnings == [
-        "Action a-dangling references unknown finding_id 'finding-ghost'."
-    ]
+    assert result.warnings == ["Action a-dangling references unknown finding_id 'finding-ghost'."]
 
 
 def test_action_referencing_a_merged_away_finding_id_is_not_flagged() -> None:

@@ -24,9 +24,7 @@ _W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml"
 
 _COMMENTS_PART = "word/comments.xml"
 _COMMENTS_EXTENDED_PART = "word/commentsExtended.xml"
-_COMMENT_MARKER_NAMES = frozenset(
-    {"commentRangeStart", "commentRangeEnd", "commentReference"}
-)
+_COMMENT_MARKER_NAMES = frozenset({"commentRangeStart", "commentRangeEnd", "commentReference"})
 
 
 @dataclass(frozen=True)
@@ -61,9 +59,7 @@ def comments_from_document(document: AddressableDocxDocument) -> list[DocxCommen
     return [_project_comment(comment) for comment in document.comments]
 
 
-def comments_for_locator(
-    comments: list[DocxComment], locator: str | None
-) -> list[DocxComment]:
+def comments_for_locator(comments: list[DocxComment], locator: str | None) -> list[DocxComment]:
     """Comments whose range starts in the paragraph identified by ``locator``."""
     if not locator:
         return []
@@ -98,7 +94,10 @@ def _comment_markers_are_complete(path: str | Path, comments: list[DocxComment])
                     if not isinstance(element.tag, str):
                         continue
                     qualified = etree.QName(element)
-                    if qualified.namespace != _W_NS or qualified.localname not in _COMMENT_MARKER_NAMES:
+                    if (
+                        qualified.namespace != _W_NS
+                        or qualified.localname not in _COMMENT_MARKER_NAMES
+                    ):
                         continue
                     marker_id = element.get(f"{{{_W_NS}}}id")
                     if marker_id is None:
@@ -129,9 +128,7 @@ def _comment_thread_ids_are_complete(path: str | Path) -> bool:
                 return True
             comments_xml = bundle.read(_COMMENTS_PART)
             extended_xml = (
-                bundle.read(_COMMENTS_EXTENDED_PART)
-                if _COMMENTS_EXTENDED_PART in names
-                else None
+                bundle.read(_COMMENTS_EXTENDED_PART) if _COMMENTS_EXTENDED_PART in names else None
             )
     except (OSError, BadZipFile, KeyError):
         return False
