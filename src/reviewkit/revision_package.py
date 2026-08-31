@@ -2,16 +2,26 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
-from tempfile import NamedTemporaryFile
-from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
+from zipfile import ZipInfo
 
+from docxtor import (
+    PackageEntry,
+    PackageError,
+    PackageLimits,
+    parse_package_xml,
+    read_package_entries as read_docx_package_entries,
+    write_package_atomically as write_docx_package_atomically,
+)
 from lxml import etree
-
-from reviewkit.docx_package import _deterministic_zipinfo
 
 _RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 _CONTENT_TYPES_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
 _XML_DECLARATION = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+MAX_PACKAGE_ENTRIES = 4096
+MAX_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+MAX_COMPRESSION_RATIO = 1000
+
 REVISION_NAMES = (
     "ins",
     "del",
@@ -48,123 +58,36 @@ REVISION_NAMES = (
     "customXmlConflictDelRangeStart",
     "customXmlConflictDelRangeEnd",
 )
-MAX_PACKAGE_ENTRIES = 4096
-MAX_ENTRY_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
-MAX_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
-MAX_COMPRESSION_RATIO = 1000
-_XML_BOMS = (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff", b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff")
-_XML_PROBE_BYTES = 64 * 1024
-_XML_ENCODINGS = ("utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "utf-32", "utf-32-le", "utf-32-be")
-_OOXML_PART_NAME_CHARS = frozenset("!$&'()*+,-.:;=@_~")
-_HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
-_ASCII_IUNRESERVED = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
-
-
 class RevisionPackageError(RuntimeError):
     pass
 
 
-def _is_valid_package_member_name(name: str) -> bool:
-    if name == "[Content_Types].xml":
-        return True
-    normalized = name.removeprefix("/")
-    if (
-        not normalized
-        or name.startswith(("/", "\\"))
-        or "\\" in name
-        or any(not _is_valid_package_segment(segment) for segment in normalized.split("/"))
-    ):
-        return False
-    return True
-
-
-def _is_valid_package_segment(segment: str) -> bool:
-    if not segment or segment in {".", ".."} or segment.endswith("."):
-        return False
-    offset = 0
-    while offset < len(segment):
-        character = segment[offset]
-        if character == "%":
-            if (
-                offset + 2 >= len(segment)
-                or segment[offset + 1] not in _HEX_DIGITS
-                or segment[offset + 2] not in _HEX_DIGITS
-            ):
-                return False
-            decoded = chr(int(segment[offset + 1 : offset + 3], 16))
-            if decoded in "/\\" or decoded in _ASCII_IUNRESERVED:
-                return False
-            offset += 3
-            continue
-        if not (ord(character) < 128 and (character.isalnum() or character in _OOXML_PART_NAME_CHARS)):
-            return False
-        offset += 1
-    return True
-
-
-def _needs_xml_validation(name: str, data: bytes) -> bool:
-    normalized_name = name.removeprefix("/").casefold()
-    if normalized_name.startswith("customxml/") or normalized_name.endswith((".xml", ".rels")):
-        return True
-    candidate = data[:_XML_PROBE_BYTES].lstrip(b" \t\r\n")
-    if candidate.startswith(b"<") or any(candidate.startswith(bom) for bom in _XML_BOMS):
-        return True
-    for encoding in _XML_ENCODINGS:
-        decoded = data[:_XML_PROBE_BYTES].decode(encoding, errors="ignore")
-        if decoded.lstrip().startswith("<"):
-            return True
-    return False
-
-
 def read_package_entries(path: Path) -> list[tuple[ZipInfo, bytes]]:
-    with ZipFile(path) as archive:
-        infos = archive.infolist()
-        if len(infos) > MAX_PACKAGE_ENTRIES:
-            raise RevisionPackageError(
-                f"DOCX has {len(infos)} entries; limit is {MAX_PACKAGE_ENTRIES}"
-            )
-        names = [info.filename for info in infos]
-        for name in names:
-            if not _is_valid_package_member_name(name):
-                raise RevisionPackageError(f"DOCX contains invalid package member path: {name}")
-        equivalent_names = [name.lower() for name in names]
-        if len(equivalent_names) != len(set(equivalent_names)):
-            raise RevisionPackageError("DOCX contains duplicate package member names")
-        total = sum(info.file_size for info in infos)
-        if total > MAX_TOTAL_UNCOMPRESSED_BYTES:
-            raise RevisionPackageError(
-                f"DOCX uncompressed size {total} exceeds {MAX_TOTAL_UNCOMPRESSED_BYTES}"
-            )
-        for info in infos:
-            if info.file_size > MAX_ENTRY_UNCOMPRESSED_BYTES:
-                raise RevisionPackageError(
-                    f"DOCX entry {info.filename} uncompressed size exceeds limit"
-                )
-            ratio = info.file_size / max(info.compress_size, 1)
-            if ratio > MAX_COMPRESSION_RATIO:
-                raise RevisionPackageError(
-                    f"DOCX entry {info.filename} compression ratio exceeds limit"
-                )
-        entries: list[tuple[ZipInfo, bytes]] = []
-        for info in infos:
-            data = archive.read(info)
-            if _needs_xml_validation(info.filename, data):
-                try:
-                    parse_xml(data)
-                except (RevisionPackageError, etree.XMLSyntaxError) as exc:
-                    raise RevisionPackageError(
-                        f"DOCX XML part {info.filename} is invalid: {exc}"
-                    ) from exc
-            entries.append((info, data))
-        return entries
+    """Compatibility projection over Docxtor's canonical safe package reader."""
+    try:
+        entries = read_docx_package_entries(
+            path,
+            limits=PackageLimits(
+                max_entries=MAX_PACKAGE_ENTRIES,
+                max_entry_uncompressed_bytes=MAX_ENTRY_UNCOMPRESSED_BYTES,
+                max_total_uncompressed_bytes=MAX_TOTAL_UNCOMPRESSED_BYTES,
+                max_compression_ratio=MAX_COMPRESSION_RATIO,
+            ),
+        )
+    except PackageError as exc:
+        raise RevisionPackageError(str(exc)) from exc
+    projected: list[tuple[ZipInfo, bytes]] = []
+    for entry in entries:
+        projected.append((entry.zip_info(), entry.data))
+    return projected
 
 
 def parse_xml(data: bytes) -> etree._Element:
-    parser = etree.XMLParser(resolve_entities=False, no_network=True, load_dtd=False)
-    root = etree.fromstring(data, parser=parser)
-    if root.getroottree().docinfo.doctype:
-        raise RevisionPackageError("DOCX XML must not contain a DOCTYPE declaration")
-    return root
+    """Parse package XML through Docxtor's canonical fail-closed parser."""
+    try:
+        return parse_package_xml(data)
+    except PackageError as exc:
+        raise RevisionPackageError(str(exc)) from exc
 
 
 def revision_kinds(root: etree._Element, word_namespace: str) -> set[str]:
@@ -208,18 +131,12 @@ def write_package_atomically(
     entries: list[tuple[ZipInfo, bytes]],
     validate: Callable[[Path], None],
 ) -> None:
-    with NamedTemporaryFile(
-        dir=destination.parent, prefix=f".{destination.name}.", suffix=".tmp", delete=False
-    ) as handle:
-        temporary = Path(handle.name)
+    """Delegate neutral atomic DOCX publication to Docxtor."""
+    records = [PackageEntry.from_zip(info, data) for info, data in entries]
     try:
-        with ZipFile(temporary, "w", ZIP_DEFLATED) as output:
-            for info, data in entries:
-                output.writestr(_deterministic_zipinfo(info), data)
-        validate(temporary)
-        temporary.replace(destination)
-    finally:
-        temporary.unlink(missing_ok=True)
+        write_docx_package_atomically(destination, records, validate=validate)
+    except PackageError as exc:
+        raise RevisionPackageError(str(exc)) from exc
 
 
 def strip_comment_anchors(root: etree._Element, word_namespace: str) -> None:
