@@ -219,7 +219,7 @@ def test_read_comments_table_cell_gets_table_locator(tmp_path: Path) -> None:
 
     comments = read_comments(path)
     assert len(comments) == 1
-    assert comments[0].locator == "table:0:row:0:cell:0:p:0"
+    assert comments[0].locator == "table:0:r:0:c:0:p:0"
     assert comments[0].anchor_text == "Treść w tabeli."
 
 

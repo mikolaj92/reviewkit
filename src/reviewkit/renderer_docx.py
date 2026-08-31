@@ -25,7 +25,6 @@ from reviewkit.actions import (
 from reviewkit.comments import (
     _comment_markers_are_complete,
     _comment_thread_ids_are_complete,
-    restore_comment_thread_parts,
 )
 from reviewkit.docx_package import (
     normalize_docx_timestamps,
@@ -343,10 +342,9 @@ def render_reviewed_docx(
             docx, anchor_paragraph, action, reviewer, revision_id
         )
 
-    docx.save(str(path))
+    _save_docx(docx, path)
     if document.source_path is not None:
         restore_semantically_unchanged_xml_parts(document.source_path, path)
-        restore_comment_thread_parts(document.source_path, path)
     # python-docx stamps every zip entry with the wall-clock mtime, which alone makes an
     # otherwise byte-identical reviewed.docx differ on every run; pin them so the promised
     # byte-for-byte reproducibility actually holds at the package level.
@@ -414,7 +412,7 @@ def render_corrected_docx(
                 continue
             _apply_clean_corrections(docx_paragraph, paragraph_actions)
 
-    docx.save(str(path))
+    _save_docx(docx, path)
     if document.source_path is not None:
         restore_semantically_unchanged_xml_parts(document.source_path, path)
     # See render_reviewed_docx: pin python-docx's wall-clock zip timestamps so corrected.docx
@@ -455,6 +453,20 @@ def _apply_clean_corrections(paragraph: Any, actions: list[ReviewAction]) -> Non
             continue
         # ``ins`` segments are accepted corrections: they land as ordinary text.
         _append_text_run(parent, segment.text, segment.rpr)
+
+
+
+def _save_docx(docx: Any, path: Path) -> None:
+    """Write through Docxtor when the renderer opened an addressable source.
+
+    Docxtor restores comment-thread sidecars on ``to_bytes()``. A blank
+    python-docx document (no source path) still uses ``Document.save``.
+    """
+    addressable = getattr(docx, "_reviewkit_addressable", None)
+    if isinstance(addressable, AddressableDocxDocument):
+        path.write_bytes(addressable.to_bytes())
+        return
+    docx.save(str(path))
 
 
 def _paragraph_for_locator(docx: Any, locator: str | None) -> Any | None:
