@@ -5,6 +5,8 @@ from zipfile import ZipFile
 
 import pytest
 from docx import Document as DocxDocument
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from lxml import etree
 
 from reviewkit import DocxComment
@@ -401,6 +403,30 @@ def test_nested_sdt_comment_paragraph_still_gets_a_locator(tmp_path: Path) -> No
     assert [paragraph.text for paragraph in paragraphs] == ["Anchored."]
     assert paragraphs[0].locator == "body:p:0"
     assert paragraphs[0].comments[0].text == "Source note."
+
+
+def test_deletion_only_paragraph_is_absent_from_effective_review_text(tmp_path: Path) -> None:
+    source = tmp_path / "deletion-only.docx"
+    document = DocxDocument()
+    document.add_paragraph("Visible.")
+    deleted = document.add_paragraph("Deleted.")
+    run = deleted.runs[0]._r
+    deleted._p.remove(run)
+    wrapper = OxmlElement("w:del")
+    wrapper.set(qn("w:id"), "1")
+    wrapper.set(qn("w:author"), "Reviewer")
+    text = run.find(qn("w:t"))
+    assert text is not None
+    text.tag = qn("w:delText")
+    wrapper.append(run)
+    deleted._p.append(wrapper)
+    document.save(source)
+
+    review_document = load_docx(source)
+
+    assert [paragraph.text for paragraph in review_document.iter_paragraphs()] == ["Visible."]
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    assert [entry.locator for entry in review_document.revision_ledger.entries] == ["body:p:1"]
 
 
 def test_indirectly_nested_block_revision_remains_fail_closed(tmp_path: Path) -> None:
