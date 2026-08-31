@@ -31,7 +31,15 @@ from reviewkit.finality import (
     ReviewFinalityStatus,
     assess_review_finality,
 )
-from reviewkit.llm import LLMClient, MockLLMClient
+from reviewkit.llm import (
+    LLMCapabilities,
+    LLMClient,
+    LLMClientError,
+    LLMClientFailure,
+    LLMRequestOptions,
+    MockLLMClient,
+    StructuredOutputMode,
+)
 from reviewkit.markup_purity import (
     MarkupReport,
     has_comments,
@@ -89,7 +97,11 @@ __all__ = [
     "InsertionReport",
     "InsertionResult",
     "InsertionValidator",
+    "LLMCapabilities",
     "LLMClient",
+    "LLMClientError",
+    "LLMClientFailure",
+    "LLMRequestOptions",
     "MarkupReport",
     "PolicyGuard",
     "MockLLMClient",
@@ -121,6 +133,7 @@ __all__ = [
     "SignatureBlockStart",
     "SourceRevision",
     "SourceRevisionKind",
+    "StructuredOutputMode",
     "accept_all_revisions",
     "apply_reviewed_markup",
     "assess_review_finality",
