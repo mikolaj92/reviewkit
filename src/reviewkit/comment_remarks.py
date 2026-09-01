@@ -68,8 +68,9 @@ def remark_disposition(text: str) -> RemarkDisposition:
 
 
 def review_remarks(source: str | Path | bytes) -> tuple[ReviewRemark, ...]:
+    payload = source if isinstance(source, bytes) else Path(source).read_bytes()
     try:
-        inventory = inventory_review_markup(source)
+        inventory = inventory_review_markup(payload)
     except (PackageError, OSError):
         return ()
     remarks = [
