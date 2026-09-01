@@ -193,6 +193,8 @@ __all__ = [
     "review_remarks",
     "ReviewArtifactPreservationError",
     "assert_docx_structure_preserved",
+    "ReviewArtifactPurityAssessment",
+    "assess_review_artifact_purity",
 ]
 
 from .portable_trail import (
@@ -218,3 +220,5 @@ from reviewkit.artifact_preservation import (
     ReviewArtifactPreservationError,
     assert_docx_structure_preserved,
 )
+
+from reviewkit.artifact_purity import ReviewArtifactPurityAssessment, assess_review_artifact_purity
