@@ -9,7 +9,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from lxml import etree
 
-from reviewkit import DocxComment
+from reviewkit import DocxComment, read_comments
 from reviewkit.document import ReviewDocument
 from reviewkit.models import RevisionCoverageError, RevisionCoverageState, RevisionLedger
 from reviewkit.parser_docx import load_docx
@@ -288,21 +288,19 @@ def test_incomplete_revision_coverage_refuses_corrected_output(tmp_path: Path) -
     assert not output.exists()
 
 
-def test_unresolved_source_comment_refuses_reviewed_output(tmp_path: Path) -> None:
-    # Given: a source comment body with no Word range anchor.
+def test_unresolved_source_comment_remains_legal_review_input(tmp_path: Path) -> None:
+    # A standalone comment body is valid inventory even without a Word range anchor.
     source = tmp_path / "unresolved-comment.docx"
     document = DocxDocument()
     document.add_paragraph("Plain text.")
     document.comments.add_comment(text="Unresolved note.", author="Source", initials="S")
     document.save(source)
 
-    # When / Then: parsing marks coverage incomplete and blocks publication.
     review_document = load_docx(source)
-    output = tmp_path / "reviewed.docx"
-    assert review_document.revision_ledger.coverage == RevisionCoverageState.INCOMPLETE
-    with pytest.raises(RevisionCoverageError, match="coverage is incomplete"):
-        render_reviewed_docx(review_document, [], output)
-    assert not output.exists()
+    output = render_reviewed_docx(review_document, [], tmp_path / "reviewed.docx")
+    assert review_document.revision_ledger.coverage == RevisionCoverageState.COMPLETE
+    assert output.exists()
+    assert any(comment.text == "Unresolved note." for comment in read_comments(output))
 
 
 def test_mixed_supported_and_unsupported_revisions_fail_closed(tmp_path: Path) -> None:

@@ -56,7 +56,6 @@ def load_docx(path: str | Path) -> ReviewDocument:
         or _comment_ids_are_ambiguous(comments)
         or not _comment_markers_are_complete(source_path, comments)
         or not _comment_thread_ids_are_complete(source_path)
-        or any(_comment_anchor_is_unresolved(comment, comments) for comment in comments)
     ):
         revision_ledger = revision_ledger.model_copy(
             update={"coverage": RevisionCoverageState.INCOMPLETE}
