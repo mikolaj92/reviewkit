@@ -148,7 +148,7 @@ def render_reviewed_docx(
         comment_text = _comment_text(action)
         if not comment_text or action.id in routed:
             continue
-        if action.node_id in scope_ids and action.original_text:
+        if action.node_id in scope_ids:
             notes.append(
                 PhysicalReviewNote(
                     f"Unanchored review action — {_comment_label(action)}", comment_text
