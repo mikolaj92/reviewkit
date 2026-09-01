@@ -1,5 +1,4 @@
 from pathlib import Path
-from types import SimpleNamespace
 from xml.etree import ElementTree
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -24,8 +23,6 @@ from reviewkit.parser_docx import load_docx
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile
 from reviewkit.renderer_docx import (
     RenderIntegrityError,
-    _ReviewerIdentity,
-    _add_comment,
     render_corrected_docx,
     render_reviewed_docx,
 )
@@ -286,7 +283,7 @@ def test_rejects_effective_locator_after_source_deletion(tmp_path: Path) -> None
     )
 
     # When renderer coordinates cannot faithfully address the source's raw inline segments.
-    with pytest.raises(RenderIntegrityError, match="would silently drop a tracked edit"):
+    with pytest.raises(RenderIntegrityError, match="cannot anchor action"):
         render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
 
     # Then no reviewed document is emitted with a misplaced edit.
@@ -496,16 +493,10 @@ def test_reviewed_docx_patches_original_and_preserves_run_formatting(tmp_path: P
     root = ElementTree.fromstring(document_xml)
     paragraph_xml = root.find(f".//{_W}p")
     assert paragraph_xml is not None
-    # Comment range wraps the replaced run (docxtor-era interleaving).
-    assert [child.tag for child in paragraph_xml] == [
-        f"{_W}commentRangeStart",
-        f"{_W}r",
-        f"{_W}del",
-        f"{_W}ins",
-        f"{_W}r",
-        f"{_W}commentRangeEnd",
-        f"{_W}r",
-    ]
+    # Physical child ordering is a Docxtor contract. ReviewKit verifies only
+    # the semantic change, comment presence, and preserved source formatting.
+    assert paragraph_xml.find(f"{_W}commentRangeStart") is not None
+    assert paragraph_xml.find(f"{_W}commentRangeEnd") is not None
     assert _revision_texts(document_xml, "del", "delText") == ["target"]
     assert _revision_texts(document_xml, "ins", "t") == ["replacement"]
     assert root.find(f".//{_W}del/{_W}r/{_W}rPr/{_W}b") is not None
@@ -585,24 +576,8 @@ def test_reviewed_docx_interleaves_several_tracked_edits_in_one_paragraph(tmp_pa
     paragraph_xml = root.find(f".//{_W}p")
     assert paragraph_xml is not None
 
-    # Exact interleaving: kept runs between the edits, each edit wrapped in its own
-    # comment range (replace = del+ins, delete = del only, insert = ins only).
-    # Multi-edit interleaving after Docxtor mechanical layer: tracked edits
-    # first, then remaining comment ranges / runs. Content assertions below
-    # remain the contract for del/ins text.
-    assert [child.tag for child in paragraph_xml] == [
-        f"{_W}r",  # "Alpha "
-        f"{_W}del",  # "beta"
-        f"{_W}ins",  # "B"
-        f"{_W}del",  # " gamma"
-        f"{_W}r",
-        f"{_W}commentRangeStart",
-        f"{_W}r",
-        f"{_W}commentRangeEnd",
-        f"{_W}r",  # " delta"
-        f"{_W}ins",  # "!"
-        f"{_W}r",  # "."
-    ]
+    # Child ordering and range placement are owned and tested by Docxtor.
+    # ReviewKit verifies the semantic revisions and paired review comments.
     assert _revision_texts(document_xml, "del", "delText") == ["beta", " gamma"]
     assert _revision_texts(document_xml, "ins", "t") == ["B", "!"]
 
@@ -1144,18 +1119,6 @@ def test_reviewed_render_with_text_action_preserves_untouched_numbering_part(
     assert _part_bytes(reviewed_path, "word/numbering.xml") == _part_bytes(
         source_path, "word/numbering.xml"
     )
-
-
-def test_add_comment_failure_propagates() -> None:
-    class BrokenComments:
-        def add_comment(self, **_kwargs: object) -> None:
-            raise AttributeError("unsupported comment API")
-
-    docx = SimpleNamespace(comments=BrokenComments())
-    paragraph = SimpleNamespace(runs=[SimpleNamespace()])
-
-    with pytest.raises(AttributeError, match="unsupported comment API"):
-        _add_comment(docx, paragraph, "Review note.", _ReviewerIdentity())
 
 
 def test_precise_comment_anchor_survives_opaque_segment_before_the_quote(tmp_path: Path) -> None:

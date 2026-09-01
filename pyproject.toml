@@ -1,6 +1,6 @@
 [project]
 name = "reviewkit"
-version = "0.21.0"
+version = "0.22.0"
 description = "Hierarchical human-like document review workflow engine"
 readme = "README.md"
 authors = [
@@ -20,14 +20,12 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "lxml>=4.9",
     "pydantic>=2.13.4",
-    "python-docx>=1.2.0",
     "rich>=15.0.0",
     "typer>=0.26.7",
     # Required cascade engine; binding/import failures propagate (no local fallback).
     "takt @ git+https://github.com/mikolaj92/takt.git@v0.3.1",
-    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@v0.8.22",
+    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@v0.13.3",
 ]
 
 [project.scripts]
