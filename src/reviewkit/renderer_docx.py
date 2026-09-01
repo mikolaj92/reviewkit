@@ -148,12 +148,14 @@ def render_reviewed_docx(
         comment_text = _comment_text(action)
         if not comment_text or action.id in routed:
             continue
-        if action.node_id in scope_ids:
+        if action.node_id in scope_ids and action.original_text:
             notes.append(
                 PhysicalReviewNote(
                     f"Unanchored review action — {_comment_label(action)}", comment_text
                 )
             )
+        elif action.node_id in scope_ids and projection.paragraphs:
+            comments.append(PhysicalReviewComment(projection.paragraphs[0].locator, comment_text))
 
     date = (
         "1970-01-01T00:00:00+00:00"
