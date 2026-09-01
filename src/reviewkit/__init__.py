@@ -184,6 +184,13 @@ __all__ = [
     "has_portable_review_trail",
     "strip_portable_review_trail",
     "write_portable_review_trail",
+    "RemarkDisposition",
+    "RemarkWeight",
+    "ReviewRemark",
+    "compare_review_remarks",
+    "remark_disposition",
+    "remark_weight",
+    "review_remarks",
 ]
 
 from .portable_trail import (
@@ -193,4 +200,14 @@ from .portable_trail import (
     has_portable_review_trail,
     strip_portable_review_trail,
     write_portable_review_trail,
+)
+
+from reviewkit.comment_remarks import (
+    RemarkDisposition,
+    RemarkWeight,
+    ReviewRemark,
+    compare_review_remarks,
+    remark_disposition,
+    remark_weight,
+    review_remarks,
 )
