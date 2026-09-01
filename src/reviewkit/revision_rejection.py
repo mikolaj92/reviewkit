@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reviewkit.revision_package import RevisionPackageError
 from docxtor import (
     PackageError,
     PublishError,
@@ -48,7 +47,6 @@ def reject_all_revisions(
         DocxtorRejectRevisionsError,
         PackageError,
         PublishError,
-        RevisionPackageError,
         ValueError,
     ) as exc:
         raise RejectRevisionsError(str(exc)) from exc

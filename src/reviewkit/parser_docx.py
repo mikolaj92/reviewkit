@@ -4,30 +4,29 @@ from __future__ import annotations
 
 import itertools
 import re
-from collections import defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import assert_never
-from zipfile import BadZipFile, ZipFile
 
-from docx.oxml.ns import qn
 from docxtor import (
     AddressableSpan,
-    DocxDocument as AddressableDocxDocument,
-    TextSegment as AddressableTextSegment,
+    DocumentError,
+    DocxReviewProjection,
+    ReviewCoverage,
+    ReviewParagraphProjection,
+    project_docx_for_review,
 )
-from lxml import etree
 
 from reviewkit.comments import (
     DocxComment,
     _comment_markers_are_complete,
     _comment_thread_ids_are_complete,
     comments_for_locator,
-    comments_from_document,
+    _project_comment,
 )
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
-from reviewkit.markup_purity import MarkupReport, has_tracked_revisions, inspect_markup
+from reviewkit.markup_purity import has_tracked_revisions
 from reviewkit.models import (
     RevisionCoverageState,
     RevisionLedger,
@@ -48,14 +47,12 @@ _TRAILING_WORD_RE = re.compile(r"(\w+)$", re.UNICODE)
 
 def load_docx(path: str | Path) -> ReviewDocument:
     source_path = Path(path)
-    addressable_document = AddressableDocxDocument.open(source_path)
-    docx = addressable_document._doc
-    comments = comments_from_document(addressable_document)
-    effective_texts, revision_ledger = _project_revision_input(addressable_document.spans)
-    markup_report = inspect_markup(source_path)
+    projection = project_docx_for_review(source_path)
+    comments = [_project_comment(comment) for comment in projection.comments]
+    effective_texts, revision_ledger = _project_revision_input(projection.spans)
     tracked_revisions = has_tracked_revisions(source_path)
     if (
-        _revision_coverage_is_incomplete(source_path, markup_report, revision_ledger)
+        projection.coverage is ReviewCoverage.INCOMPLETE
         or _comment_ids_are_ambiguous(comments)
         or not _comment_markers_are_complete(source_path, comments)
         or not _comment_thread_ids_are_complete(source_path)
@@ -77,17 +74,16 @@ def load_docx(path: str | Path) -> ReviewDocument:
     # Docxtor owns mechanical addressing. Sort its body/table segments by the global
     # paragraph index so tables remain interleaved with surrounding body paragraphs.
     for segment in sorted(
-        _iter_review_segments(addressable_document.segments, body=True),
+        _iter_review_segments(projection.paragraphs, body=True),
         key=lambda item: item.paragraph_index if item.paragraph_index is not None else -1,
     ):
-        locator = segment.container_id or ""
+        locator = segment.locator
         source = _segment_source(locator)
-        docx_paragraph = addressable_document.resolve_paragraph(locator)
         text = effective_texts.get(locator, segment.text).strip()
         if not text:
             continue
 
-        if _is_heading(docx_paragraph):
+        if segment.is_heading:
             if current.title or current.paragraphs:
                 sections.append(current)
                 current = SectionNode(
@@ -112,7 +108,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
                 current.id,
                 locator,
                 source,
-                _opaque_ranges(docx_paragraph),
+                list(segment.opaque_ranges),
                 comments_for_locator(comments, locator),
             )
         )
@@ -125,7 +121,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
     # ("header:S:p:P"/"footer:S:p:P") are unchanged, so rendering resolves them identically.
     sections.extend(
         _story_sections(
-            addressable_document,
+            projection,
             section_ids,
             paragraph_ids,
             comments,
@@ -135,7 +131,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
 
     metadata = {
         "paragraph_count": str(sum(len(section.paragraphs) for section in sections)),
-        "table_count": str(len(docx.tables)),
+        "table_count": str(projection.table_count),
         "comment_count": str(len(comments)),
         "tracked_revisions_detected": str(tracked_revisions).lower(),
     }
@@ -178,227 +174,6 @@ def _project_revision_input(
     )
 
 
-_SUPPORTED_REVISION_KINDS = frozenset({"ins", "del"})
-_FORMATTING_PROPERTY_CHANGES = frozenset({"pPrChange", "rPrChange"})
-_PROPERTY_CHANGE_SNAPSHOT = {"pPrChange": "pPr", "rPrChange": "rPr"}
-_EMPTY_CUSTOM_XML_RANGE_MARKERS = frozenset(
-    {
-        "customXmlInsRangeStart",
-        "customXmlInsRangeEnd",
-        "customXmlDelRangeStart",
-        "customXmlDelRangeEnd",
-    }
-)
-_BLOCK_REVISION_CHILDREN = frozenset({"p", "tbl", "tr", "tc"})
-
-
-def _revision_coverage_is_incomplete(
-    source_path: Path, markup_report: MarkupReport, ledger: RevisionLedger
-) -> bool:
-    """Return whether every text-bearing source revision is represented by the typed projection.
-
-    Word commonly emits empty revision wrappers for paragraph/property bookkeeping and
-    nests a deletion inside an insertion for replacement text. Those wrappers do not own
-    independent text spans, so comparing every wrapper count with Docxtor's text spans
-    falsely marks otherwise addressable documents as incomplete. Compare the direct text
-    owned by each revision identity instead; nested revision text belongs to the inner
-    identity and is deliberately excluded from its parent.
-
-    Empty ``pPrChange`` / ``rPrChange`` records are the same class of bookkeeping: they
-    snapshot previous run/paragraph properties and own no text. They must not poison
-    coverage when every text-bearing ``ins`` / ``del`` is already in the ledger. Word
-    also stores property toggles as empty ``w:ins`` / ``w:del`` inside that snapshot
-    (identity attributes only, no owned text). Those are still formatting-only.
-    A property change that owns text, nests a text-bearing ``ins`` / ``del``, has
-    block children, or children other than the matching ``pPr`` / ``rPr`` snapshot
-    stays fail-closed.
-
-    Empty ``customXmlInsRange*`` / ``customXmlDelRange*`` bookmarks are the same
-    bookkeeping class around content controls: identity attributes only, no
-    children, no owned text (#226). ``customXmlMoveFrom`` / ``customXmlMoveTo``
-    stay fail-closed.
-    """
-    if not markup_report.has_tracked_revisions:
-        return False
-    if (
-        set(markup_report.revision_kinds)
-        - _SUPPORTED_REVISION_KINDS
-        - _FORMATTING_PROPERTY_CHANGES
-        - _EMPTY_CUSTOM_XML_RANGE_MARKERS
-    ):
-        return True
-
-    source_inventory: dict[tuple[str, str | None, str | None, str | None], str] = defaultdict(str)
-    with ZipFile(source_path) as bundle:
-        for name in bundle.namelist():
-            if not (name.startswith("word/") and name.endswith(".xml")):
-                continue
-            root = etree.fromstring(bundle.read(name))
-            for element in root.iter():
-                kind = etree.QName(element).localname
-                if kind in _FORMATTING_PROPERTY_CHANGES:
-                    if _formatting_property_change_is_unsafe(element, kind):
-                        return True
-                    continue
-                if kind in _EMPTY_CUSTOM_XML_RANGE_MARKERS:
-                    if _empty_custom_xml_range_is_unsafe(element):
-                        return True
-                    continue
-                if kind not in _SUPPORTED_REVISION_KINDS:
-                    continue
-                if any(
-                    etree.QName(descendant).localname in _BLOCK_REVISION_CHILDREN
-                    for descendant in element.iter()
-                    if descendant is not element
-                ):
-                    return True
-                direct_text = _direct_revision_text(element)
-                if direct_text:
-                    source_inventory[
-                        (
-                            kind,
-                            element.get(f"{{{_W_NS}}}id"),
-                            element.get(f"{{{_W_NS}}}author"),
-                            element.get(f"{{{_W_NS}}}date"),
-                        )
-                    ] += direct_text
-
-    ledger_inventory: dict[tuple[str, str | None, str | None, str | None], str] = defaultdict(str)
-    for entry in ledger.entries:
-        ledger_inventory[
-            (
-                "ins" if entry.kind is SourceRevisionKind.INSERTED else "del",
-                entry.revision_id,
-                entry.author,
-                entry.date,
-            )
-        ] += entry.text
-    return source_inventory != ledger_inventory
-
-
-def _direct_revision_text(element: etree._Element) -> str:
-    """Return text/control characters owned directly by one revision wrapper."""
-    parts: list[str] = []
-    for node in element.iter():
-        local = etree.QName(node).localname
-        if local not in {"t", "delText", "tab", "br", "cr"}:
-            continue
-        parent = node.getparent()
-        nested = False
-        while parent is not None and parent is not element:
-            if etree.QName(parent).localname in _SUPPORTED_REVISION_KINDS:
-                nested = True
-                break
-            parent = parent.getparent()
-        if nested:
-            continue
-        if local in {"t", "delText"}:
-            parts.append(node.text or "")
-        elif local == "tab":
-            parts.append("\t")
-        else:
-            parts.append("\n")
-    return "".join(parts)
-
-
-def _formatting_property_change_is_unsafe(element: etree._Element, kind: str) -> bool:
-    """Return whether a property-change record owns text or unexpected children.
-
-    Word stores the previous ``pPr`` / ``rPr`` snapshot as the only child of an
-    empty formatting-only change. Empty ``w:ins`` / ``w:del`` inside that
-    snapshot are property toggles (identity attributes only). Nested revisions
-    that own text, runs, or block children stay fail-closed.
-    """
-    expected_snapshot = _PROPERTY_CHANGE_SNAPSHOT[kind]
-    children = list(element)
-    if len(children) != 1 or etree.QName(children[0]).localname != expected_snapshot:
-        return True
-    for descendant in element.iter():
-        if descendant is element:
-            continue
-        local = etree.QName(descendant).localname
-        if local in _BLOCK_REVISION_CHILDREN:
-            return True
-        if local in _SUPPORTED_REVISION_KINDS and _property_toggle_revision_is_unsafe(descendant):
-            return True
-    return bool(_direct_revision_text(element))
-
-
-def _property_toggle_revision_is_unsafe(element: etree._Element) -> bool:
-    """Empty snapshot ``ins`` / ``del`` are formatting toggles, not text revisions.
-
-    Word emits ``w:rPr/w:del`` (and ``w:ins``) with author/date/id and no
-    children. Any child element or owned text is nested revision grammar.
-    """
-    if list(element):
-        return True
-    return bool(_direct_revision_text(element))
-
-
-def _empty_custom_xml_range_is_unsafe(element: etree._Element) -> bool:
-    """Empty customXml ins/del range bookmarks own no text (#226).
-
-    Word emits identity-only start/end bookmarks around content controls.
-    Any child element or owned text is nested revision grammar.
-    """
-    if list(element):
-        return True
-    return bool(_direct_revision_text(element))
-
-
-def _source_revision(
-    span: AddressableSpan,
-    locator: str,
-    kind: SourceRevisionKind,
-) -> SourceRevision:
-    return SourceRevision(
-        kind=kind,
-        text=span.text,
-        locator=locator,
-        span_id=span.span_id,
-        start_offset=span.start_offset,
-        end_offset=span.end_offset,
-        revision_id=span.revision_id,
-        author=span.revision_author,
-        date=span.revision_date,
-    )
-
-
-def _reviewkit_locator(container_id: str) -> str:
-    parts = container_id.split(":")
-    if len(parts) == 8 and parts[0] == "table" and parts[2] == "r" and parts[4] == "c":
-        return f"table:{parts[1]}:row:{parts[3]}:cell:{parts[5]}:p:{parts[7]}"
-    return container_id
-
-
-def _comment_anchor_is_unresolved(comment: DocxComment, comments: list[DocxComment]) -> bool:
-    """Return whether a source comment has no usable story anchor.
-
-    Word replies normally have no range markers of their own. A reply is anchored through
-    its parent comment when that parent has a stable locator; only an unanchored standalone
-    comment (or a reply whose parent is missing/unanchored) makes revision coverage
-    incomplete.
-    """
-    if comment.locator is not None:
-        return False
-    if comment.parent_id is None:
-        return True
-    parent = next((candidate for candidate in comments if candidate.id == comment.parent_id), None)
-    return parent is None or parent.locator is None
-
-
-def _comment_ids_are_ambiguous(comments: list[DocxComment]) -> bool:
-    return len({comment.id for comment in comments}) != len(comments)
-
-
-_W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
-_FOOTNOTES_PART = "word/footnotes.xml"
-# The two footnotes Word always stores alongside real notes: the horizontal rule that
-# separates footnotes from body text and its continuation variant. They carry the
-# separator glyph, never document prose, so they are not content footnotes.
-_STRUCTURAL_FOOTNOTE_TYPES = frozenset({"separator", "continuationSeparator"})
-
-
 @dataclass(frozen=True)
 class DocxFootnote:
     """One content footnote read from a ``.docx`` package: its ``w:id`` and visible text."""
@@ -408,43 +183,15 @@ class DocxFootnote:
 
 
 def read_footnotes(path: str | Path) -> list[DocxFootnote]:
-    """Extract every content footnote's visible text from a ``.docx`` package, in order.
-
-    python-docx models no footnotes, so this reads ``word/footnotes.xml`` directly -- the
-    package-level read reviewkit owns so consumers never hand-roll OOXML. Text is assembled
-    the same way the renderer reads visible text (``w:t`` verbatim, ``w:tab`` -> tab,
-    ``w:br``/``w:cr`` -> newline). The structural separator footnotes Word stores next to
-    real notes are skipped. Returns an empty list when the package carries no footnotes part
-    (or cannot be opened as a zip).
-    """
     try:
-        with ZipFile(str(path)) as bundle:
-            raw = bundle.read(_FOOTNOTES_PART)
-    except (KeyError, OSError, BadZipFile):
+        projection = project_docx_for_review(path)
+    except (OSError, DocumentError, ValueError):
         return []
-    root = etree.fromstring(raw)
-    footnotes: list[DocxFootnote] = []
-    for element in root.findall(f"{{{_W_NS}}}footnote"):
-        if element.get(f"{{{_W_NS}}}type") in _STRUCTURAL_FOOTNOTE_TYPES:
-            continue
-        note_id = element.get(f"{{{_W_NS}}}id")
-        if note_id is None:
-            continue
-        footnotes.append(DocxFootnote(id=note_id, text=_footnote_visible_text(element)))
-    return footnotes
-
-
-def _footnote_visible_text(element: object) -> str:
-    parts: list[str] = []
-    for node in element.iter():  # type: ignore[attr-defined]
-        tag = node.tag
-        if tag == f"{{{_W_NS}}}t":
-            parts.append(node.text or "")
-        elif tag == f"{{{_W_NS}}}tab":
-            parts.append("\t")
-        elif tag in (f"{{{_W_NS}}}br", f"{{{_W_NS}}}cr"):
-            parts.append("\n")
-    return "".join(parts)
+    return [
+        DocxFootnote(id=note.note_id, text=note.text)
+        for note in projection.notes
+        if note.kind == "footnote"
+    ]
 
 
 def split_sentences(text: str) -> list[str]:
@@ -521,17 +268,6 @@ def _next_non_space_char(text: str, index: int) -> str:
     return text[index] if index < len(text) else ""
 
 
-def _is_heading(docx_paragraph: object) -> bool:
-    style = getattr(docx_paragraph, "style", None)
-    if style is None:
-        return False
-    # ``style_id`` is the language-independent internal identifier Word assigns to
-    # built-in styles ("Heading1", "Heading2", "Title", ...), so heading detection
-    # stays domain- and language-agnostic regardless of the document's UI language.
-    style_id = str(getattr(style, "style_id", "") or "")
-    return style_id.startswith("Heading") or style_id == "Title"
-
-
 def _paragraph_node(
     paragraph_id: str,
     text: str,
@@ -565,74 +301,11 @@ def _paragraph_node(
     )
 
 
-def _opaque_ranges(docx_paragraph: object) -> list[tuple[int, int]]:
-    """Spans of the paragraph's STRIPPED text contributed by non-editable content.
-
-    ``Paragraph.text`` includes visible characters the renderers treat as opaque:
-    tabs/breaks inside runs and the text of non-run inline children (hyperlinks,
-    fields, ...). Locators use the stripped node text, so the returned coordinates
-    are shifted by the leading whitespace and clipped to the stripped length.
-
-    Fail-open on any mismatch with python-docx's notion of the paragraph text
-    (unknown layouts): returning [] just skips the prepare-time demotion; the
-    renderers' own integrity guards still fail closed at render time.
-    """
-    p_element = getattr(docx_paragraph, "_p", None)
-    text = str(getattr(docx_paragraph, "text", ""))
-    if p_element is None:
-        return []
-
-    parts: list[tuple[str, bool]] = []  # (visible chunk, editable?)
-    for child in p_element:
-        tag = child.tag
-        if tag == qn("w:pPr"):
-            continue
-        if tag == qn("w:r"):
-            for run_child in child:
-                run_tag = run_child.tag
-                if run_tag == qn("w:t"):
-                    parts.append((run_child.text or "", True))
-                elif run_tag == qn("w:tab"):
-                    parts.append(("\t", False))
-                elif run_tag in (qn("w:br"), qn("w:cr")):
-                    parts.append(("\n", False))
-            continue
-        parts.append((_descendant_visible_text(child), False))
-
-    if "".join(chunk for chunk, _editable in parts) != text:
-        return []
-
-    lead = len(text) - len(text.lstrip())
-    stripped_length = len(text.strip())
-    ranges: list[tuple[int, int]] = []
-    offset = 0
-    for chunk, editable in parts:
-        if not editable and chunk:
-            start = max(offset - lead, 0)
-            end = min(offset + len(chunk) - lead, stripped_length)
-            if start < end:
-                ranges.append((start, end))
-        offset += len(chunk)
-    return ranges
-
-
-def _descendant_visible_text(element: object) -> str:
-    parts: list[str] = []
-    for node in element.iter():  # type: ignore[attr-defined]
-        if node.tag == qn("w:t"):
-            parts.append(node.text or "")
-        elif node.tag == qn("w:tab"):
-            parts.append("\t")
-        elif node.tag in (qn("w:br"), qn("w:cr")):
-            parts.append("\n")
-    return "".join(parts)
-
-
 def _iter_review_segments(
-    segments: tuple[AddressableTextSegment, ...], *, body: bool
-) -> Iterator[AddressableTextSegment]:
+    segments: tuple[ReviewParagraphProjection, ...], *, body: bool
+) -> Iterator[ReviewParagraphProjection]:
     for segment in segments:
-        locator = segment.container_id or ""
+        locator = segment.locator
         is_body_story = locator.startswith(("body:", "table:"))
         if is_body_story is body:
             yield segment
@@ -643,15 +316,15 @@ def _segment_source(locator: str) -> str:
 
 
 def _story_sections(
-    addressable_document: AddressableDocxDocument,
+    projection: DocxReviewProjection,
     section_ids: Iterator[int],
     paragraph_ids: Iterator[int],
     comments: list[DocxComment],
     effective_texts: dict[str, str],
 ) -> list[SectionNode]:
-    grouped: dict[str, list[AddressableTextSegment]] = {}
-    for segment in _iter_review_segments(addressable_document.segments, body=False):
-        locator = segment.container_id or ""
+    grouped: dict[str, list[ReviewParagraphProjection]] = {}
+    for segment in _iter_review_segments(projection.paragraphs, body=False):
+        locator = segment.locator
         source = _segment_source(locator)
         if source in {"comment", "footnote", "endnote"}:
             continue
@@ -662,15 +335,14 @@ def _story_sections(
         non_empty = [
             segment
             for segment in entries
-            if effective_texts.get(segment.container_id or "", segment.text).strip()
+            if effective_texts.get(segment.locator, segment.text).strip()
         ]
         if not non_empty:
             continue
         section_id = f"s{next(section_ids)}"
         paragraphs: list[ParagraphNode] = []
         for segment in non_empty:
-            locator = segment.container_id or ""
-            paragraph = addressable_document.resolve_paragraph(locator)
+            locator = segment.locator
             paragraphs.append(
                 _paragraph_node(
                     f"p{next(paragraph_ids)}",
@@ -678,7 +350,7 @@ def _story_sections(
                     section_id,
                     locator,
                     source,
-                    _opaque_ranges(paragraph),
+                    list(segment.opaque_ranges),
                     comments_for_locator(comments, locator),
                 )
             )
@@ -691,3 +363,48 @@ def _story_sections(
             )
         )
     return sections
+
+
+def _source_revision(
+    span: AddressableSpan,
+    locator: str,
+    kind: SourceRevisionKind,
+) -> SourceRevision:
+    return SourceRevision(
+        kind=kind,
+        text=span.text,
+        locator=locator,
+        span_id=span.span_id,
+        start_offset=span.start_offset,
+        end_offset=span.end_offset,
+        revision_id=span.revision_id,
+        author=span.revision_author,
+        date=span.revision_date,
+    )
+
+
+def _reviewkit_locator(container_id: str) -> str:
+    parts = container_id.split(":")
+    if len(parts) == 8 and parts[0] == "table" and parts[2] == "r" and parts[4] == "c":
+        return f"table:{parts[1]}:row:{parts[3]}:cell:{parts[5]}:p:{parts[7]}"
+    return container_id
+
+
+def _comment_anchor_is_unresolved(comment: DocxComment, comments: list[DocxComment]) -> bool:
+    """Return whether a source comment has no usable story anchor.
+
+    Word replies normally have no range markers of their own. A reply is anchored through
+    its parent comment when that parent has a stable locator; only an unanchored standalone
+    comment (or a reply whose parent is missing/unanchored) makes revision coverage
+    incomplete.
+    """
+    if comment.locator is not None:
+        return False
+    if comment.parent_id is None:
+        return True
+    parent = next((candidate for candidate in comments if candidate.id == comment.parent_id), None)
+    return parent is None or parent.locator is None
+
+
+def _comment_ids_are_ambiguous(comments: list[DocxComment]) -> bool:
+    return len({comment.id for comment in comments}) != len(comments)

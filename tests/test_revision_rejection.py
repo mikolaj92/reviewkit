@@ -2,7 +2,6 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 import pytest
-import reviewkit.revision_package as revision_package
 import reviewkit.revisions as revisions_module
 from docx import Document as DocxDocument
 from docx.oxml import OxmlElement
@@ -375,18 +374,6 @@ def test_reject_all_revisions_fails_closed_on_unsupported_property_change(
     assert not (tmp_path / "out.docx").exists()
 
 
-def test_reject_all_revisions_enforces_uncompressed_package_budget(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    source = _saved_docx(tmp_path / "source.docx", "old clause")
-    monkeypatch.setattr(revision_package, "MAX_TOTAL_UNCOMPRESSED_BYTES", 1)
-
-    with pytest.raises(RejectRevisionsError, match="uncompressed size"):
-        reject_all_revisions(source, tmp_path / "out.docx")
-
-    assert not (tmp_path / "out.docx").exists()
-
-
 def test_reject_all_revisions_rejects_doctype(tmp_path: Path) -> None:
     source = _saved_docx(tmp_path / "source.docx", "old clause")
     reviewed = _reviewed_replacement(source, tmp_path / "reviewed.docx")
@@ -403,17 +390,6 @@ def test_reject_all_revisions_rejects_doctype(tmp_path: Path) -> None:
         reject_all_revisions(reviewed, tmp_path / "out.docx")
 
     assert not (tmp_path / "out.docx").exists()
-
-
-def test_parse_xml_rejects_utf16_doctype() -> None:
-    xml = (
-        '<?xml version="1.0" encoding="UTF-16"?>'
-        '<!DOCTYPE document [<!ENTITY payload "expanded">]>'
-        "<document>&payload;</document>"
-    ).encode("utf-16")
-
-    with pytest.raises(revision_package.RevisionPackageError, match="DOCTYPE"):
-        revision_package.parse_xml(xml)
 
 
 def test_reject_all_revisions_handles_arbitrary_namespace_prefix(tmp_path: Path) -> None:
@@ -832,11 +808,9 @@ def test_reject_all_revisions_merges_paragraphs_across_content_controls(
 
     restored = reject_all_revisions(path, tmp_path / "out.docx")
 
-    with ZipFile(restored) as archive:
-        root = revision_package.parse_xml(archive.read("word/document.xml"))
-    paragraphs = list(root.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"))
+    paragraphs = DocxDocument(restored).paragraphs
     assert len(paragraphs) == 1
-    assert "".join(paragraphs[0].itertext()) == "First second"
+    assert paragraphs[0].text == "First second"
 
 
 def test_reject_all_revisions_removes_inserted_blank_paragraph(tmp_path: Path) -> None:

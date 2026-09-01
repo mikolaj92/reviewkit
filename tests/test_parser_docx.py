@@ -1,5 +1,4 @@
 from pathlib import Path
-from types import SimpleNamespace
 from zipfile import ZipFile
 
 from docx import Document as DocxDocument
@@ -7,7 +6,6 @@ from docx import Document as DocxDocument
 from reviewkit import DocxComment, read_comments
 from reviewkit.parser_docx import (
     DocxFootnote,
-    _is_heading,
     load_docx,
     read_footnotes,
     split_sentences,
@@ -68,12 +66,6 @@ def test_non_latin_terminators_split_sentences() -> None:
     assert split_sentences("这是第一句。这是第二句。") == ["这是第一句。", "这是第二句。"]
     assert split_sentences("पहला वाक्य। दूसरा वाक्य।") == ["पहला वाक्य।", "दूसरा वाक्य।"]
     assert split_sentences("هل هذا صحيح؟ نعم.") == ["هل هذا صحيح؟", "نعم."]
-
-
-def test_heading_detection_uses_only_the_canonical_style_id() -> None:
-    paragraph = SimpleNamespace(style=SimpleNamespace(style_id="BodyText", name="Heading 1"))
-
-    assert not _is_heading(paragraph)
 
 
 def test_english_styled_heading_starts_a_new_section(tmp_path: Path) -> None:

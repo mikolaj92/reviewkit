@@ -3,7 +3,6 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from zipfile import BadZipFile
 from docxtor import docx_facts
 from reviewkit.markup_purity import inspect_markup
 from reviewkit.portable_trail import (
@@ -47,7 +46,7 @@ def assess_review_artifact_purity(
             sorted(part.name for part in facts.parts if part.name.startswith(_REVIEW_ONLY_PREFIXES))
         )
         trail = has_portable_review_trail(source, profile=trail_profile)
-    except (OSError, ValueError, BadZipFile, PortableReviewTrailError) as exc:
+    except (OSError, ValueError, PortableReviewTrailError) as exc:
         return ReviewArtifactPurityAssessment(inspection_error=str(exc))
     return ReviewArtifactPurityAssessment(
         revision_parts=report.revision_parts,

@@ -10,9 +10,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from docxtor import (
+    DocumentError,
     OperationReceipt,
     OperationStatus,
     ReviewBatchReceipt,
+    ReviewTransactionError,
     ReviewCommand,
     RevisionAuthor,
     RevisionPosition,
@@ -75,7 +77,7 @@ def apply_review_actions(
 
     try:
         receipt = apply_review_batch(data, commands)
-    except Exception as exc:
+    except (DocumentError, ReviewTransactionError, ValueError) as exc:
         raise DocxtorAdapterError(str(exc)) from exc
     _assert_receipts(receipt, correlation)
     return AppliedReviewBatch(receipt=receipt, operation_ids_by_action=correlation)
