@@ -1,8 +1,10 @@
 """Review-semantic projection of Docxtor comment inventory."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
+
 from docxtor import (
     AddressableComment,
     DocumentError,

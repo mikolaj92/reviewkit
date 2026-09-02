@@ -22,8 +22,8 @@ from reviewkit.comments import (
     DocxComment,
     _comment_markers_are_complete,
     _comment_thread_ids_are_complete,
-    comments_for_locator,
     _project_comment,
+    comments_for_locator,
 )
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.markup_purity import has_tracked_revisions
@@ -256,9 +256,7 @@ def _is_sentence_boundary(text: str, punct_start: int, punct_end: int) -> bool:
     if trailing is not None and len(trailing.group(1)) == 1 and trailing.group(1).isalpha():
         return False
     following = _next_non_space_char(text, punct_end)
-    if following and following.islower():
-        return False
-    return True
+    return not (following and following.islower())
 
 
 def _next_non_space_char(text: str, index: int) -> str:

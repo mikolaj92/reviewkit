@@ -8,7 +8,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from reviewkit.comments import DocxComment
-from reviewkit.models import RevisionCoverageState, RevisionLedger, ReviewResult
+from reviewkit.models import ReviewResult, RevisionCoverageState, RevisionLedger
 
 
 class SentenceNode(BaseModel):

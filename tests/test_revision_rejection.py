@@ -2,11 +2,11 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 import pytest
-import reviewkit.revisions as revisions_module
 from docx import Document as DocxDocument
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
+import reviewkit.revisions as revisions_module
 from reviewkit import RejectRevisionsError, reject_all_revisions
 from reviewkit.markup_purity import inspect_markup
 from reviewkit.models import ReviewAction, ReviewActionType, ReviewScope
@@ -706,9 +706,9 @@ def test_revision_operations_reject_duplicate_package_members(
         b'<w:document xmlns:w="http://schemas.openxmlformats.org/'
         b'wordprocessingml/2006/main"><w:body/></w:document>'
     )
-    with pytest.warns(UserWarning, match="Duplicate name"):
-        with ZipFile(source, "w") as archive:
-            archive.writestr("word/document.xml", document_xml)
+    with ZipFile(source, "w") as archive:
+        archive.writestr("word/document.xml", document_xml)
+        with pytest.warns(UserWarning, match="Duplicate name"):
             archive.writestr("word/document.xml", document_xml)
     destination = tmp_path / "out.docx"
     operation = (

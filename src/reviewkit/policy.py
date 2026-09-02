@@ -49,7 +49,7 @@ class ActionPolicy:
         cls,
         profile: ReviewProfile,
         guards: Sequence[PolicyGuard] | None = None,
-    ) -> "ActionPolicy":
+    ) -> ActionPolicy:
         return cls(profile.resolved_action_policy(), guards=guards)
 
     def decide(self, action: ReviewAction, *, node_text: str) -> ActionPolicyDecision:

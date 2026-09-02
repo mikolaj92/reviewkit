@@ -1,12 +1,14 @@
 """Provider- and domain-blind presentation semantics for review comments."""
 
 from __future__ import annotations
+
 import hashlib
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
+
 from docxtor import PackageError, inventory_review_markup
 
 

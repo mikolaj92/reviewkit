@@ -1,9 +1,12 @@
 from __future__ import annotations
+
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
+
 from docx import Document
 from lxml import etree
+
 from reviewkit import (
     incorporated_comment_outcomes,
     measure_review_changes,

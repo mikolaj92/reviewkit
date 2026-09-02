@@ -1,9 +1,12 @@
 """Neutral purity assessment for final review artifacts."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
+
 from docxtor import docx_facts
+
 from reviewkit.markup_purity import inspect_markup
 from reviewkit.portable_trail import (
     PortableReviewTrailError,

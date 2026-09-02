@@ -1,6 +1,7 @@
 """Review-semantic paragraph insertion requests and suggestion marker grammar."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Literal
 

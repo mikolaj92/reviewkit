@@ -60,7 +60,7 @@ class ActionPolicyConfig(BaseModel):
     auto_apply_sensitive_text: bool = False
     ambiguous_edit_behavior: str = "conflict"
 
-    def merged(self, override: "ActionPolicyConfig | None") -> "ActionPolicyConfig":
+    def merged(self, override: ActionPolicyConfig | None) -> ActionPolicyConfig:
         if override is None:
             return self
         payload = self.model_dump(mode="json")
@@ -105,7 +105,7 @@ class ReviewProfile(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _fill_profile_identity(self) -> "ReviewProfile":
+    def _fill_profile_identity(self) -> ReviewProfile:
         if self.profile_id is None:
             self.profile_id = self.name
         if self.display_name is None:

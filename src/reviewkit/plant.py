@@ -8,8 +8,9 @@ Takt has no document parser — the host owns plant construction.
 
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Iterator, Sequence
+from typing import Any
 
 from reviewkit.document import (
     ParagraphNode,
@@ -170,4 +171,4 @@ class ReviewDocumentPlant:
         return [n.to_plant_node() for n in self.sequential_scan()]
 
 
-__all__ = ["ReviewDocumentPlant", "DocNode"]
+__all__ = ["DocNode", "ReviewDocumentPlant"]

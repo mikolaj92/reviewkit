@@ -27,13 +27,13 @@ from reviewkit.models import (
     SentenceReviewResponse,
 )
 from reviewkit.profile import ReviewProfile
-from reviewkit.review_bounds import validate_review_payload
 from reviewkit.prompts import (
     document_review_prompt,
     paragraph_review_prompt,
     section_review_prompt,
     sentence_review_prompt,
 )
+from reviewkit.review_bounds import validate_review_payload
 from reviewkit.state import ReviewState
 from reviewkit.takt_types import RawSignal
 
@@ -239,4 +239,4 @@ def _severity_to_deviation(severity: str) -> float:
     return mapping.get(str(severity).lower(), 0.6)
 
 
-__all__ = ["BaseLLMDetector", "_response_to_signals", "_lower_actions_for_prompt"]
+__all__ = ["BaseLLMDetector", "_lower_actions_for_prompt", "_response_to_signals"]

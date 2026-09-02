@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 from reviewkit.takt_types import (
     ActuationView,
@@ -69,7 +70,7 @@ def _evaluate_request(
 ) -> dict[str, Any]:
     return {
         "mode": "evaluate",
-        "now": now or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "now": now or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "plant_nodes": [n.to_json() for n in plant_nodes],
         "layers": [L.to_json() for L in layers],
         "raw_signals": [s.to_json() for s in raw_signals],

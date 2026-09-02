@@ -10,16 +10,15 @@ import os
 from pathlib import Path
 from unittest.mock import Mock
 
-from docx import Document as DocxDocument
 import pytest
-
-from reviewkit.takt_client import TaktClient
-from reviewkit.takt_types import LayerSpec, PlantNode, TaktDecision
+from docx import Document as DocxDocument
 
 from reviewkit import review_document
 from reviewkit.llm import MockLLMClient
 from reviewkit.plant import ReviewDocumentPlant
+from reviewkit.takt_client import TaktClient
 from reviewkit.takt_reviewer import TaktReviewer
+from reviewkit.takt_types import LayerSpec, PlantNode, TaktDecision
 
 
 def _make_docx(tmp_path: Path, text: str) -> Path:
@@ -163,7 +162,7 @@ def test_takt_reviewer_basic_run(tmp_path: Path) -> None:
     from reviewkit.parser_docx import load_docx
 
     document = load_docx(docx)
-    findings, actions, state = reviewer.review(document)
+    findings, actions, _state = reviewer.review(document)
 
     assert isinstance(findings, list)
     assert isinstance(actions, list)

@@ -6,8 +6,8 @@ profile action policy and conservative fail-closed defaults.
 
 from __future__ import annotations
 
-from reviewkit.profile import ReviewProfile
 from reviewkit.models import ReviewScope
+from reviewkit.profile import ReviewProfile
 from reviewkit.takt_types import LayerSpec
 
 

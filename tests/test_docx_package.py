@@ -6,8 +6,8 @@ import zipfile
 from pathlib import Path
 
 import pytest
-import lxml.etree as etree
 from docx import Document as DocxDocument
+from lxml import etree
 
 from reviewkit.docx_package import (
     normalize_docx_timestamps,

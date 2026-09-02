@@ -19,8 +19,8 @@ from reviewkit.models import (
 )
 from reviewkit.pipeline import _unresolved_finding_id_warnings
 from reviewkit.profile import ReviewProfile
-from reviewkit.takt_reviewer import TaktReviewer
 from reviewkit.state import ReviewState
+from reviewkit.takt_reviewer import TaktReviewer
 
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 

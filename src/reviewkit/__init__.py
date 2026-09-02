@@ -5,35 +5,24 @@ from reviewkit.anchors import (
     is_supported_anchor,
     parse_body_anchor_index,
 )
+from reviewkit.comments import DocxComment, comments_for_locator, read_comments
 from reviewkit.context import (
     EmptyReviewContextProvider,
     ReviewContext,
     ReviewContextProvider,
 )
 from reviewkit.document import ReviewDocument
-from reviewkit.insertions import (
-    InsertionAction,
-    InsertionKind,
-    SUGGESTION_MARKER_PREFIX,
-    contains_suggestion_marker,
-    format_suggestion_text,
-)
-from reviewkit.review_outcomes import (
-    IncorporatedCommentOutcome,
-    RenderedActionAssessment,
-    ReviewChangeMetrics,
-    assess_rendered_actions,
-    incorporated_comment_outcomes,
-    measure_review_changes,
-    read_metadata_marker,
-    revision_signatures,
-    set_metadata_marker,
-    strip_metadata_marker,
-)
 from reviewkit.finality import (
     ReviewFinalityAssessment,
     ReviewFinalityStatus,
     assess_review_finality,
+)
+from reviewkit.insertions import (
+    SUGGESTION_MARKER_PREFIX,
+    InsertionAction,
+    InsertionKind,
+    contains_suggestion_marker,
+    format_suggestion_text,
 )
 from reviewkit.llm import (
     LLMCapabilities,
@@ -54,11 +43,11 @@ from reviewkit.markup_purity import (
 from reviewkit.models import (
     ActionStatus,
     EvidenceRef,
-    ReviewBoundError,
-    ReviewFailureClass,
     ReviewAction,
     ReviewActionType,
+    ReviewBoundError,
     ReviewDimension,
+    ReviewFailureClass,
     ReviewFinding,
     ReviewLocator,
     ReviewReference,
@@ -66,28 +55,40 @@ from reviewkit.models import (
     ReviewResult,
     ReviewScope,
     ReviewStats,
-    RevisionCoverageState,
     RevisionCoverageError,
+    RevisionCoverageState,
     RevisionLedger,
     SourceRevision,
     SourceRevisionKind,
     canonical_action_dump,
 )
-from reviewkit.comments import DocxComment, comments_for_locator, read_comments
 from reviewkit.parser_docx import DocxFootnote, load_docx, read_footnotes
 from reviewkit.pipeline import review_document
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 from reviewkit.renderer_docx import RenderIntegrityError
+from reviewkit.review_outcomes import (
+    IncorporatedCommentOutcome,
+    RenderedActionAssessment,
+    ReviewChangeMetrics,
+    assess_rendered_actions,
+    incorporated_comment_outcomes,
+    measure_review_changes,
+    read_metadata_marker,
+    revision_signatures,
+    set_metadata_marker,
+    strip_metadata_marker,
+)
+from reviewkit.revision_rejection import RejectRevisionsError, reject_all_revisions
 from reviewkit.revisions import (
     AcceptRevisionsError,
     accept_all_revisions,
     apply_reviewed_markup,
 )
-from reviewkit.revision_rejection import RejectRevisionsError, reject_all_revisions
 
 __all__ = [
     "ANCHOR_LAST",
+    "SUGGESTION_MARKER_PREFIX",
     "AcceptRevisionsError",
     "ActionPolicy",
     "ActionPolicyConfig",
@@ -96,6 +97,7 @@ __all__ = [
     "DocxFootnote",
     "EmptyReviewContextProvider",
     "EvidenceRef",
+    "IncorporatedCommentOutcome",
     "InsertionAction",
     "InsertionKind",
     "LLMCapabilities",
@@ -104,92 +106,86 @@ __all__ = [
     "LLMClientFailure",
     "LLMRequestOptions",
     "MarkupReport",
-    "PolicyGuard",
     "MockLLMClient",
-    "RenderIntegrityError",
+    "PolicyGuard",
+    "PortableReviewTrailError",
+    "PortableReviewTrailProfile",
     "RejectRevisionsError",
-    "SUGGESTION_MARKER_PREFIX",
+    "RemarkDisposition",
+    "RemarkWeight",
+    "RenderIntegrityError",
+    "RenderedActionAssessment",
     "ReviewAction",
     "ReviewActionType",
+    "ReviewArtifactPreservationError",
+    "ReviewArtifactPurityAssessment",
     "ReviewBoundError",
-    "ReviewFailureClass",
+    "ReviewChangeMetrics",
     "ReviewContext",
     "ReviewContextProvider",
     "ReviewDimension",
     "ReviewDocument",
-    "ReviewFinding",
+    "ReviewFailureClass",
     "ReviewFinalityAssessment",
     "ReviewFinalityStatus",
+    "ReviewFinding",
     "ReviewLocator",
     "ReviewProfile",
     "ReviewReference",
+    "ReviewRemark",
     "ReviewResponse",
     "ReviewResult",
     "ReviewScope",
     "ReviewStats",
-    "RevisionCoverageState",
     "RevisionCoverageError",
+    "RevisionCoverageState",
     "RevisionLedger",
     "SourceRevision",
     "SourceRevisionKind",
     "StructuredOutputMode",
     "accept_all_revisions",
+    "append_portable_review_trail",
     "apply_reviewed_markup",
+    "assert_docx_structure_preserved",
+    "assess_rendered_actions",
+    "assess_review_artifact_purity",
     "assess_review_finality",
     "canonical_action_dump",
     "comments_for_locator",
+    "compare_review_remarks",
     "contains_suggestion_marker",
     "format_suggestion_text",
     "has_comments",
+    "has_portable_review_trail",
     "has_suggestion_marker",
     "has_tracked_revisions",
+    "incorporated_comment_outcomes",
     "inspect_markup",
     "is_supported_anchor",
     "load_docx",
     "load_profile",
+    "measure_review_changes",
     "parse_body_anchor_index",
     "read_comments",
     "read_footnotes",
-    "reject_all_revisions",
-    "review_document",
-    "IncorporatedCommentOutcome",
-    "RenderedActionAssessment",
-    "ReviewChangeMetrics",
-    "assess_rendered_actions",
-    "incorporated_comment_outcomes",
-    "measure_review_changes",
     "read_metadata_marker",
+    "reject_all_revisions",
+    "remark_disposition",
+    "remark_weight",
+    "review_document",
+    "review_remarks",
     "revision_signatures",
     "set_metadata_marker",
     "strip_metadata_marker",
-    "PortableReviewTrailError",
-    "PortableReviewTrailProfile",
-    "append_portable_review_trail",
-    "has_portable_review_trail",
     "strip_portable_review_trail",
     "write_portable_review_trail",
-    "RemarkDisposition",
-    "RemarkWeight",
-    "ReviewRemark",
-    "compare_review_remarks",
-    "remark_disposition",
-    "remark_weight",
-    "review_remarks",
-    "ReviewArtifactPreservationError",
-    "assert_docx_structure_preserved",
-    "ReviewArtifactPurityAssessment",
-    "assess_review_artifact_purity",
 ]
 
-from .portable_trail import (
-    PortableReviewTrailError,
-    PortableReviewTrailProfile,
-    append_portable_review_trail,
-    has_portable_review_trail,
-    strip_portable_review_trail,
-    write_portable_review_trail,
+from reviewkit.artifact_preservation import (
+    ReviewArtifactPreservationError,
+    assert_docx_structure_preserved,
 )
-
+from reviewkit.artifact_purity import ReviewArtifactPurityAssessment, assess_review_artifact_purity
 from reviewkit.comment_remarks import (
     RemarkDisposition,
     RemarkWeight,
@@ -200,9 +196,11 @@ from reviewkit.comment_remarks import (
     review_remarks,
 )
 
-from reviewkit.artifact_preservation import (
-    ReviewArtifactPreservationError,
-    assert_docx_structure_preserved,
+from .portable_trail import (
+    PortableReviewTrailError,
+    PortableReviewTrailProfile,
+    append_portable_review_trail,
+    has_portable_review_trail,
+    strip_portable_review_trail,
+    write_portable_review_trail,
 )
-
-from reviewkit.artifact_purity import ReviewArtifactPurityAssessment, assess_review_artifact_purity

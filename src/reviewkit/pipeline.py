@@ -6,13 +6,13 @@ from pathlib import Path
 
 from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import ReviewContextProvider
-from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 from reviewkit.document import ReviewDocument
 from reviewkit.llm import LLMClient
 from reviewkit.models import ReviewAction, ReviewFinding, ReviewResult, ReviewStats
 from reviewkit.parser_docx import load_docx
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile, load_profile
+from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 from reviewkit.takt_reviewer import TaktReviewer
 
 

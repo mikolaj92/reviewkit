@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from zipfile import ZipFile
 from xml.etree import ElementTree
+from zipfile import ZipFile
 
 from docx import Document as DocxDocument
 from lxml import etree
@@ -78,7 +78,7 @@ def _inject_comment_thread(path: Path) -> Path:
         '<w15:commentEx w15:paraId="AAAA0001" w15:done="0"/>'
         '<w15:commentEx w15:paraId="BBBB0002" w15:paraIdParent="AAAA0001" w15:done="0"/>'
         "</w15:commentsEx>"
-    ).encode("utf-8")
+    ).encode()
 
     rels_root = etree.fromstring(document_rels)
     rel = etree.SubElement(rels_root, f"{_REL}Relationship")
@@ -254,7 +254,7 @@ def _people_only_docx(path: Path) -> Path:
         '<w15:presenceInfo w15:providerId="None" w15:userId="reviewer"/>'
         "</w15:person>"
         "</w15:people>"
-    ).encode("utf-8")
+    ).encode()
     rels_root = etree.fromstring(members["word/_rels/document.xml.rels"])
     rel = etree.SubElement(rels_root, f"{_REL}Relationship")
     rel.set("Id", "rIdPeople")
