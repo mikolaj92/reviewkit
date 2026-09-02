@@ -34,9 +34,9 @@ from reviewkit.models import ReviewAction, ReviewFinding, ReviewScope
 from reviewkit.plant import DocNode, ReviewDocumentPlant
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
+from reviewkit.review_bounds import bound_document_sections
 from reviewkit.state import ReviewState
 from reviewkit.takt_client import TaktClient
-from reviewkit.review_bounds import bound_document_sections
 from reviewkit.takt_types import RawSignal
 
 
@@ -91,7 +91,7 @@ class TaktReviewer:
             effector.apply_takt_decision(node.id, decision)
             accumulated_lower_actions = effector.actions
 
-        from reviewkit.actions import prepare_actions, demote_cross_scope_overlaps
+        from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 
         prepared = prepare_actions(
             document, self.profile, effector.actions, policy=self.action_policy

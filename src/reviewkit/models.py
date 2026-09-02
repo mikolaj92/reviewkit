@@ -146,7 +146,7 @@ class ReviewFinding(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _ensure_finding_id(self) -> "ReviewFinding":
+    def _ensure_finding_id(self) -> ReviewFinding:
         # Derive omitted ids deterministically from content so identical LLM output
         # yields identical ids across runs (a uuid4 default broke report reproducibility
         # and made any referenced finding_id unstable). An explicit id is preserved.
@@ -210,7 +210,7 @@ class ReviewAction(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _ensure_action_id(self) -> "ReviewAction":
+    def _ensure_action_id(self) -> ReviewAction:
         # Deterministic content-derived id for omitted ids (see ReviewFinding); an
         # explicit id/action_id from the model is preserved unchanged.
         if not self.id:
@@ -272,7 +272,7 @@ class ReviewStats(BaseModel):
     human_decision_count: int = 0
 
     @classmethod
-    def from_actions(cls, actions: list[ReviewAction]) -> "ReviewStats":
+    def from_actions(cls, actions: list[ReviewAction]) -> ReviewStats:
         return cls(
             applied_count=sum(action.status == ActionStatus.APPLIED for action in actions),
             suggestion_count=sum(
@@ -287,7 +287,7 @@ class ReviewStats(BaseModel):
 
 
 class ReviewResult(BaseModel):
-    document: "ReviewDocument | None" = None
+    document: ReviewDocument | None = None
     findings: list[ReviewFinding] = Field(default_factory=list)
     actions: list[ReviewAction] = Field(default_factory=list)
     reviewed_docx: Path | None = None

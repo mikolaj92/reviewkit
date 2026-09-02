@@ -1,7 +1,9 @@
 from pathlib import Path
+
 import pytest
 from docx import Document
-from docxtor import RevisionAuthor, RevisionPosition, insert_revision, publish_docx
+from docxtor import PackageError, RevisionAuthor, RevisionPosition, insert_revision, publish_docx
+
 from reviewkit import has_comments, has_suggestion_marker, has_tracked_revisions, inspect_markup
 
 
@@ -43,5 +45,5 @@ def test_suggestion_marker_is_detected(tmp_path) -> None:
 def test_unreadable_package_fails_closed(tmp_path) -> None:
     p = tmp_path / "x.docx"
     p.write_bytes(b"not docx")
-    with pytest.raises(Exception):
+    with pytest.raises(PackageError):
         inspect_markup(p)

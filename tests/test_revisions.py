@@ -3,11 +3,11 @@ from xml.etree import ElementTree
 from zipfile import ZipFile
 
 import pytest
-import reviewkit
 from docx import Document as DocxDocument
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
+import reviewkit
 from reviewkit.markup_purity import inspect_markup
 from reviewkit.models import (
     ActionStatus,

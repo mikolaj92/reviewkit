@@ -1,10 +1,12 @@
 """Provider- and domain-blind outcomes for a rendered DOCX review."""
 
 from __future__ import annotations
+
+from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from collections.abc import Sequence
+
 from docxtor import (
     DocxFactsSnapshot,
     ParagraphFact,
@@ -14,6 +16,7 @@ from docxtor import (
     remove_core_keyword_values,
     set_core_keywords,
 )
+
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType, SourceRevisionKind
 from reviewkit.parser_docx import load_docx
 from reviewkit.policy import WRITING_ACTIONS

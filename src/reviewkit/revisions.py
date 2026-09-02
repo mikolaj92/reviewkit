@@ -6,6 +6,8 @@ from pathlib import Path
 
 from docxtor import (
     AcceptRevisionsError as DocxtorAcceptRevisionsError,
+)
+from docxtor import (
     PackageError,
     PublishError,
     accept_all_revisions_bytes,

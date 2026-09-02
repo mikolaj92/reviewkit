@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from collections.abc import Set as AbstractSet
 from enum import StrEnum
-from typing import AbstractSet
 
 from pydantic import BaseModel, ConfigDict, Field
 

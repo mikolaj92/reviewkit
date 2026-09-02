@@ -1,6 +1,7 @@
 """Neutral review-artifact preservation policy over Docxtor inventory."""
 
 from pathlib import Path
+
 from docxtor import DocxInventory, PackageRelationship, inventory_docx
 
 

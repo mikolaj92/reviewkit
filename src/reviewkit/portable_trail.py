@@ -8,11 +8,10 @@ from docxtor import (
     PublicationMarkError,
     append_body_appendix,
     has_body_appendix,
+    inventory_review_markup,
     remove_body_appendix,
     write_publication_bytes,
 )
-
-from docxtor import inventory_review_markup
 
 
 class PortableReviewTrailError(ValueError):

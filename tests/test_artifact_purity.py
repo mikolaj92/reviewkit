@@ -1,4 +1,5 @@
 from docxtor import write_docx_from_paragraphs
+
 from reviewkit import PortableReviewTrailProfile, assess_review_artifact_purity
 
 PROFILE = PortableReviewTrailProfile(heading="Review", intro="Intro")

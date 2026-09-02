@@ -545,9 +545,8 @@ def _conflict_reason(document: ReviewDocument, action: ReviewAction) -> str | No
         ReviewActionType.DELETE_TEXT,
         ReviewActionType.REPLACE,
         ReviewActionType.DELETE,
-    }:
-        if not action.original_text:
-            return "original_text is required for replace/delete actions"
+    } and not action.original_text:
+        return "original_text is required for replace/delete actions"
 
     if action.action_type in {
         ReviewActionType.REPLACE_TEXT,

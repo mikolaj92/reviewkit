@@ -1,9 +1,12 @@
 """Review markup purity projected exclusively from typed Docxtor inventory."""
 
 from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
+
 from docxtor import PackageError, inventory_docx, inventory_review_markup
+
 from reviewkit.insertions import SUGGESTION_MARKER_PREFIX
 
 

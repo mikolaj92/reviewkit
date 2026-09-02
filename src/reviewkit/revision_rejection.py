@@ -7,9 +7,11 @@ from pathlib import Path
 from docxtor import (
     PackageError,
     PublishError,
-    RejectRevisionsError as DocxtorRejectRevisionsError,
     publish_docx,
     reject_all_revisions_bytes,
+)
+from docxtor import (
+    RejectRevisionsError as DocxtorRejectRevisionsError,
 )
 
 from reviewkit.markup_purity import inspect_markup
