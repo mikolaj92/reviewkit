@@ -707,6 +707,63 @@ def test_identical_finding_surfaced_at_two_levels_appears_once(tmp_path: Path) -
     )
 
     assert [finding.finding_id for finding in result.findings] == ["dup-1"]
+    assert [event.scope for event in result.findings[0].lineage] == [
+        ReviewScope.SENTENCE,
+        ReviewScope.PARAGRAPH,
+    ]
+    assert all(event.source_digest for event in result.findings[0].lineage)
+    assert all(event.profile_digest for event in result.findings[0].lineage)
+
+
+def test_report_explains_finding_through_policy_and_rendered_artifacts(tmp_path: Path) -> None:
+    input_path = _make_docx(tmp_path, "The cat sat.")
+    llm = MockLLMClient(
+        responses=[
+            {
+                "findings": [
+                    {
+                        "finding_id": "finding-1",
+                        "node_id": "p1.s1",
+                        "title": "Observation",
+                        "description": "The wording needs attention.",
+                        "evidence": [{"locator": "p1.s1", "excerpt": "The cat"}],
+                    }
+                ],
+                "actions": [
+                    {
+                        "id": "action-1",
+                        "finding_id": "finding-1",
+                        "scope": "sentence",
+                        "action_type": "comment",
+                        "node_id": "p1.s1",
+                        "comment": "Review wording.",
+                    }
+                ],
+            },
+            {"actions": []},
+            {"actions": []},
+            {"actions": []},
+        ]
+    )
+
+    result = review_document(
+        input_path=input_path,
+        profile_path="examples/profiles/story.teacher",
+        llm=llm,
+        out_reviewed=tmp_path / "reviewed.docx",
+        out_corrected=tmp_path / "corrected.docx",
+    )
+    explanation = result.explain_finding("finding-1")
+
+    finding_event = explanation["finding"]["lineage"][0]
+    assert finding_event["locator"]["node_id"] == "p1.s1"
+    assert finding_event["evidence_refs"]
+    action_events = explanation["actions"][0]["lineage"]
+    assert any(event["kind"] == "policy" and event["decision"] == "not_applied" for event in action_events)
+    assert {event["artifact"] for event in action_events if event["kind"] == "render"} == {
+        "corrected_docx",
+        "reviewed_docx",
+    }
 
 
 def test_review_document_threads_an_injected_action_policy(tmp_path: Path) -> None:

@@ -22,6 +22,8 @@ Flow per matching node (post-order):
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from reviewkit.context import EmptyReviewContextProvider, ReviewContextProvider
@@ -30,7 +32,13 @@ from reviewkit.document import ReviewDocument
 from reviewkit.effectors import ReviewEffector
 from reviewkit.homeostat import build_layer_specs, scope_to_layer_index
 from reviewkit.llm import LLMClient
-from reviewkit.models import ReviewAction, ReviewFinding, ReviewScope
+from reviewkit.models import (
+    FindingLineageEvent,
+    ReviewAction,
+    ReviewFinding,
+    ReviewLocator,
+    ReviewScope,
+)
 from reviewkit.plant import DocNode, ReviewDocumentPlant
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
@@ -189,9 +197,69 @@ class _LLMDetectorAdapter:
         resp = captured["resp"]
         if resp is not None:
             node_id = getattr(node, "id", getattr(inner_node, "id", "?"))
+            node_text = str(
+                self.document.get_node_text(node_id) or getattr(inner_node, "text", "") or ""
+            )
+            profile_digest = hashlib.sha256(
+                json.dumps(
+                    self.inner.profile.model_dump(mode="json"),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            for finding in resp.findings:
+                parents = tuple(
+                    event.event_id
+                    for existing in self.inner.state.findings
+                    if existing.finding_id == finding.finding_id
+                    for event in existing.lineage
+                )
+                locator = ReviewLocator(
+                    node_id=node_id,
+                    char_start=0,
+                    char_end=len(node_text),
+                    original_text=node_text,
+                    text_hash=ReviewLocator.hash_text(node_text),
+                    node_hash=ReviewLocator.hash_text(node_text),
+                )
+                evidence_refs = tuple(
+                    _stable_evidence_ref(finding.finding_id, index, evidence)
+                    for index, evidence in enumerate(finding.evidence)
+                )
+                event = FindingLineageEvent(
+                    kind="synthesis" if parents else "source",
+                    scope=effective_scope,
+                    node_id=node_id,
+                    locator=locator,
+                    source_digest=ReviewLocator.hash_text(node_text),
+                    parent_event_ids=parents,
+                    evidence_refs=evidence_refs,
+                    detector=type(self.inner).__name__,
+                    model=type(self.inner.llm).__name__,
+                    profile_digest=profile_digest,
+                )
+                finding.lineage = (*finding.lineage, event)
+            finding_events = {
+                finding.finding_id: finding.lineage for finding in resp.findings
+            }
+            for existing in self.inner.state.findings:
+                finding_events[existing.finding_id] = existing.lineage
+                for alias in existing.metadata.get("merged_finding_ids", []):
+                    finding_events[alias] = existing.lineage
+            for action in resp.actions:
+                if action.finding_id in finding_events:
+                    action.lineage = tuple(finding_events[action.finding_id])
             self.effector.register_response(node_id, effective_scope, resp)
 
         return signals
+
+
+def _stable_evidence_ref(finding_id: str, index: int, evidence: Any) -> str:
+    payload = evidence.model_dump(mode="json") if hasattr(evidence, "model_dump") else evidence
+    digest = hashlib.sha256(
+        json.dumps([finding_id, index, payload], ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"evidence-{digest}"
 
 
 __all__ = ["TaktReviewer"]

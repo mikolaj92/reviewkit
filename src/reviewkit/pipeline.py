@@ -8,7 +8,13 @@ from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import ReviewContextProvider
 from reviewkit.document import ReviewDocument
 from reviewkit.llm import LLMClient
-from reviewkit.models import ReviewAction, ReviewFinding, ReviewResult, ReviewStats
+from reviewkit.models import (
+    FindingLineageEvent,
+    ReviewAction,
+    ReviewFinding,
+    ReviewResult,
+    ReviewStats,
+)
 from reviewkit.parser_docx import load_docx
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile, load_profile
@@ -81,6 +87,9 @@ def review_document(
     if profile.outputs.corrected_docx:
         corrected_path = render_corrected_docx(document, actions, out_corrected)
 
+    artifacts = _artifacts(reviewed_path=reviewed_path, corrected_path=corrected_path)
+    actions = [_record_render_receipts(action, artifacts) for action in actions]
+
     return ReviewResult(
         document=document,
         findings=findings,
@@ -94,8 +103,26 @@ def review_document(
             + _unresolved_finding_id_warnings(findings, actions)
             + state.warnings
         ),
-        artifacts=_artifacts(reviewed_path=reviewed_path, corrected_path=corrected_path),
+        artifacts=artifacts,
     )
+
+
+def _record_render_receipts(action: ReviewAction, artifacts: dict[str, str]) -> ReviewAction:
+    lineage = list(action.lineage)
+    parents = tuple(event.event_id for event in lineage)
+    for artifact in sorted(artifacts):
+        event = FindingLineageEvent(
+            kind="render",
+            scope=action.scope,
+            node_id=action.node_id,
+            parent_event_ids=parents,
+            decision=action.status.value,
+            action_id=action.id,
+            artifact=artifact,
+        )
+        lineage.append(event)
+        parents = (event.event_id,)
+    return action.model_copy(update={"lineage": tuple(lineage)})
 
 
 def _document_warnings(document: ReviewDocument) -> list[str]:

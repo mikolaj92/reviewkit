@@ -104,6 +104,10 @@ def _merge_finding(existing: ReviewFinding, incoming: ReviewFinding) -> None:
     for item in incoming.evidence:
         if item not in existing.evidence:
             existing.evidence.append(item)
+    known_events = {event.event_id for event in existing.lineage}
+    existing.lineage += tuple(
+        event for event in incoming.lineage if event.event_id not in known_events
+    )
     if not existing.rationale and incoming.rationale:
         existing.rationale = incoming.rationale
     for key, value in incoming.metadata.items():
