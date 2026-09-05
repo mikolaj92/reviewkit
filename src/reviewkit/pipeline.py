@@ -15,6 +15,10 @@ from reviewkit.profile import ReviewProfile, load_profile
 from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 from reviewkit.takt_reviewer import TaktReviewer
 
+# Public topology contract shared by every product. Products select what to review through
+# ReviewProfile and ReviewContextProvider; they do not add domain-specific pipeline stages.
+REVIEW_ENGINE_SCOPES = ("sentence", "paragraph", "section", "document")
+
 
 def review_document(
     input_path: str | Path,
@@ -26,7 +30,11 @@ def review_document(
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
 ) -> ReviewResult:
-    """Run the hierarchical review and render the reviewed/corrected artifacts.
+    """Run the domain-neutral hierarchical review and render its artifacts.
+
+    The engine topology is always :data:`REVIEW_ENGINE_SCOPES`. Product-specific
+    criteria and grounding enter only through ``profile_path`` and
+    ``context_provider``; this pipeline intentionally does not dispatch by domain.
 
     ``extra_actions`` are pre-built actions from OUTSIDE the LLM (deterministic
     callers). Contract: pass them RAW (unprepared) - the pipeline runs them through
