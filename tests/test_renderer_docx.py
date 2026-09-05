@@ -22,6 +22,7 @@ from reviewkit.models import (
 from reviewkit.parser_docx import load_docx
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile
 from reviewkit.renderer_docx import (
+    DOCX_RENDERER_CAPABILITIES,
     RenderIntegrityError,
     render_corrected_docx,
     render_reviewed_docx,
@@ -34,6 +35,13 @@ _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 # w:ins/w:del tracked changes; advisory actions land as labelled Word comments. This table
 # enumerates the expected marker for every ReviewActionType so a regression that silently
 # stopped emitting one is caught. (tracked tags expected in document.xml, comment label)
+def test_docx_renderer_declares_supported_actions_and_locator_kinds() -> None:
+    assert DOCX_RENDERER_CAPABILITIES.supported_action_types == frozenset(ReviewActionType)
+    assert DOCX_RENDERER_CAPABILITIES.supported_locator_prefixes == frozenset(
+        {"body", "table", "header", "footer"}
+    )
+
+
 _EVERY_ACTION_MARKER = [
     (ReviewActionType.REPLACE_TEXT, {"ins", "del"}, "SUGGESTION"),
     (ReviewActionType.REPLACE, {"ins", "del"}, "SUGGESTION"),

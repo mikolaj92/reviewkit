@@ -4,11 +4,20 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
 from reviewkit.comments import DocxComment
 from reviewkit.models import ReviewResult, RevisionCoverageState, RevisionLedger
+
+
+class DocumentParser(Protocol):
+    """Format-adapter boundary for producing the canonical review tree."""
+
+    def parse(self, source: Any) -> ReviewDocument:
+        """Parse ``source`` into a document with stable node locators and metadata."""
+        ...
 
 
 class SentenceNode(BaseModel):

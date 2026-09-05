@@ -6,7 +6,7 @@ from zipfile import ZipFile
 import pytest
 from docx import Document as DocxDocument
 
-from reviewkit import ReviewResult, parser_docx, review_document
+from reviewkit import ReviewResult, parser_docx, review_document, review_tree
 from reviewkit.context import ReviewContext, ReviewContextProvider
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.llm import MockLLMClient
@@ -98,6 +98,48 @@ def test_hierarchical_review_passes_lower_level_results(tmp_path: Path) -> None:
     assert "a-paragraph" in llm.calls[2].content
     assert "section_review_results" in llm.calls[3].content
     assert "a-section" in llm.calls[3].content
+
+
+def test_review_tree_reviews_an_in_memory_document_without_rendering(tmp_path: Path) -> None:
+    document = ReviewDocument(
+        id="article",
+        metadata={"source_format": "text"},
+        sections=[
+            SectionNode(
+                id="s1",
+                locator="text:section:0",
+                paragraphs=[
+                    ParagraphNode(
+                        id="p1",
+                        text="The cat sat.",
+                        section_id="s1",
+                        locator="text:paragraph:0",
+                        sentences=[
+                            SentenceNode(
+                                id="p1.s1",
+                                text="The cat sat.",
+                                paragraph_id="p1",
+                                locator="text:paragraph:0:sentence:0",
+                            )
+                        ],
+                    )
+                ],
+            )
+        ],
+    )
+
+    result = review_tree(
+        document=document,
+        profile_path="examples/profiles/story.teacher",
+        llm=_empty_llm(),
+    )
+
+    assert result.document is document
+    assert result.document_summary == "Dokument sprawdzony."
+    assert result.artifacts == {}
+    assert result.reviewed_docx is None
+    assert result.corrected_docx is None
+    assert not list(tmp_path.iterdir())
 
 
 def test_review_document_accepts_a_review_profile_object(tmp_path: Path) -> None:

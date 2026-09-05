@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import itertools
-import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,16 +32,20 @@ from reviewkit.models import (
     SourceRevision,
     SourceRevisionKind,
 )
+from reviewkit.parser_text import split_sentences_with_spans
 
-# Terminators span Latin (. ! ?) and common non-Latin sentence enders so the sentence
-# tier does not silently disappear for non-Latin-script documents: CJK (。！？), the
-# horizontal ellipsis (…), the Arabic question mark (؟) and the Devanagari danda (।).
-_SENTENCE_PUNCT_RE = re.compile(r"[.!?。！？…؟।]+", re.UNICODE)
-# The non-Latin enders above are unambiguous, script-specific sentence terminators with
-# no abbreviation/decimal role, and CJK writes no space between sentences - so they end a
-# sentence regardless of what follows, unlike the whitespace-gated Latin punctuation.
-_STRONG_TERMINATORS = frozenset("。！？…؟।")
-_TRAILING_WORD_RE = re.compile(r"(\w+)$", re.UNICODE)
+
+def split_sentences(text: str) -> list[str]:
+    """Backward-compatible export of the shared format-neutral splitter."""
+    return [sentence for sentence, _start, _end in split_sentences_with_spans(text)]
+
+
+@dataclass(frozen=True)
+class DocxDocumentParser:
+    """DocumentParser adapter backed only by Docxtor's public projection API."""
+
+    def parse(self, source: str | Path) -> ReviewDocument:
+        return load_docx(source)
 
 
 def load_docx(path: str | Path) -> ReviewDocument:
@@ -191,78 +194,6 @@ def read_footnotes(path: str | Path) -> list[DocxFootnote]:
         for note in projection.notes
         if note.kind == "footnote"
     ]
-
-
-def split_sentences(text: str) -> list[str]:
-    return [sentence for sentence, _start, _end in split_sentences_with_spans(text)]
-
-
-def split_sentences_with_spans(text: str) -> list[tuple[str, int, int]]:
-    """Split ``text`` into sentences, keeping each sentence's char span within ``text``.
-
-    The returned offsets refer to the stripped sentence as it appears inside
-    ``text`` so callers can rebase sentence-relative locators into paragraph
-    coordinates.
-    """
-
-    spans: list[tuple[str, int, int]] = []
-    segment_start = 0
-    for match in _SENTENCE_PUNCT_RE.finditer(text):
-        if not _is_sentence_boundary(text, match.start(), match.end()):
-            continue
-        _append_span(spans, text, segment_start, match.end())
-        segment_start = match.end()
-    _append_span(spans, text, segment_start, len(text))
-    if spans:
-        return spans
-    stripped = text.strip()
-    if not stripped:
-        return []
-    start = text.find(stripped)
-    return [(stripped, start, start + len(stripped))]
-
-
-def _append_span(spans: list[tuple[str, int, int]], text: str, start: int, end: int) -> None:
-    segment = text[start:end]
-    stripped = segment.strip()
-    if not stripped:
-        return
-    lead = len(segment) - len(segment.lstrip())
-    span_start = start + lead
-    spans.append((stripped, span_start, span_start + len(stripped)))
-
-
-def _is_sentence_boundary(text: str, punct_start: int, punct_end: int) -> bool:
-    """Decide whether the punctuation run at ``[punct_start:punct_end]`` ends a sentence.
-
-    Language- and domain-neutral heuristics avoid the classic over-splits:
-    - non-Latin terminators (``。！？…؟।``) are unambiguous sentence enders with no
-      abbreviation role, and CJK writes no inter-sentence space, so a run containing one
-      is always a boundary regardless of the following character;
-    - otherwise (Latin ``.!?``) a boundary must be followed by whitespace or end-of-text,
-      so ``3.14`` and the inner dots of ``o.o.`` are never boundaries;
-    - a period preceded by a single-letter token is treated as an initial/abbreviation
-      (``J. R. R.``, the trailing ``o.``);
-    - a period followed by a lowercase word is treated as an abbreviation (``Sp. z``).
-    ``!`` and ``?`` are always strong boundaries when followed by whitespace/end.
-    """
-    if any(char in _STRONG_TERMINATORS for char in text[punct_start:punct_end]):
-        return True
-    if punct_end < len(text) and not text[punct_end].isspace():
-        return False
-    if "!" in text[punct_start:punct_end] or "?" in text[punct_start:punct_end]:
-        return True
-    trailing = _TRAILING_WORD_RE.search(text[:punct_start])
-    if trailing is not None and len(trailing.group(1)) == 1 and trailing.group(1).isalpha():
-        return False
-    following = _next_non_space_char(text, punct_end)
-    return not (following and following.islower())
-
-
-def _next_non_space_char(text: str, index: int) -> str:
-    while index < len(text) and text[index].isspace():
-        index += 1
-    return text[index] if index < len(text) else ""
 
 
 def _paragraph_node(
