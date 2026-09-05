@@ -6,7 +6,13 @@ from collections.abc import Iterable
 from typing import Any
 
 from reviewkit.document import ParagraphNode, ReviewDocument, SentenceNode
-from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType, ReviewLocator
+from reviewkit.models import (
+    ActionStatus,
+    FindingLineageEvent,
+    ReviewAction,
+    ReviewActionType,
+    ReviewLocator,
+)
 from reviewkit.policy import WRITING_ACTIONS, ActionPolicy
 from reviewkit.profile import ReviewProfile
 
@@ -20,7 +26,20 @@ def prepare_actions(
     resolved_policy = policy if policy is not None else ActionPolicy.from_profile(profile)
     prepared = [_prepare_action(document, resolved_policy, action) for action in actions]
     prepared = _demote_overlapping_actions(document, prepared)
-    return _demote_edits_over_opaque_content(document, prepared)
+    prepared = _demote_edits_over_opaque_content(document, prepared)
+    return [_record_policy_outcome(action) for action in prepared]
+
+
+def _record_policy_outcome(action: ReviewAction) -> ReviewAction:
+    event = FindingLineageEvent(
+        kind="policy",
+        scope=action.scope,
+        node_id=action.node_id,
+        parent_event_ids=tuple(event.event_id for event in action.lineage),
+        decision=action.status.value,
+        action_id=action.id,
+    )
+    return action.model_copy(update={"lineage": (*action.lineage, event)})
 
 
 def apply_corrections_to_text(text: str, actions: Iterable[ReviewAction]) -> str:

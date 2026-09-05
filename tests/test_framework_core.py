@@ -14,6 +14,7 @@ from reviewkit.actions import (
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
 from reviewkit.models import (
     ActionStatus,
+    FindingLineageEvent,
     ReviewAction,
     ReviewActionType,
     ReviewDimension,
@@ -1270,6 +1271,45 @@ def test_canonical_action_dump_keeps_stable_order_for_duplicate_ids() -> None:
     assert [item["comment_text"] for item in dumped] == ["First.", "Second."]
 
 
+def test_finding_lineage_is_immutable_and_explainable_without_loose_metadata() -> None:
+    source = FindingLineageEvent(
+        kind="source",
+        scope=ReviewScope.SENTENCE,
+        node_id="p1.s1",
+        locator=ReviewLocator(node_id="p1.s1", char_start=0, char_end=7),
+        source_digest=ReviewLocator.hash_text("The cat"),
+        detector="grammar-rule",
+        profile_digest="profile-abc",
+    )
+    finding = ReviewFinding(
+        finding_id="finding-1",
+        node_id="p1.s1",
+        title="T",
+        description="D",
+        lineage=(source,),
+    )
+    action = ReviewAction(
+        id="action-1",
+        finding_id="finding-1",
+        scope=ReviewScope.SENTENCE,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1.s1",
+        comment="Review this.",
+    )
+    result = ReviewResult(findings=[finding], actions=[action], artifacts={"reviewed_docx": "out.docx"})
+
+    with pytest.raises(ValidationError):
+        source.node_id = "changed"  # type: ignore[misc]
+
+    explanation = result.explain_finding("finding-1")
+    assert explanation["finding"]["lineage"][0]["source_digest"] == ReviewLocator.hash_text(
+        "The cat"
+    )
+    assert explanation["actions"][0]["action_id"] == "action-1"
+    assert explanation["artifacts"] == {"reviewed_docx": "out.docx"}
+    assert "metadata" not in explanation["finding"]["lineage"][0]
+
+
 def test_richer_resurfacing_of_a_finding_is_merged_not_dropped() -> None:
     # Hierarchical review enriches lower-level observations at higher levels; a later, richer
     # re-surfacing (added rationale/evidence, higher confidence) must not be discarded in
@@ -1293,6 +1333,37 @@ def test_richer_resurfacing_of_a_finding_is_merged_not_dropped() -> None:
     assert merged.confidence == 0.9
     assert merged.rationale == "because X"
     assert merged.evidence == ["a telling quote"]
+
+
+def test_higher_level_resurfacing_preserves_both_lineage_stages() -> None:
+    state = ReviewState()
+    sentence = FindingLineageEvent(
+        kind="source",
+        scope=ReviewScope.SENTENCE,
+        node_id="p1.s1",
+        source_digest="sentence-digest",
+        profile_digest="profile-digest",
+    )
+    paragraph = FindingLineageEvent(
+        kind="synthesis",
+        scope=ReviewScope.PARAGRAPH,
+        node_id="p1",
+        source_digest="paragraph-digest",
+        parent_event_ids=(sentence.event_id,),
+        profile_digest="profile-digest",
+    )
+    state._add_findings(
+        [ReviewFinding(finding_id="same", node_id="p1.s1", title="T", description="D", lineage=(sentence,))]
+    )
+    state._add_findings(
+        [ReviewFinding(finding_id="same", node_id="p1", title="T", description="D", lineage=(paragraph,))]
+    )
+
+    assert [event.scope for event in state.findings[0].lineage] == [
+        ReviewScope.SENTENCE,
+        ReviewScope.PARAGRAPH,
+    ]
+    assert state.findings[0].lineage[1].parent_event_ids == (sentence.event_id,)
 
 
 def test_merged_finding_records_alias_id_so_action_reference_survives() -> None:

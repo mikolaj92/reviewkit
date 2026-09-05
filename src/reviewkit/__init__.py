@@ -43,6 +43,7 @@ from reviewkit.markup_purity import (
 from reviewkit.models import (
     ActionStatus,
     EvidenceRef,
+    FindingLineageEvent,
     ReviewAction,
     ReviewActionType,
     ReviewBoundError,
@@ -97,6 +98,7 @@ __all__ = [
     "DocxFootnote",
     "EmptyReviewContextProvider",
     "EvidenceRef",
+    "FindingLineageEvent",
     "IncorporatedCommentOutcome",
     "InsertionAction",
     "InsertionKind",

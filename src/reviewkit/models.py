@@ -133,6 +133,56 @@ class ReviewLocator(BaseModel):
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+class FindingLineageEvent(BaseModel):
+    """One immutable, content-addressed step in a finding's audit trail."""
+
+    model_config = ConfigDict(frozen=True)
+
+    event_id: str = ""
+    kind: str
+    scope: ReviewScope | None = None
+    node_id: str | None = None
+    locator: ReviewLocator | None = None
+    source_digest: str | None = None
+    parent_event_ids: tuple[str, ...] = ()
+    evidence_refs: tuple[str, ...] = ()
+    context_refs: tuple[str, ...] = ()
+    detector: str | None = None
+    model: str | None = None
+    profile_digest: str | None = None
+    decision: str | None = None
+    action_id: str | None = None
+    artifact: str | None = None
+
+    @model_validator(mode="after")
+    def _ensure_event_id(self) -> FindingLineageEvent:
+        if not self.event_id:
+            object.__setattr__(
+                self,
+                "event_id",
+                _stable_id(
+                    "lineage",
+                    [
+                        self.kind,
+                        self.scope,
+                        self.node_id,
+                        self.locator.model_dump(mode="json") if self.locator else None,
+                        self.source_digest,
+                        self.parent_event_ids,
+                        self.evidence_refs,
+                        self.context_refs,
+                        self.detector,
+                        self.model,
+                        self.profile_digest,
+                        self.decision,
+                        self.action_id,
+                        self.artifact,
+                    ],
+                ),
+            )
+        return self
+
+
 class ReviewFinding(BaseModel):
     finding_id: str = ""
     node_id: str
@@ -142,6 +192,7 @@ class ReviewFinding(BaseModel):
     severity: str = "medium"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     evidence: list[str | EvidenceRef] = Field(default_factory=list)
+    lineage: tuple[FindingLineageEvent, ...] = ()
     rationale: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -207,6 +258,7 @@ class ReviewAction(BaseModel):
     tags: list[str] = Field(default_factory=list)
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     references: list[ReviewReference] = Field(default_factory=list)
+    lineage: tuple[FindingLineageEvent, ...] = ()
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -319,6 +371,27 @@ class ReviewResult(BaseModel):
         return [
             action for action in self.actions if action.status == ActionStatus.NEEDS_HUMAN_DECISION
         ]
+
+    def explain_finding(self, finding_id: str) -> dict[str, Any]:
+        """Return a stable, prompt-free finding → action → artifact explanation."""
+        finding = next(
+            (
+                item
+                for item in self.findings
+                if finding_id == item.finding_id
+                or finding_id in item.metadata.get("merged_finding_ids", [])
+            ),
+            None,
+        )
+        if finding is None:
+            raise KeyError(f"Unknown finding_id: {finding_id}")
+        aliases = {finding.finding_id, *finding.metadata.get("merged_finding_ids", [])}
+        actions = [action for action in self.actions if action.finding_id in aliases]
+        return {
+            "finding": finding.model_dump(mode="json"),
+            "actions": canonical_action_dump(actions),
+            "artifacts": dict(sorted(self.artifacts.items())),
+        }
 
     def to_report_dict(self) -> dict[str, Any]:
         payload = self.model_dump(mode="json", by_alias=True, exclude={"document"})
