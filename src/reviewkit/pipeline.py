@@ -26,6 +26,40 @@ from reviewkit.takt_reviewer import TaktReviewer
 REVIEW_ENGINE_SCOPES = ("sentence", "paragraph", "section", "document")
 
 
+def review_tree(
+    document: ReviewDocument,
+    profile_path: str | Path | ReviewProfile,
+    llm: LLMClient,
+    context_provider: ReviewContextProvider | None = None,
+    action_policy: ActionPolicy | None = None,
+    extra_actions: list[ReviewAction] | None = None,
+) -> ReviewResult:
+    """Review an already parsed tree without reading or rendering any file format."""
+    profile = (
+        profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
+    )
+    findings, actions, state = _review_tree(
+        document,
+        profile,
+        llm,
+        context_provider=context_provider,
+        action_policy=action_policy,
+        extra_actions=extra_actions,
+    )
+    return ReviewResult(
+        document=document,
+        findings=findings,
+        actions=actions,
+        document_summary=state.document_summary,
+        stats=ReviewStats.from_actions(actions),
+        warnings=(
+            _document_warnings(document)
+            + _unresolved_finding_id_warnings(findings, actions)
+            + state.warnings
+        ),
+    )
+
+
 def review_document(
     input_path: str | Path,
     profile_path: str | Path | ReviewProfile,
@@ -63,21 +97,14 @@ def review_document(
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
     )
     document = load_docx(input_path)
-    reviewer = TaktReviewer(
-        profile=profile,
-        llm=llm,
+    findings, actions, state = _review_tree(
+        document,
+        profile,
+        llm,
         context_provider=context_provider,
         action_policy=action_policy,
+        extra_actions=extra_actions,
     )
-    findings, actions, state = reviewer.review(document)
-
-    if extra_actions:
-        # Same machinery as reviewer output: prepare_actions validates each extra action
-        # against the document and applies the action policy (plus the in-batch overlap
-        # guard), then the cross-scope pass re-runs over the MERGED list so an extra edit
-        # overlapping an LLM edit demotes exactly like two LLM edits would.
-        prepared_extra = prepare_actions(document, profile, extra_actions, policy=action_policy)
-        actions = demote_cross_scope_overlaps(document, actions + prepared_extra)
 
     reviewed_path: Path | None = None
     corrected_path: Path | None = None
@@ -105,6 +132,28 @@ def review_document(
         ),
         artifacts=artifacts,
     )
+
+
+def _review_tree(
+    document: ReviewDocument,
+    profile: ReviewProfile,
+    llm: LLMClient,
+    *,
+    context_provider: ReviewContextProvider | None,
+    action_policy: ActionPolicy | None,
+    extra_actions: list[ReviewAction] | None,
+):
+    reviewer = TaktReviewer(
+        profile=profile,
+        llm=llm,
+        context_provider=context_provider,
+        action_policy=action_policy,
+    )
+    findings, actions, state = reviewer.review(document)
+    if extra_actions:
+        prepared_extra = prepare_actions(document, profile, extra_actions, policy=action_policy)
+        actions = demote_cross_scope_overlaps(document, actions + prepared_extra)
+    return findings, actions, state
 
 
 def _record_render_receipts(action: ReviewAction, artifacts: dict[str, str]) -> ReviewAction:

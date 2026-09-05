@@ -11,7 +11,7 @@ from reviewkit.context import (
     ReviewContext,
     ReviewContextProvider,
 )
-from reviewkit.document import ReviewDocument
+from reviewkit.document import DocumentParser, ReviewDocument
 from reviewkit.finality import (
     ReviewFinalityAssessment,
     ReviewFinalityStatus,
@@ -63,11 +63,13 @@ from reviewkit.models import (
     SourceRevisionKind,
     canonical_action_dump,
 )
-from reviewkit.parser_docx import DocxFootnote, load_docx, read_footnotes
+from reviewkit.parser_docx import DocxDocumentParser, DocxFootnote, load_docx, read_footnotes
+from reviewkit.parser_text import TextDocumentParser, parse_text
 from reviewkit.pipeline import review_document
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 from reviewkit.renderer_docx import RenderIntegrityError
+from reviewkit.review import review_source, review_tree
 from reviewkit.review_outcomes import (
     IncorporatedCommentOutcome,
     RenderedActionAssessment,
@@ -94,7 +96,9 @@ __all__ = [
     "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
+    "DocumentParser",
     "DocxComment",
+    "DocxDocumentParser",
     "DocxFootnote",
     "EmptyReviewContextProvider",
     "EvidenceRef",
@@ -145,6 +149,7 @@ __all__ = [
     "SourceRevision",
     "SourceRevisionKind",
     "StructuredOutputMode",
+    "TextDocumentParser",
     "accept_all_revisions",
     "append_portable_review_trail",
     "apply_reviewed_markup",
@@ -168,6 +173,7 @@ __all__ = [
     "load_profile",
     "measure_review_changes",
     "parse_body_anchor_index",
+    "parse_text",
     "read_comments",
     "read_footnotes",
     "read_metadata_marker",
@@ -176,6 +182,8 @@ __all__ = [
     "remark_weight",
     "review_document",
     "review_remarks",
+    "review_source",
+    "review_tree",
     "revision_signatures",
     "set_metadata_marker",
     "strip_metadata_marker",

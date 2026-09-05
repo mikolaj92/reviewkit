@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -32,6 +33,20 @@ from reviewkit.models import (
     RevisionCoverageState,
 )
 from reviewkit.policy import WRITING_ACTIONS
+
+
+@dataclass(frozen=True)
+class RendererCapabilities:
+    """Action and physical-locator shapes a renderer can apply."""
+
+    supported_action_types: frozenset[ReviewActionType]
+    supported_locator_prefixes: frozenset[str]
+
+
+DOCX_RENDERER_CAPABILITIES = RendererCapabilities(
+    supported_action_types=frozenset(ReviewActionType),
+    supported_locator_prefixes=frozenset({"body", "table", "header", "footer"}),
+)
 
 
 class RenderIntegrityError(RuntimeError):

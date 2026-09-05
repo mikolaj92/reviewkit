@@ -3,9 +3,23 @@ from pathlib import Path
 from docx import Document as DocxDocument
 from docxtor import OperationStatus, inventory_review_markup
 
+from reviewkit import DocumentParser
 from reviewkit.docxtor_adapter import apply_review_actions
 from reviewkit.models import ActionStatus, ReviewAction, ReviewActionType, ReviewScope
-from reviewkit.parser_docx import load_docx
+from reviewkit.parser_docx import DocxDocumentParser, load_docx
+
+
+def test_docx_parser_implements_public_adapter_boundary(tmp_path: Path) -> None:
+    source = tmp_path / "source.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("Old clause")
+    docx.save(source)
+    parser: DocumentParser = DocxDocumentParser()
+
+    document = parser.parse(source)
+
+    assert document.source_path == source
+    assert document.sections[0].paragraphs[0].locator == "body:p:0"
 
 
 def test_effective_replace_maps_to_typed_docxtor_receipt(tmp_path: Path) -> None:
