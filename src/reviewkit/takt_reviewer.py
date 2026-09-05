@@ -33,15 +33,20 @@ from reviewkit.effectors import ReviewEffector
 from reviewkit.homeostat import build_layer_specs, scope_to_layer_index
 from reviewkit.llm import LLMClient
 from reviewkit.models import (
+    DocumentReviewResponse,
     FindingLineageEvent,
+    ReconciliationDisposition,
     ReviewAction,
     ReviewFinding,
     ReviewLocator,
     ReviewScope,
+    SentenceReviewResponse,
 )
 from reviewkit.plant import DocNode, ReviewDocumentPlant
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
+from reviewkit.prompts import reconciliation_review_prompt
+from reviewkit.reconciliation import reconcile_findings, select_reconciliation_targets
 from reviewkit.review_bounds import bound_document_sections
 from reviewkit.state import ReviewState
 from reviewkit.takt_client import TaktClient
@@ -81,11 +86,14 @@ class TaktReviewer:
         enabled = set(self.profile.review_pipeline)
 
         accumulated_lower_actions: list[ReviewAction] = []
+        scanned_nodes: dict[str, DocNode] = {}
+        document_response: DocumentReviewResponse | None = None
         for node in plant.sequential_scan():
             scope = node.scope()
             if scope is None or scope not in enabled:
                 continue
 
+            scanned_nodes[node.id] = node
             detector = detectors[scope]
             detector.set_lower_actions(accumulated_lower_actions)
 
@@ -98,6 +106,34 @@ class TaktReviewer:
             )
             effector.apply_takt_decision(node.id, decision)
             accumulated_lower_actions = effector.actions
+            if scope == ReviewScope.DOCUMENT and isinstance(
+                detector.last_response, DocumentReviewResponse
+            ):
+                document_response = detector.last_response
+
+        rereviewed: list[tuple[Any, ReviewFinding]] = []
+        if self.profile.reconciliation_max_rounds and document_response is not None:
+            targets = select_reconciliation_targets(
+                document_response.reconciliation_requests,
+                scanned_nodes,
+                max_nodes=self.profile.reconciliation_max_nodes,
+            )
+            for request, node in targets:
+                scope = node.scope()
+                if scope is None or scope not in detectors:
+                    continue
+                response = detectors[scope].reconcile(
+                    node, request, state.document_summary
+                )
+                signals = detectors[scope].signals_for_response(response, node.id)
+                decision = self.takt_client.evaluate(
+                    plant_nodes=[node.to_plant_node(value=0.0)],
+                    layers=layers,
+                    raw_signals=signals,
+                )
+                effector.apply_takt_decision(node.id, decision)
+                for finding in response.findings:
+                    rereviewed.append((request, finding))
 
         from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 
@@ -108,11 +144,15 @@ class TaktReviewer:
 
         deduped_findings: list[ReviewFinding] = []
         seen: dict[str, bool] = {}
+        rereview_ids = {id(finding) for _, finding in rereviewed}
         for f in effector.findings:
+            if id(f) in rereview_ids:
+                continue
             key = f.finding_id or (f.title + "|" + f.node_id)
             if key not in seen:
                 seen[key] = True
                 deduped_findings.append(f)
+        deduped_findings = reconcile_findings(deduped_findings, rereviewed)
 
         return deduped_findings, final_actions, state
 
@@ -164,6 +204,7 @@ class _LLMDetectorAdapter:
         self.document = document
         self.effector = effector
         self._lower_actions: list[ReviewAction] = []
+        self.last_response: Any = None
 
     def set_lower_actions(self, actions: list[ReviewAction]) -> None:
         self._lower_actions = list(actions or [])
@@ -195,6 +236,7 @@ class _LLMDetectorAdapter:
             self.inner.lower_actions_for_prompt = []
 
         resp = captured["resp"]
+        self.last_response = resp
         if resp is not None:
             node_id = getattr(node, "id", getattr(inner_node, "id", "?"))
             node_text = str(
@@ -252,6 +294,59 @@ class _LLMDetectorAdapter:
             self.effector.register_response(node_id, effective_scope, resp)
 
         return signals
+
+    def reconcile(self, node: DocNode, request: Any, document_summary: str | None) -> Any:
+        """Rereview one host-selected node; model output cannot redirect it."""
+        inner_node = getattr(node, "inner", node)
+        prompt = reconciliation_review_prompt(
+            self.inner.profile,
+            self.inner.state,
+            inner_node,
+            request,
+            document_summary,
+        )
+        response = self.inner._complete(prompt, SentenceReviewResponse)
+        target_text = str(self.document.get_node_text(node.id) or "")
+        for finding in response.findings:
+            finding.node_id = node.id
+            if finding.dimension is None:
+                finding.dimension = request.expected_dimension
+            finding.metadata["reconciliation_request_id"] = request.request_id
+        for action in response.actions:
+            action.node_id = node.id
+            action.scope = self.scope
+            action.locator = ReviewLocator(
+                node_id=node.id,
+                char_start=0,
+                char_end=len(target_text),
+                original_text=target_text,
+                text_hash=ReviewLocator.hash_text(target_text),
+                node_hash=ReviewLocator.hash_text(target_text),
+            )
+            if (
+                action.finding_id
+                and any(
+                    finding.finding_id == action.finding_id
+                    and finding.reconciliation_disposition
+                    != ReconciliationDisposition.CONFLICT
+                    and finding.reconciles_finding_id
+                    for finding in response.findings
+                )
+            ):
+                match = next(
+                    finding
+                    for finding in response.findings
+                    if finding.finding_id == action.finding_id
+                )
+                action.finding_id = match.reconciles_finding_id
+        self.effector.register_response(node.id, self.scope, response)
+        self.last_response = response
+        return response
+
+    def signals_for_response(self, response: Any, node_id: str) -> list[RawSignal]:
+        from reviewkit.detectors import _response_to_signals
+
+        return _response_to_signals(response, node_id, "llm_reconciliation", self.scope)
 
 
 def _stable_evidence_ref(finding_id: str, index: int, evidence: Any) -> str:

@@ -12,6 +12,7 @@ from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, Sente
 from reviewkit.models import (
     DocumentReviewResponse,
     ParagraphReviewResponse,
+    ReconciliationRequest,
     ReviewAction,
     SectionReviewResponse,
     SentenceReviewResponse,
@@ -98,6 +99,25 @@ def document_review_prompt(
         "external_review_context": _context_payload(context),
         "current_review_state": _state_payload(state),
         "schema": DocumentReviewResponse.model_json_schema(),
+    }
+    return _messages(profile, payload)
+
+
+def reconciliation_review_prompt(
+    profile: ReviewProfile,
+    state: ReviewState,
+    target: SentenceNode | ParagraphNode | SectionNode,
+    request: ReconciliationRequest,
+    document_summary: str | None,
+) -> list[dict[str, str]]:
+    """Build a rereview prompt whose routing was already fixed by the host."""
+    payload = {
+        "review_level": "reconciliation",
+        "current_fragment": {"node_id": target.id, "text": target.text},
+        "whole_document_summary": document_summary,
+        "reconciliation_request": request.model_dump(mode="json"),
+        "current_review_state": _state_payload(state),
+        "schema": SentenceReviewResponse.model_json_schema(),
     }
     return _messages(profile, payload)
 
