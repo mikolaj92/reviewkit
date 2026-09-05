@@ -30,6 +30,7 @@ dependencies = [
 
 [project.scripts]
 reviewkit = "reviewkit.cli:app"
+reviewkit-effector = "reviewkit.effector:main"
 
 [project.urls]
 Homepage = "https://github.com/mikolaj92/reviewkit"
