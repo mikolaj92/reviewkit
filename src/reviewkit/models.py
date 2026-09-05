@@ -23,6 +23,14 @@ class ReviewScope(StrEnum):
     DOCUMENT = "document"
 
 
+class ReconciliationDisposition(StrEnum):
+    """How a bounded whole-to-local rereview relates to an earlier finding."""
+
+    ENRICHED = "enriched"
+    SUPERSEDED = "superseded"
+    CONFLICT = "conflict"
+
+
 class SourceRevisionKind(StrEnum):
     """The source revision wrapper that owns a ledger entry's text."""
 
@@ -133,6 +141,51 @@ class ReviewLocator(BaseModel):
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+class ReconciliationRequest(BaseModel):
+    """A typed, host-validated request to revisit one already scanned node."""
+
+    model_config = ConfigDict(frozen=True)
+
+    request_id: str = ""
+    target: ReviewLocator
+    reason: str = Field(min_length=1)
+    evidence: tuple[str | EvidenceRef, ...] = Field(min_length=1)
+    expected_dimension: str | ReviewDimension
+    finding_ids: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _validate_and_identify(self) -> ReconciliationRequest:
+        if not self.target.node_id:
+            raise ValueError("reconciliation target.node_id is required")
+        if not self.request_id:
+            object.__setattr__(
+                self,
+                "request_id",
+                _stable_id(
+                    "reconciliation",
+                    [
+                        self.target.model_dump(mode="json"),
+                        self.reason,
+                        self.evidence,
+                        _dimension_key(self.expected_dimension),
+                        self.finding_ids,
+                    ],
+                ),
+            )
+        return self
+
+
+class FindingReconciliation(BaseModel):
+    """Auditable before/after record attached to a reconciled finding."""
+
+    request_id: str
+    disposition: ReconciliationDisposition
+    reason: str
+    target_node_id: str
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+
+
 class FindingLineageEvent(BaseModel):
     """One immutable, content-addressed step in a finding's audit trail."""
 
@@ -194,6 +247,9 @@ class ReviewFinding(BaseModel):
     evidence: list[str | EvidenceRef] = Field(default_factory=list)
     lineage: tuple[FindingLineageEvent, ...] = ()
     rationale: str | None = None
+    reconciles_finding_id: str | None = None
+    reconciliation_disposition: ReconciliationDisposition | None = None
+    reconciliation: FindingReconciliation | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -313,7 +369,7 @@ class SectionReviewResponse(ReviewResponse):
 
 
 class DocumentReviewResponse(ReviewResponse):
-    pass
+    reconciliation_requests: list[ReconciliationRequest] = Field(default_factory=list)
 
 
 class ReviewStats(BaseModel):
