@@ -1,4 +1,4 @@
-"""Unit coverage for the deterministic-packaging primitive (reviewkit.docx_package)."""
+"""Unit coverage for Docxtor deterministic-packaging primitives used by ReviewKit."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 from docx import Document as DocxDocument
 from lxml import etree
 
-from reviewkit.docx_package import (
+from docxtor import (
     normalize_docx_timestamps,
     restore_semantically_unchanged_xml_parts,
 )
