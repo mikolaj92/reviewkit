@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import importlib.metadata as metadata
 import json
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -134,3 +136,17 @@ def test_resolve_llm_rejects_missing_attribute() -> None:
 def test_resolve_llm_rejects_factory_returning_wrong_type() -> None:
     with pytest.raises(typer.BadParameter, match="did not return an LLMClient"):
         _resolve_llm("builtins:dict")
+
+
+def test_console_scripts_expose_only_reviewkit_cli() -> None:
+    """Do not advertise reviewkit-effector until reviewkit.effector exists."""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    scripts = pyproject["project"]["scripts"]
+    assert scripts == {"reviewkit": "reviewkit.cli:app"}
+
+    installed = [
+        ep.name
+        for ep in metadata.entry_points(group="console_scripts")
+        if ep.name.startswith("reviewkit")
+    ]
+    assert installed == ["reviewkit"]
