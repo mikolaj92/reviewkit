@@ -1482,3 +1482,22 @@ def test_readme_points_at_existing_sibling_docs() -> None:
     assert "https://github.com/mikolaj92/Fala/blob/main/docs/CYBERNETIC_MAPPING.md" in text
     assert "splot CONCEPTUAL_MODEL.md" not in text
     assert "Fala CYBERNETIC_MAPPING.md" not in text
+
+
+def test_fallbacks_inventory_lists_only_remaining_promoted_paths() -> None:
+    root = Path(__file__).resolve().parents[1]
+    inventory = (root / "FALLBACKS.md").read_text(encoding="utf-8")
+    src_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in (root / "src" / "reviewkit").rglob("*.py")
+    )
+    for stale in (
+        "profile_to_homeostats",
+        "build_layered_homeostats",
+        "_DocNode",
+        "InsertionValidator",
+        "_opaque_ranges",
+    ):
+        assert stale not in src_text
+        assert stale not in inventory
+    assert "| **Delete** |" not in inventory
+    assert "**Promote**" in inventory
