@@ -1474,6 +1474,30 @@ def test_prepare_demotes_first_occurrence_overlap_under_non_unique_match() -> No
     assert apply_corrections_to_text("abcabc", prepared) == "abcabc"
 
 
+def test_action_policy_modules_stay_unix_sized_and_import_stable() -> None:
+    from reviewkit import action_demote, action_prepare, action_target, actions
+
+    public_names = (
+        "actions_for_paragraph",
+        "apply_action_to_text",
+        "apply_corrections_to_text",
+        "demote_cross_scope_overlaps",
+        "prepare_actions",
+        "should_apply_to_corrected",
+    )
+    for name in public_names:
+        assert callable(getattr(actions, name))
+
+    assert actions.prepare_actions is action_prepare.prepare_actions
+    assert actions.demote_cross_scope_overlaps is action_demote.demote_cross_scope_overlaps
+    assert actions.actions_for_paragraph is action_target.actions_for_paragraph
+
+    root = Path(__file__).resolve().parents[1] / "src" / "reviewkit"
+    for module_name in ("action_prepare.py", "action_demote.py", "action_target.py", "actions.py"):
+        text = (root / module_name).read_text(encoding="utf-8")
+        assert text.count("\n") <= 350, module_name
+
+
 def test_readme_points_at_existing_sibling_docs() -> None:
     readme = Path(__file__).resolve().parents[1] / "README.md"
     text = readme.read_text(encoding="utf-8")
