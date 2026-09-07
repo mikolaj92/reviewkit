@@ -5,7 +5,7 @@ Thanks for helping improve ReviewKit.
 ## Development
 
 ```bash
-uv sync
+uv sync --group dev
 uv run ruff check .
 uv run mypy
 uv run pytest

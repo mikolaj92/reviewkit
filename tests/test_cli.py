@@ -150,3 +150,16 @@ def test_console_scripts_expose_only_reviewkit_cli() -> None:
         if ep.name.startswith("reviewkit")
     ]
     assert installed == ["reviewkit"]
+
+
+def test_dev_tools_live_only_in_dependency_groups() -> None:
+    """mypy/pytest/ruff pins live in one place: [dependency-groups] dev."""
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    assert "optional-dependencies" not in pyproject.get("project", {})
+    assert pyproject["dependency-groups"]["dev"] == [
+        "mypy>=2.1.1",
+        "pytest>=9.1.1",
+        "ruff>=0.16.5",
+    ]
+    contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
+    assert "uv sync --group dev" in contributing
