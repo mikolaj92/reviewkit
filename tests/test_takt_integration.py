@@ -1,4 +1,4 @@
-"""Takt-specific smoke tests for the ReviewKit + takt v0.3.1 binding integration.
+"""Takt-specific smoke tests for the ReviewKit + takt v0.3.2 binding integration.
 
 These tests exercise the plant, canonical Takt binding, and TaktReviewer path.
 They are intentionally small and do not duplicate all old hierarchical tests.
@@ -27,6 +27,20 @@ def _make_docx(tmp_path: Path, text: str) -> Path:
     d.add_paragraph(text)
     d.save(p)
     return p
+
+
+def test_docs_match_pinned_takt_version() -> None:
+    """README and homeostat must name the same takt pin as pyproject.toml."""
+    root = Path(__file__).resolve().parents[1]
+    pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'takt @ git+https://github.com/mikolaj92/takt.git@v0.3.2' in pyproject
+    assert "takt.git@v0.3.1" not in pyproject
+
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    homeostat = (root / "src/reviewkit/homeostat.py").read_text(encoding="utf-8")
+    for text in (readme, homeostat):
+        assert "0.3.1" not in text
+        assert "v0.3.2" in text
 
 
 def test_mojo_pin_is_stable_1_0_0() -> None:

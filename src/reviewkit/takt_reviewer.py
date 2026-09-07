@@ -1,4 +1,4 @@
-"""Takt v0.3.1-based hierarchical review orchestration for ReviewKit.
+"""Takt v0.3.2-based hierarchical review orchestration for ReviewKit.
 
 Host (ReviewKit) owns:
   - document plant construction
@@ -54,7 +54,7 @@ from reviewkit.takt_types import RawSignal
 
 
 class TaktReviewer:
-    """Full takt v0.3.1-driven reviewer using the in-process Mojo binding."""
+    """Full takt v0.3.2-driven reviewer using the in-process Mojo binding."""
 
     def __init__(
         self,
