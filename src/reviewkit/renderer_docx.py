@@ -24,6 +24,7 @@ from reviewkit.actions import (
     actions_for_paragraph,
     should_apply_to_corrected,
 )
+from reviewkit.comment_formatter import action_comment_label, format_action_comment
 from reviewkit.document import ReviewDocument
 from reviewkit.models import (
     ActionStatus,
@@ -119,7 +120,9 @@ def render_reviewed_docx(
                     ):
                         comments.append(
                             PhysicalReviewComment(
-                                locator, _comment_text(action), anchor_text=action.original_text
+                                locator,
+                                format_action_comment(action),
+                                anchor_text=action.original_text,
                             )
                         )
                         continue
@@ -141,12 +144,12 @@ def render_reviewed_docx(
                             end,
                             action.replacement_text or "",
                             raw[start:end] if end > start else None,
-                            _comment_text(action),
+                            format_action_comment(action),
                             action.new_paragraph,
                             action.action_type != ReviewActionType.INSERT_BEFORE,
                         )
                     )
-            text = _comment_text(action)
+            text = format_action_comment(action)
             if text and not _is_trackable(action):
                 comments.append(
                     PhysicalReviewComment(locator, text, anchor_text=action.original_text)
@@ -163,13 +166,13 @@ def render_reviewed_docx(
     }
     scope_ids = {document.id, *(section.id for section in document.sections)}
     for action in actions:
-        comment_text = _comment_text(action)
+        comment_text = format_action_comment(action)
         if not comment_text or action.id in routed:
             continue
         if action.node_id in scope_ids and action.original_text:
             notes.append(
                 PhysicalReviewNote(
-                    f"Unanchored review action — {_comment_label(action)}", comment_text
+                    f"Unanchored review action — {action_comment_label(action)}", comment_text
                 )
             )
         elif action.node_id in scope_ids and projection.paragraphs:
@@ -313,60 +316,6 @@ def _resolve(text: str, action: ReviewAction) -> tuple[int, int] | None:
             else (len(text), len(text))
         )
     return None
-
-
-def _comment_label(action: ReviewAction) -> str:
-    if action.action_type in {
-        ReviewActionType.REPLACE_TEXT,
-        ReviewActionType.DELETE_TEXT,
-        ReviewActionType.INSERT_TEXT,
-        ReviewActionType.REPLACE,
-        ReviewActionType.DELETE,
-        ReviewActionType.INSERT_BEFORE,
-        ReviewActionType.INSERT_AFTER,
-    }:
-        if action.status == ActionStatus.APPLIED:
-            return "CORRECTION"
-        if action.status == ActionStatus.CONFLICT:
-            return "CONFLICT"
-        if action.status == ActionStatus.NEEDS_HUMAN_DECISION:
-            return "HUMAN_DECISION"
-        return "SUGGESTION"
-    if action.action_type == ReviewActionType.QUESTION:
-        return "QUESTION"
-    if action.action_type == ReviewActionType.RISK:
-        return "RISK"
-    if action.action_type == ReviewActionType.SUGGESTION:
-        return "SUGGESTION"
-    if action.action_type == ReviewActionType.PRAISE:
-        return "PRAISE"
-    if action.action_type == ReviewActionType.SUMMARY:
-        return "SUMMARY"
-    return "COMMENT"
-
-
-def _comment_text(action: ReviewAction) -> str | None:
-    label = _comment_label(action)
-    parts = [f"{label}: {action.comment or action.reason or action.policy_reason or ''}".rstrip()]
-    if action.original_text:
-        parts.append(f"Original: {action.original_text!r}")
-    if action.replacement_text:
-        parts.append(f"Replacement: {action.replacement_text!r}")
-    if action.category:
-        parts.append(f"Category: {action.category}")
-    if action.policy_reason:
-        parts.append(f"Policy: {action.policy_reason}")
-    if action.references:
-        refs = ", ".join(reference.label or reference.source for reference in action.references)
-        parts.append(f"References: {refs}")
-    if action.evidence_refs:
-        evidence = ", ".join(
-            ref.locator or ref.segment_id or ref.source or "evidence"
-            for ref in action.evidence_refs
-        )
-        parts.append(f"Evidence: {evidence}")
-    parts.append(f"Status: {action.status.value}")
-    return "\n".join(parts)
 
 
 def _assert_writing_routes(document: ReviewDocument, actions: list[ReviewAction]) -> None:

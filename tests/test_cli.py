@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import importlib.metadata as metadata
 import json
 import re
 import tomllib
+from importlib import metadata
 from pathlib import Path
 
 import pytest

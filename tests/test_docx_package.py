@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 from docx import Document as DocxDocument
-from lxml import etree
-
 from docxtor import (
     normalize_docx_timestamps,
     restore_semantically_unchanged_xml_parts,
 )
+from lxml import etree
+
 from reviewkit.parser_docx import load_docx
 from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 
