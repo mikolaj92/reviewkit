@@ -25,7 +25,7 @@ dependencies = [
     "typer>=0.26.7",
     # Required cascade engine; binding/import failures propagate (no local fallback).
     "takt @ git+https://github.com/mikolaj92/takt.git@v0.3.2",
-    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@v0.14.1",
+    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@a75109fc93045513b30f67af3d2c5b0116d610d6",
 ]
 
 [project.scripts]

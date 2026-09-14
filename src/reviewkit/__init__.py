@@ -6,6 +6,15 @@ from reviewkit.anchors import (
     parse_body_anchor_index,
 )
 from reviewkit.comments import DocxComment, comments_for_locator, read_comments
+from reviewkit.comparison import attribute_docx_changes
+from reviewkit.comparison_models import (
+    ChangeProvenance,
+    ComparisonProvenance,
+    DocumentTransitionEvidence,
+    ProvenanceDiagnostic,
+    ProvenanceStatus,
+    ReviewActionEvidence,
+)
 from reviewkit.context import (
     EmptyReviewContextProvider,
     ReviewContext,
@@ -96,7 +105,10 @@ __all__ = [
     "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
+    "ChangeProvenance",
+    "ComparisonProvenance",
     "DocumentParser",
+    "DocumentTransitionEvidence",
     "DocxComment",
     "DocxDocumentParser",
     "DocxFootnote",
@@ -116,12 +128,15 @@ __all__ = [
     "PolicyGuard",
     "PortableReviewTrailError",
     "PortableReviewTrailProfile",
+    "ProvenanceDiagnostic",
+    "ProvenanceStatus",
     "RejectRevisionsError",
     "RemarkDisposition",
     "RemarkWeight",
     "RenderIntegrityError",
     "RenderedActionAssessment",
     "ReviewAction",
+    "ReviewActionEvidence",
     "ReviewActionType",
     "ReviewArtifactPreservationError",
     "ReviewArtifactPurityAssessment",
@@ -157,6 +172,7 @@ __all__ = [
     "assess_rendered_actions",
     "assess_review_artifact_purity",
     "assess_review_finality",
+    "attribute_docx_changes",
     "canonical_action_dump",
     "comments_for_locator",
     "compare_review_remarks",
