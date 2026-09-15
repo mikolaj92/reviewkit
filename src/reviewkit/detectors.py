@@ -16,12 +16,15 @@ from reviewkit.document import (
     SentenceNode,
 )
 from reviewkit.llm import LLMClient
+from reviewkit.model_boundary import strip_host_owned_metadata
 from reviewkit.models import (
+    ActionStatus,
     DocumentReviewResponse,
     ParagraphReviewResponse,
     ReviewAction,
     ReviewBoundError,
     ReviewFailureClass,
+    ReviewResponse,
     ReviewScope,
     SectionReviewResponse,
     SentenceReviewResponse,
@@ -108,12 +111,15 @@ class BaseLLMDetector:
         while retries <= max_retries:
             try:
                 payload = self.llm.complete_json(messages, schema)
-                return validate_review_payload(
+                response = validate_review_payload(
                     payload,
                     schema,
                     node_id=str(node_id),
                     retry_count=retries,
                 )
+                if isinstance(response, ReviewResponse):
+                    _strip_host_audit_enrichment(response)
+                return response
             except ReviewBoundError:
                 raise
             except TimeoutError as exc:
@@ -235,6 +241,19 @@ def _response_to_signals(
         )
 
     return signals
+
+
+def _strip_host_audit_enrichment(response: ReviewResponse) -> None:
+    """Keep model output semantic before the host appends its audit decisions."""
+    for finding in response.findings:
+        finding.metadata = strip_host_owned_metadata(finding.metadata)
+        finding.lineage = ()
+        finding.reconciliation = None
+    for action in response.actions:
+        action.metadata = strip_host_owned_metadata(action.metadata)
+        action.status = ActionStatus.NOT_APPLIED
+        action.policy_reason = None
+        action.lineage = ()
 
 
 def _severity_to_deviation(severity: str) -> float:

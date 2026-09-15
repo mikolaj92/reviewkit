@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from reviewkit.context import ReviewContext
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
+from reviewkit.model_boundary import model_facing_action_payload, model_facing_finding_payload
 from reviewkit.models import (
     DocumentReviewResponse,
     ParagraphReviewResponse,
@@ -141,6 +142,15 @@ def _messages(profile: ReviewProfile, payload: dict[str, Any]) -> list[dict[str,
         "Always emit an explicit finding_id on every finding, and when an action responds "
         "to a finding, set that action's finding_id to the same value so the response can be "
         "traced back to what motivated it.\n\n"
+        "The current_review_state is reference context accumulated from earlier review "
+        "scopes. Emit findings for the current fragment or genuinely new document-level "
+        "observations. Similar wording or the same dimension on a different current "
+        "node or target is still a distinct finding. Do not copy prior findings solely "
+        "because they are present in the state. For an explicit document reconciliation, "
+        "reference existing IDs in reconciliation_requests.finding_ids; on the resulting "
+        "reconciliation pass, use the existing ID in reconciles_finding_id together with "
+        "the reconciliation disposition. Host audit fields are supplied after the response "
+        "and must not be invented.\n\n"
         f"Profile instructions:\n{profile.instructions_text}"
     )
     if payload.get("review_level") == "document":
@@ -168,11 +178,15 @@ def _state_payload(state: ReviewState) -> dict[str, Any]:
     # dropped, action-processing errors); they are not review substance. Feeding
     # them back into the next level's prompt only adds noise and risks the model
     # reacting to our own bookkeeping, so exclude them from the state it sees.
-    return state.model_dump(mode="json", exclude={"warnings"})
+    payload = state.model_dump(mode="json", exclude={"warnings", "findings"})
+    payload["findings"] = [
+        model_facing_finding_payload(finding) for finding in state.findings
+    ]
+    return payload
 
 
 def _actions_payload(actions: list[ReviewAction]) -> list[dict[str, Any]]:
-    return [action.model_dump(mode="json", by_alias=True) for action in actions]
+    return [model_facing_action_payload(action) for action in actions]
 
 
 def _profile_payload(profile: ReviewProfile) -> dict[str, Any]:
