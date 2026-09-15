@@ -84,12 +84,14 @@ class BaseLLMDetector:
         context_provider: ReviewContextProvider,
         state: ReviewState,
         scope: ReviewScope,
+        document_source_context: dict[str, Any] | None = None,
     ) -> None:
         self.profile = profile
         self.llm = llm
         self.context_provider = context_provider
         self.state = state
         self.scope = scope
+        self.document_source_context = document_source_context
         self._document: ReviewDocument | None = None
         self.lower_actions_for_prompt: list[ReviewAction] = []
 
@@ -169,7 +171,14 @@ class BaseLLMDetector:
             return _response_to_signals(resp, node_id, "llm_section", self.scope)
 
         if self.scope == ReviewScope.DOCUMENT:
-            prompt = document_review_prompt(self.profile, self.state, inner, lower, context)
+            prompt = document_review_prompt(
+                self.profile,
+                self.state,
+                inner,
+                lower,
+                context,
+                source_context=self.document_source_context,
+            )
             resp = self._complete(prompt, DocumentReviewResponse)
             return _response_to_signals(resp, node_id, "llm_document", self.scope)
 

@@ -47,7 +47,10 @@ from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
 from reviewkit.prompts import reconciliation_review_prompt
 from reviewkit.reconciliation import reconcile_findings, select_reconciliation_targets
-from reviewkit.review_bounds import bound_document_sections
+from reviewkit.review_bounds import (
+    bound_document_sections,
+    build_document_source_context,
+)
 from reviewkit.state import ReviewState
 from reviewkit.takt_client import TaktClient
 from reviewkit.takt_types import RawSignal
@@ -74,7 +77,14 @@ class TaktReviewer:
     def review(
         self, document: ReviewDocument
     ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
+        source_document = document
         document = bound_document_sections(document, self.profile.section_char_budget)
+        document_source_context = None
+        if ReviewScope.DOCUMENT in self.profile.review_pipeline:
+            document_source_context = build_document_source_context(
+                source_document,
+                self.profile.document_source_char_budget,
+            )
         state = ReviewState()
         effector = ReviewEffector(state)
 
@@ -82,7 +92,12 @@ class TaktReviewer:
         layer_by_scope = scope_to_layer_index(self.profile)
         plant = ReviewDocumentPlant(document, scope_layers=layer_by_scope)
 
-        detectors = self._build_detectors(document, state, effector)
+        detectors = self._build_detectors(
+            document,
+            state,
+            effector,
+            document_source_context=document_source_context,
+        )
         enabled = set(self.profile.review_pipeline)
 
         accumulated_lower_actions: list[ReviewAction] = []
@@ -161,6 +176,8 @@ class TaktReviewer:
         document: ReviewDocument,
         state: ReviewState,
         effector: ReviewEffector,
+        *,
+        document_source_context: dict[str, Any] | None = None,
     ) -> dict[ReviewScope, _LLMDetectorAdapter]:
         pipeline = self.profile.review_pipeline
         detectors: dict[ReviewScope, _LLMDetectorAdapter] = {}
@@ -173,6 +190,9 @@ class TaktReviewer:
                 scope=scope,
                 document=document,
                 effector=effector,
+                document_source_context=(
+                    document_source_context if scope == ReviewScope.DOCUMENT else None
+                ),
             )
             det.inner.set_document(document)
             detectors[scope] = det
@@ -192,6 +212,7 @@ class _LLMDetectorAdapter:
         scope: ReviewScope,
         document: ReviewDocument,
         effector: ReviewEffector,
+        document_source_context: dict[str, Any] | None,
     ) -> None:
         self.inner = BaseLLMDetector(
             profile=profile,
@@ -199,6 +220,7 @@ class _LLMDetectorAdapter:
             context_provider=context_provider,
             state=state,
             scope=scope,
+            document_source_context=document_source_context,
         )
         self.scope = scope
         self.document = document

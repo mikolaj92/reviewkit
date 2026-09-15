@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from reviewkit.models import ReviewActionType, ReviewDimension, ReviewScope
+from reviewkit.review_bounds import DEFAULT_DOCUMENT_SOURCE_CHAR_BUDGET
 
 _PROFILE_TOML = "profile.toml"
 
@@ -99,6 +100,7 @@ class ReviewProfile(BaseModel):
     action_policies: dict[str, ActionPolicyConfig] = Field(default_factory=dict)
     outputs: OutputConfig = Field(default_factory=OutputConfig)
     section_char_budget: int = 4000
+    document_source_char_budget: int = DEFAULT_DOCUMENT_SOURCE_CHAR_BUDGET
     max_review_retries: int = 1
     reconciliation_max_rounds: int = Field(default=1, ge=0)
     reconciliation_max_nodes: int = Field(default=3, ge=0)

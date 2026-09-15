@@ -30,6 +30,7 @@ def sentence_review_prompt(
     payload = {
         "review_level": "sentence",
         "current_fragment": {"node_id": sentence.id, "text": sentence.text},
+        "source_scope": _fragment_scope_payload(),
         "external_review_context": _context_payload(context),
         "current_review_state": _state_payload(state),
         "schema": SentenceReviewResponse.model_json_schema(),
@@ -47,6 +48,7 @@ def paragraph_review_prompt(
     payload = {
         "review_level": "paragraph",
         "current_fragment": {"node_id": paragraph.id, "text": paragraph.text},
+        "source_scope": _fragment_scope_payload(),
         "sentence_review_results": _actions_payload(sentence_actions),
         "external_review_context": _context_payload(context),
         "current_review_state": _state_payload(state),
@@ -69,6 +71,7 @@ def section_review_prompt(
             "title": section.title,
             "text": section.text,
         },
+        "source_scope": _fragment_scope_payload(),
         "paragraph_review_results": _actions_payload(paragraph_actions),
         "external_review_context": _context_payload(context),
         "current_review_state": _state_payload(state),
@@ -83,6 +86,7 @@ def document_review_prompt(
     document: ReviewDocument,
     section_actions: list[ReviewAction],
     context: ReviewContext | None = None,
+    source_context: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     payload = {
         "review_level": "document",
@@ -90,6 +94,8 @@ def document_review_prompt(
             "node_id": document.id,
             "section_count": len(document.sections),
         },
+        "source_scope": _document_scope_payload(source_context),
+        "source_document": source_context or {"complete": False},
         "section_summaries": state.section_summaries,
         "all_risks": state.risks,
         "all_questions": state.questions,
@@ -137,6 +143,18 @@ def _messages(profile: ReviewProfile, payload: dict[str, Any]) -> list[dict[str,
         "traced back to what motivated it.\n\n"
         f"Profile instructions:\n{profile.instructions_text}"
     )
+    if payload.get("review_level") == "document":
+        system = (
+            f"{system}\n\nDocument source contract: make document-wide absence claims only when "
+            "source_document.complete is true. Cite source fragment locators for observed "
+            "presence or defects."
+        )
+    elif payload.get("review_level") in {"sentence", "paragraph", "section"}:
+        system = (
+            f"{system}\n\nFragment source contract: current_fragment is bounded local evidence. "
+            "Its missing text does not establish document-wide absence; report only local "
+            "observations with their evidence."
+        )
     user = (
         "Return JSON only, valid against the included Pydantic JSON schema.\n"
         "The engine will deterministically verify and apply actions later.\n\n"
@@ -182,6 +200,21 @@ def _context_payload(context: ReviewContext | None) -> dict[str, Any]:
     if context is None:
         return {}
     return context.model_dump(mode="json")
+
+
+def _fragment_scope_payload() -> dict[str, Any]:
+    return {
+        "scope": "fragment",
+        "complete": False,
+        "document_wide_absence": "unsupported",
+    }
+
+
+def _document_scope_payload(source_context: dict[str, Any] | None) -> dict[str, Any]:
+    return {
+        "scope": "document",
+        "complete": bool(source_context and source_context.get("complete")),
+    }
 
 
 def _json(payload: dict[str, Any]) -> str:
