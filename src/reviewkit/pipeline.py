@@ -19,6 +19,7 @@ from reviewkit.parser_docx import load_docx
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile, load_profile
 from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
+from reviewkit.state import ReviewState
 from reviewkit.takt_reviewer import TaktReviewer
 
 # Public topology contract shared by every product. Products select what to review through
@@ -142,7 +143,7 @@ def _review_tree(
     context_provider: ReviewContextProvider | None,
     action_policy: ActionPolicy | None,
     extra_actions: list[ReviewAction] | None,
-):
+) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
     reviewer = TaktReviewer(
         profile=profile,
         llm=llm,
