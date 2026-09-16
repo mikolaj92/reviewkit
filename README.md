@@ -259,6 +259,10 @@ Rendering a reviewed document preserves source revision wrappers, comment bodies
 thread sidecars, then adds new review markup with the reviewer identity and collision-free
 revision IDs. The source and generated records can therefore be inspected separately.
 
+`attribute_docx_changes()` recognizes current and hash-bound historical action comments.
+It still requires exact action payloads, document hashes, physical anchors, and unique
+matches before assigning provenance.
+
 ## Anchored Paragraph Insertion
 
 Besides in-place rendering, ReviewKit ships a standalone insertion engine
