@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from typing import cast
 
 from reviewkit.models import (
     FindingLineageEvent,
@@ -44,7 +45,7 @@ def select_reconciliation_targets(
         locator = request.target
         if locator.text_hash and locator.text_hash != locator.hash_text(source_text):
             continue
-        seen.add(node_id)
+        seen.add(cast(str, node_id))
         selected.append((request, node))
     return selected
 

@@ -8,9 +8,10 @@ from collections import Counter
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonSchemaMode
 
 if TYPE_CHECKING:
     from reviewkit.document import ReviewDocument
@@ -345,6 +346,27 @@ class ReviewAction(BaseModel):
 
 
 class ReviewResponse(BaseModel):
+    @classmethod
+    def model_json_schema(
+        cls,
+        by_alias: bool = True,
+        ref_template: str = DEFAULT_REF_TEMPLATE,
+        schema_generator: type[GenerateJsonSchema] = GenerateJsonSchema,
+        mode: JsonSchemaMode = "validation",
+        *,
+        union_format: Literal["any_of", "primitive_type_array"] = "any_of",
+    ) -> dict[str, Any]:
+        from reviewkit.model_boundary import strip_model_audit_fields
+
+        schema = super().model_json_schema(
+            by_alias=by_alias,
+            ref_template=ref_template,
+            schema_generator=schema_generator,
+            mode=mode,
+            union_format=union_format,
+        )
+        return strip_model_audit_fields(schema)
+
     findings: list[ReviewFinding] = Field(default_factory=list)
     actions: list[ReviewAction] = Field(default_factory=list)
     summary: str | None = None

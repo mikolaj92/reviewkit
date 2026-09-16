@@ -11,6 +11,7 @@ from reviewkit.comments import read_comments
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
 from reviewkit.models import (
     ActionStatus,
+    EvidenceRef,
     ReviewAction,
     ReviewActionType,
     ReviewFinding,
@@ -511,10 +512,9 @@ def test_reviewed_docx_patches_original_and_preserves_run_formatting(tmp_path: P
     assert "[DELETE:" not in document_xml
 
 
-def test_reviewed_docx_comment_carries_a_references_line(tmp_path: Path) -> None:
-    # An action's references are the citation carrier for downstream users: the comment body
-    # in word/comments.xml must include a "References:" line listing each reference by label
-    # (falling back to source when no label is set).
+def test_reviewed_docx_comment_uses_explicit_reader_facing_text(tmp_path: Path) -> None:
+    # Callers put any user-facing basis in comment/reason. Explicitly labelled references
+    # remain a reader-facing citation; unlabeled sources remain available only for audit.
     input_path = tmp_path / "input.docx"
     docx = DocxDocument()
     docx.add_paragraph("The quick brown fox jumps.")
@@ -531,11 +531,107 @@ def test_reviewed_docx_comment_carries_a_references_line(tmp_path: Path) -> None
             ReviewReference(source="unlabelled-source"),
         ],
     )
+    before = action.model_dump(mode="json")
 
     reviewed_path = render_reviewed_docx(document, [action], tmp_path / "reviewed.docx")
 
     comments = _comment_texts(reviewed_path)
-    assert any("References: art. 385(1), unlabelled-source" in text for text in comments), comments
+    assert any("Grounded observation." in text for text in comments), comments
+    assert any("References: art. 385(1)" in text for text in comments), comments
+    assert all("unlabelled-source" not in text for text in comments), comments
+    assert action.model_dump(mode="json") == before
+
+
+def test_reviewed_docx_comments_keep_reader_content_without_machine_metadata(
+    tmp_path: Path,
+) -> None:
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph("The quick brown fox jumps.")
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    edit_action = ReviewAction(
+        id="action-machine-id",
+        finding_id="finding-machine-id",
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.REPLACE,
+        node_id="p1",
+        original_text="fox",
+        replacement_text="cat",
+        comment="Replace the term with the defined party name.",
+        reason="Reader-facing edit explanation.",
+        category="internal-category",
+        policy_reason="internal-policy-reason",
+        evidence_refs=[
+            EvidenceRef(
+                locator="body:p:0",
+                segment_id="segment-machine-id",
+                source="internal-evidence-source",
+            )
+        ],
+        references=[
+            ReviewReference(source="internal-reference-source", label="Reader-facing basis")
+        ],
+        status=ActionStatus.NOT_APPLIED,
+    )
+    comment_action = ReviewAction(
+        id="comment-machine-id",
+        finding_id="comment-finding-machine-id",
+        scope=ReviewScope.PARAGRAPH,
+        action_type=ReviewActionType.COMMENT,
+        node_id="p1",
+        comment="Reader-facing advisory explanation.",
+        category="internal-comment-category",
+        policy_reason="internal-comment-policy",
+        evidence_refs=[
+            EvidenceRef(
+                locator="body:p:0",
+                segment_id="comment-segment-machine-id",
+                source="internal-comment-evidence-source",
+            )
+        ],
+        references=[
+            ReviewReference(
+                source="internal-comment-reference-source", label="Reader-facing comment basis"
+            )
+        ],
+        status=ActionStatus.NEEDS_HUMAN_DECISION,
+    )
+    edit_before = edit_action.model_dump(mode="json")
+    comment_before = comment_action.model_dump(mode="json")
+
+    reviewed_path = render_reviewed_docx(
+        document,
+        [edit_action, comment_action],
+        tmp_path / "reviewed.docx",
+    )
+
+    comments = _comment_texts(reviewed_path)
+    joined = "\n".join(comments)
+    assert any("Replace the term with the defined party name." in text for text in comments)
+    assert any("Original: 'fox'" in text for text in comments)
+    assert any("Replacement: 'cat'" in text for text in comments)
+    assert any("Reader-facing advisory explanation." in text for text in comments)
+    assert any("References: Reader-facing basis" in text for text in comments)
+    assert any("References: Reader-facing comment basis" in text for text in comments)
+    assert any(text.startswith("SUGGESTION:") for text in comments)
+    assert any(text.startswith("COMMENT:") for text in comments)
+    for machine_field in ("Category:", "Policy:", "Evidence:", "Status:"):
+        assert machine_field not in joined
+    for machine_value in (
+        "internal-category",
+        "internal-policy-reason",
+        "internal-reference-source",
+        "body:p:0",
+        "action-machine-id",
+        "finding-machine-id",
+    ):
+        assert machine_value not in joined
+
+    # Rendering is a projection; the action object remains the complete audit carrier.
+    assert edit_action.model_dump(mode="json") == edit_before
+    assert comment_action.model_dump(mode="json") == comment_before
 
 
 def test_reviewed_docx_interleaves_several_tracked_edits_in_one_paragraph(tmp_path: Path) -> None:
@@ -1656,6 +1752,7 @@ def test_new_paragraph_insert_after_renders_a_tracked_sibling_paragraph(tmp_path
     assert comments[0].startswith("CORRECTION: The document needs this clause.")
     assert "Replacement: '§20a. The inserted clause.'" in comments[0]
     assert "References: Article 20a" in comments[0]
+    assert action.references[0].label == "Article 20a"
     assert inserted.find(f"{_W}commentRangeStart") is not None
     assert inserted.find(f"{_W}commentRangeEnd") is not None
     assert inserted.find(f"{_W}r/{_W}commentReference") is not None
