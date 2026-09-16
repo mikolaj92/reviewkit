@@ -6,19 +6,25 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import pytest
 from docx import Document
+from docx.comments import Comment
+from docx.text.run import Run
 from docxtor import ComparisonDiagnostic, compare_docx_documents
 
 import reviewkit
 from reviewkit import (
     ActionStatus,
+    EvidenceRef,
+    FindingLineageEvent,
     ReviewAction,
     ReviewActionType,
+    ReviewReference,
     ReviewScope,
     accept_all_revisions,
     load_docx,
 )
-from reviewkit.comment_formatter import format_action_comment
+from reviewkit.comment_formatter import format_action_comment, format_legacy_action_comment
 from reviewkit.renderer_docx import render_reviewed_docx
 
 _ACTION_SHA256 = "b65fb2162f332fe521617bd3c040badaa15f1a2ee24e641db2cdc321465136be"
@@ -26,6 +32,16 @@ _LEGACY_ACTION_SHA256 = "a1e4d4ee3b01329714911d1b0beb18d951470d455e983489148a013
 _SOURCE_COMMENT = "Status: applied — komentarz obecny przed procesem."
 _ACTION_COMMENT = "Dostosowano termin zapłaty."
 _ACTION_ID = "term-30"
+_HISTORICAL_ACTION_COMMENT = (
+    "CORRECTION: Replace marker.\n"
+    "Original: 'alpha'\n"
+    "Replacement: 'beta'\n"
+    "Category: term\n"
+    "Policy: policy check\n"
+    "References: Section 1\n"
+    "Evidence: body:p:0\n"
+    "Status: applied"
+)
 
 
 def test_verified_action_provenance_covers_all_three_document_pairs(tmp_path: Path) -> None:
@@ -99,6 +115,157 @@ def test_verified_action_provenance_covers_all_three_document_pairs(tmp_path: Pa
         _by_change_id(input_corrected_provenance, removed_source_comment.change_id).status
         == "source"
     )
+
+
+@pytest.mark.parametrize(
+    "with_lineage",
+    [False, True],
+    ids=["pre-lineage", "lineage"],
+)
+def test_historical_comment_projection_is_exact_for_hash_bound_evidence(
+    tmp_path: Path, with_lineage: bool
+) -> None:
+    source, reviewed, corrected, _action, evidence = _historical_comment_fixture(
+        tmp_path,
+        with_lineage=with_lineage,
+    )
+    input_reviewed = compare_docx_documents(source, reviewed)
+    direct = _public_api("attribute_docx_changes")(
+        input_reviewed,
+        action_source=source,
+        review_evidence=evidence,
+    )
+    action_comments = [
+        event for event in _events(direct, "comment") if event.status == "verified_action"
+    ]
+    assert len(action_comments) == 1
+    assert action_comments[0].action_ids == ("replace-marker",)
+
+    transition = _transition(reviewed, corrected)
+    accepted = _public_api("attribute_docx_changes")(
+        compare_docx_documents(reviewed, corrected),
+        action_source=source,
+        review_evidence=evidence,
+        transition_evidence=transition,
+        source_to_reviewed=input_reviewed,
+    )
+    accepted_comments = [
+        event for event in _events(accepted, "comment") if event.status == "verified_acceptance"
+    ]
+    assert len(accepted_comments) == 1
+    assert accepted_comments[0].action_ids == ("replace-marker",)
+
+
+def test_historical_comment_payload_mismatch_stays_unknown(tmp_path: Path) -> None:
+    source, reviewed, _corrected, _action, evidence = _historical_comment_fixture(
+        tmp_path,
+        with_lineage=True,
+        comment_text=_HISTORICAL_ACTION_COMMENT.replace("Status: applied", "Status: applied!"),
+    )
+    comparison = compare_docx_documents(source, reviewed)
+    provenance = _public_api("attribute_docx_changes")(
+        comparison,
+        action_source=source,
+        review_evidence=evidence,
+    )
+
+    action_comment = next(event for event in comparison.comment_changes if event.left is None)
+    attributed = _by_change_id(provenance, action_comment.change_id)
+    assert attributed.status == "unknown"
+    assert attributed.action_ids == ()
+    assert attributed.evidence_codes == ("no_exact_provenance_match",)
+
+
+def test_historical_comment_reviewed_hash_mismatch_fails_closed(tmp_path: Path) -> None:
+    source, reviewed, _corrected, _action, evidence = _historical_comment_fixture(
+        tmp_path,
+        with_lineage=True,
+    )
+    reviewed_document = Document(reviewed)
+    reviewed_document.paragraphs[0].runs[-1].text += " tampered"
+    reviewed_document.save(reviewed)
+
+    comparison = compare_docx_documents(source, reviewed)
+    provenance = _public_api("attribute_docx_changes")(
+        comparison,
+        action_source=source,
+        review_evidence=evidence,
+    )
+    dependent = [*_events(provenance, "text"), *_events(provenance, "revision")]
+    assert dependent
+    assert {event.status for event in dependent} == {"unknown"}
+    assert all(event.action_ids == () for event in dependent)
+    assert all("comparison_hash_chain_mismatch" in event.evidence_codes for event in dependent)
+
+
+def test_historical_comment_bad_anchor_stays_unknown(tmp_path: Path) -> None:
+    source, reviewed, _corrected, action, _evidence = _historical_comment_fixture(
+        tmp_path,
+        with_lineage=True,
+    )
+    bad_action = action.model_copy(update={"node_id": "body:p:missing"})
+    evidence = _evidence_for_actions(source, reviewed, [bad_action])
+    comparison = compare_docx_documents(source, reviewed)
+    provenance = _public_api("attribute_docx_changes")(
+        comparison,
+        action_source=source,
+        review_evidence=evidence,
+    )
+
+    dependent = [*_events(provenance, "text"), *_events(provenance, "revision")]
+    assert dependent
+    assert {event.status for event in dependent} == {"unknown"}
+    assert all(event.action_ids == () for event in dependent)
+    action_comment = next(event for event in comparison.comment_changes if event.left is None)
+    assert _by_change_id(provenance, action_comment.change_id).status == "unknown"
+
+
+def test_historical_duplicate_same_anchor_comments_stay_unknown(tmp_path: Path) -> None:
+    source, reviewed, _corrected, action, _evidence = _historical_comment_fixture(
+        tmp_path,
+        with_lineage=True,
+    )
+    reviewed_document = Document(reviewed)
+    paragraph = reviewed_document.paragraphs[0]
+    action_run = Run(paragraph._p.xpath("./w:ins/w:r")[0], paragraph)
+    reviewed_document.add_comment(
+        runs=[action_run],
+        text=_HISTORICAL_ACTION_COMMENT,
+        author="Reviewer",
+    )
+    reviewed_document.save(reviewed)
+    evidence = _evidence_for_actions(source, reviewed, [action])
+
+    comparison = compare_docx_documents(source, reviewed)
+    provenance = _public_api("attribute_docx_changes")(
+        comparison,
+        action_source=source,
+        review_evidence=evidence,
+    )
+    duplicate_events = [
+        event
+        for event in comparison.comment_changes
+        if event.left is None and event.right is not None
+    ]
+    assert len(duplicate_events) == 2
+    assert all(event.right.anchor is not None for event in duplicate_events)
+    duplicate_anchors = {
+        (
+            event.right.anchor.locator,
+            event.right.anchor.block_id,
+            event.right.anchor.pair_id,
+            event.right.anchor.start_offset,
+            event.right.anchor.end_offset,
+        )
+        for event in duplicate_events
+        if event.right.anchor is not None
+    }
+    assert len(duplicate_anchors) == 1
+    action_comments = [_by_change_id(provenance, event.change_id) for event in duplicate_events]
+    assert len(action_comments) == 2
+    assert {event.status for event in action_comments} == {"unknown"}
+    assert all(event.action_ids == () for event in action_comments)
+    assert {event.evidence_codes for event in action_comments} == {("no_exact_provenance_match",)}
 
 
 def test_dike_authored_source_comment_is_not_process_provenance(tmp_path: Path) -> None:
@@ -558,6 +725,72 @@ def test_blocked_and_comment_only_actions_do_not_claim_coincident_text_edits(
     assert all(event.action_ids == () for event in text_changes)
 
 
+def _replace_comment_text(comment: Comment, text: str) -> None:
+    paragraphs = comment.paragraphs
+    lines = text.splitlines() or [""]
+    paragraphs[0].text = lines[0]
+    for paragraph in paragraphs[1:]:
+        paragraph._element.getparent().remove(paragraph._element)
+    for line in lines[1:]:
+        comment.add_paragraph(line)
+
+
+def _historical_comment_fixture(
+    tmp_path: Path,
+    *,
+    with_lineage: bool,
+    comment_text: str = _HISTORICAL_ACTION_COMMENT,
+) -> tuple[Path, Path, Path, ReviewAction, Any]:
+    source = tmp_path / "input.docx"
+    reviewed = tmp_path / "reviewed.docx"
+    corrected = tmp_path / "corrected.docx"
+
+    document = Document()
+    paragraph = document.add_paragraph("The old marker is alpha.")
+    document.add_comment(runs=paragraph.runs, text="Source note.", author="Reviewer")
+    document.save(source)
+
+    parsed = load_docx(source)
+    target = next(parsed.iter_paragraphs())
+    action_values: dict[str, object] = {
+        "id": "replace-marker",
+        "scope": ReviewScope.PARAGRAPH,
+        "action_type": ReviewActionType.REPLACE_TEXT,
+        "node_id": target.id,
+        "original_text": "alpha",
+        "replacement_text": "beta",
+        "comment": "Replace marker.",
+        "status": ActionStatus.APPLIED,
+        "apply_to_corrected": True,
+        "category": "term",
+        "policy_reason": "policy check",
+        "evidence_refs": [EvidenceRef(locator="body:p:0")],
+        "references": [ReviewReference(source="source-ref", label="Section 1")],
+    }
+    if with_lineage:
+        action_values["lineage"] = (FindingLineageEvent(kind="review", node_id=target.id),)
+    action = ReviewAction(**action_values)
+    assert format_legacy_action_comment(action) == _HISTORICAL_ACTION_COMMENT
+    render_reviewed_docx(parsed, [action], reviewed, comment_author="Reviewer")
+    accept_all_revisions(reviewed, corrected)
+
+    reviewed_document = Document(reviewed)
+    action_comment = next(
+        comment
+        for comment in reviewed_document.comments
+        if comment.text == format_action_comment(action)
+    )
+    _replace_comment_text(action_comment, comment_text)
+    reviewed_document.save(reviewed)
+
+    evidence = (
+        _evidence_for_actions(source, reviewed, [action])
+        if with_lineage
+        else _legacy_evidence_for_actions(source, reviewed, action)
+    )
+    return source, reviewed, corrected, action, evidence
+
+
 def _review_fixture(tmp_path: Path) -> tuple[Path, Path, Path, ReviewAction]:
     source = tmp_path / "input.docx"
     reviewed = tmp_path / "reviewed.docx"
@@ -609,6 +842,20 @@ def _evidence_for_actions(source: Path, reviewed: Path, actions: list[ReviewActi
         actions_sha256=_action_digest(actions),
         source_revision_signatures=reviewkit.revision_signatures(source),
         actions=tuple(actions),
+    )
+
+
+def _legacy_evidence_for_actions(source: Path, reviewed: Path, action: ReviewAction) -> Any:
+    legacy_payload = action.model_dump(mode="json", by_alias=True)
+    legacy_payload.pop("lineage")
+    legacy_action = ReviewAction.model_validate(legacy_payload)
+    evidence_type = _public_api("ReviewActionEvidence")
+    return evidence_type(
+        source_sha256=_sha256(source),
+        reviewed_sha256=_sha256(reviewed),
+        actions_sha256=_json_digest([legacy_payload]),
+        source_revision_signatures=reviewkit.revision_signatures(source),
+        actions=(legacy_action,),
     )
 
 

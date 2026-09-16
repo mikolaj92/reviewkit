@@ -7,7 +7,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from reviewkit.comment_formatter import format_action_comment
+from reviewkit.comment_formatter import (
+    format_action_comment,
+    format_legacy_action_comment,
+)
 from reviewkit.comparison_models import (
     ChangeProvenance,
     ProvenanceDiagnostic,
@@ -428,8 +431,17 @@ def _match_action_comments(
         if action_map is None:
             continue
         action = action_map.target.action
-        payload = format_action_comment(action)
-        if not payload:
+        payloads = tuple(
+            dict.fromkeys(
+                payload
+                for payload in (
+                    format_action_comment(action),
+                    format_legacy_action_comment(action),
+                )
+                if payload
+            )
+        )
+        if not payloads:
             continue
         match = action_matches.get(action_id)
         expected_span = match.output_span if match is not None else None
@@ -439,7 +451,7 @@ def _match_action_comments(
             expected_span = (action_map.start, action_map.end)
         for event in comparison.comment_changes:
             comment = event.right
-            if comment is None or comment.text != payload:
+            if comment is None or comment.text not in payloads:
                 continue
             anchor = comment.anchor
             if (

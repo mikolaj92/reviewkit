@@ -61,3 +61,34 @@ def format_action_comment(action: ReviewAction) -> str:
     if references:
         parts.append(f"References: {', '.join(references)}")
     return "\n".join(parts)
+
+
+def format_legacy_action_comment(action: ReviewAction) -> str:
+    """Return the exact pre-0.23 physical comment projection.
+
+    Historical reviewed DOCX artifacts can carry this body even when their
+    persisted action evidence has since gained lineage. Keep the old projection
+    separate from the current reader-facing formatter so provenance can match a
+    hash-bound historical artifact without changing newly rendered comments.
+    """
+    label = action_comment_label(action)
+    parts = [f"{label}: {action.comment or action.reason or action.policy_reason or ''}".rstrip()]
+    if action.original_text:
+        parts.append(f"Original: {action.original_text!r}")
+    if action.replacement_text:
+        parts.append(f"Replacement: {action.replacement_text!r}")
+    if action.category:
+        parts.append(f"Category: {action.category}")
+    if action.policy_reason:
+        parts.append(f"Policy: {action.policy_reason}")
+    if action.references:
+        refs = ", ".join(reference.label or reference.source for reference in action.references)
+        parts.append(f"References: {refs}")
+    if action.evidence_refs:
+        evidence = ", ".join(
+            ref.locator or ref.segment_id or ref.source or "evidence"
+            for ref in action.evidence_refs
+        )
+        parts.append(f"Evidence: {evidence}")
+    parts.append(f"Status: {action.status.value}")
+    return "\n".join(parts)
