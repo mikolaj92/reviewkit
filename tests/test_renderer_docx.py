@@ -471,6 +471,45 @@ def test_insert_honors_locator_when_anchor_text_repeats(tmp_path: Path) -> None:
     assert _accepted_paragraph_text(document_xml) == "beta alpha Xbeta gamma."
 
 
+def test_comment_range_honors_locator_when_quote_repeats(tmp_path: Path) -> None:
+    first = "Strony mogą wypowiedzieć umowę."
+    second = "Strony mogą wypowiedzieć umowę."
+    paragraph_text = f"{first} {second}"
+    input_path = tmp_path / "input.docx"
+    docx = DocxDocument()
+    docx.add_paragraph(paragraph_text)
+    docx.save(input_path)
+
+    document = load_docx(input_path)
+    paragraph = document.sections[0].paragraphs[0]
+    start = paragraph_text.rfind(second)
+    reviewed_path = render_reviewed_docx(
+        document,
+        [
+            ReviewAction(
+                scope=ReviewScope.PARAGRAPH,
+                action_type=ReviewActionType.RISK,
+                node_id=paragraph.id,
+                original_text=second,
+                locator=ReviewLocator(
+                    node_id=paragraph.id,
+                    char_start=start,
+                    char_end=start + len(second),
+                ),
+                comment="termin",
+            )
+        ],
+        tmp_path / "reviewed.docx",
+    )
+
+    comments = read_comments(reviewed_path)
+    assert len(comments) == 1
+    comment = comments[0]
+    assert comment.anchor_text == second
+    assert comment.start_offset == start
+    assert comment.end_offset == start + len(second)
+
+
 def test_reviewed_docx_patches_original_and_preserves_run_formatting(tmp_path: Path) -> None:
     input_path = tmp_path / "input.docx"
     docx = DocxDocument()

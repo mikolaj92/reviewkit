@@ -11,6 +11,7 @@ from typing import assert_never
 from docxtor import (
     AddressableSpan,
     DocumentError,
+    DocxDocument,
     DocxReviewProjection,
     ReviewCoverage,
     ReviewParagraphProjection,
@@ -21,8 +22,8 @@ from reviewkit.comments import (
     DocxComment,
     _comment_markers_are_complete,
     _comment_thread_ids_are_complete,
-    _project_comment,
     comments_for_locator,
+    comments_from_document,
 )
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.markup_purity import has_tracked_revisions
@@ -51,11 +52,10 @@ class DocxDocumentParser:
 def load_docx(path: str | Path) -> ReviewDocument:
     source_path = Path(path)
     projection = project_docx_for_review(source_path)
-    paragraph_texts = {segment.locator: segment.text for segment in projection.paragraphs}
-    comments = [
-        _project_comment(comment, paragraph_texts.get(comment.locator or "", ""))
-        for comment in projection.comments
-    ]
+    try:
+        comments = comments_from_document(DocxDocument.open(source_path))
+    except (OSError, DocumentError, ValueError):
+        comments = []
     effective_texts, revision_ledger = _project_revision_input(projection.spans)
     tracked_revisions = has_tracked_revisions(source_path)
     if (
