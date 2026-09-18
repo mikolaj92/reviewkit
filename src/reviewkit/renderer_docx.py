@@ -118,13 +118,7 @@ def render_reviewed_docx(
                     if end > start and any(
                         start < used_end and used_start < end for used_start, used_end in consumed
                     ):
-                        comments.append(
-                            PhysicalReviewComment(
-                                locator,
-                                format_action_comment(action),
-                                anchor_text=action.original_text,
-                            )
-                        )
+                        comments.append(_physical_comment(locator, raw, action))
                         continue
                     if end > start:
                         consumed.append((start, end))
@@ -151,9 +145,7 @@ def render_reviewed_docx(
                     )
             text = format_action_comment(action)
             if text and not _is_trackable(action):
-                comments.append(
-                    PhysicalReviewComment(locator, text, anchor_text=action.original_text)
-                )
+                comments.append(_physical_comment(locator, raw, action))
     # Actions scoped above a paragraph need an explicit review-note anchor when
     # their quote does not occur in the scoped document.
     routed = {
@@ -283,6 +275,24 @@ def _locator(action: ReviewAction) -> tuple[int, int] | None:
             return action.locator.char_end, action.locator.char_end
         return action.locator.char_start, action.locator.char_end
     return None
+
+
+def _physical_comment(locator: str, text: str, action: ReviewAction) -> PhysicalReviewComment:
+    resolved = _resolve(text, action)
+    start, end = resolved if resolved is not None else (None, None)
+    if start is not None and end is not None and not 0 <= start < end <= len(text):
+        start, end = None, None
+    if start is not None and end is not None:
+        quoted = text[start:end]
+    else:
+        quoted = action.original_text
+    return PhysicalReviewComment(
+        locator,
+        format_action_comment(action),
+        start_offset=start,
+        end_offset=end,
+        anchor_text=quoted,
+    )
 
 
 def _resolve(text: str, action: ReviewAction) -> tuple[int, int] | None:
