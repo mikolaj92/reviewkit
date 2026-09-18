@@ -53,6 +53,8 @@ def test_effective_projection_and_typed_ledger(tmp_path: Path) -> None:
             text="Source note.",
             locator="body:p:0",
             anchor_text="Plain ",
+            start_offset=0,
+            end_offset=6,
         )
     ]
 
