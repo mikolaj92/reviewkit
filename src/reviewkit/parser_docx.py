@@ -51,7 +51,11 @@ class DocxDocumentParser:
 def load_docx(path: str | Path) -> ReviewDocument:
     source_path = Path(path)
     projection = project_docx_for_review(source_path)
-    comments = [_project_comment(comment) for comment in projection.comments]
+    paragraph_texts = {segment.locator: segment.text for segment in projection.paragraphs}
+    comments = [
+        _project_comment(comment, paragraph_texts.get(comment.locator or "", ""))
+        for comment in projection.comments
+    ]
     effective_texts, revision_ledger = _project_revision_input(projection.spans)
     tracked_revisions = has_tracked_revisions(source_path)
     if (

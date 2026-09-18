@@ -132,6 +132,8 @@ def test_read_comments_exposes_anchor_text_author_and_locator(tmp_path: Path) ->
     assert comment.initials == "PR"
     assert comment.locator == "body:p:0"
     assert comment.anchor_text == _CLAUSE
+    assert comment.start_offset == 0
+    assert comment.end_offset == len(_CLAUSE)
     assert "w:comment" not in comment.text
 
 
@@ -225,6 +227,39 @@ def test_read_comments_table_cell_gets_table_locator(tmp_path: Path) -> None:
     assert len(comments) == 1
     assert comments[0].locator == "table:0:r:0:c:0:p:0"
     assert comments[0].anchor_text == "Treść w tabeli."
+
+
+def test_read_comments_exposes_unique_sentence_range(tmp_path: Path) -> None:
+    from docxtor import CommentAuthor, CommentRange, add_comment
+
+    first = "Strony mogą wypowiedzieć umowę."
+    second = "Umowa obowiązuje od dnia podpisania."
+    paragraph = f"{first} {second}"
+    path = tmp_path / "sentence.docx"
+    docx = DocxDocument()
+    docx.add_paragraph(paragraph)
+    docx.save(path)
+    path.write_bytes(
+        add_comment(
+            path.read_bytes(),
+            CommentRange(
+                locator="body:p:0",
+                start_offset=0,
+                end_offset=len(first),
+                expected_text=first,
+            ),
+            "termin",
+            CommentAuthor(author="Dike", initials="DK"),
+        ).data
+    )
+
+    comments = read_comments(path)
+    assert len(comments) == 1
+    comment = comments[0]
+    assert comment.anchor_text == first
+    assert comment.start_offset == 0
+    assert comment.end_offset == len(first)
+    assert comment.end_offset < len(paragraph)
 
 
 def test_comments_for_locator_filters(tmp_path: Path) -> None:
