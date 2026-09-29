@@ -20,6 +20,12 @@ from reviewkit.context import (
     ReviewContext,
     ReviewContextProvider,
 )
+from reviewkit.decision import (
+    ChoiceQuestion,
+    DecisionClient,
+    MockDecisionClient,
+    NoulQuestion,
+)
 from reviewkit.document import DocumentParser, ReviewDocument
 from reviewkit.finality import (
     ReviewFinalityAssessment,
@@ -73,17 +79,16 @@ from reviewkit.models import (
     canonical_action_dump,
 )
 from reviewkit.pack import (
-    CloseRule,
-    DefectRule,
     Function,
     FunctionTag,
-    LabelRule,
     NamingResponse,
     Ontology,
     Pack,
     PassTrace,
     ProcessCheck,
+    Rule,
     SourceUnit,
+    Verdict,
 )
 from reviewkit.parser_docx import DocxDocumentParser, DocxFootnote, load_docx, read_footnotes
 from reviewkit.parser_text import TextDocumentParser, parse_text
@@ -119,9 +124,9 @@ __all__ = [
     "ActionPolicyConfig",
     "ActionStatus",
     "ChangeProvenance",
-    "CloseRule",
+    "ChoiceQuestion",
     "ComparisonProvenance",
-    "DefectRule",
+    "DecisionClient",
     "DocumentParser",
     "DocumentTransitionEvidence",
     "DocxComment",
@@ -140,10 +145,11 @@ __all__ = [
     "LLMClientError",
     "LLMClientFailure",
     "LLMRequestOptions",
-    "LabelRule",
     "MarkupReport",
+    "MockDecisionClient",
     "MockLLMClient",
     "NamingResponse",
+    "NoulQuestion",
     "Ontology",
     "Pack",
     "PassTrace",
@@ -184,11 +190,13 @@ __all__ = [
     "RevisionCoverageError",
     "RevisionCoverageState",
     "RevisionLedger",
+    "Rule",
     "SourceRevision",
     "SourceRevisionKind",
     "SourceUnit",
     "StructuredOutputMode",
     "TextDocumentParser",
+    "Verdict",
     "accept_all_revisions",
     "append_portable_review_trail",
     "apply_reviewed_markup",

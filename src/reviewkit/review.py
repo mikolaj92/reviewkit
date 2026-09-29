@@ -7,6 +7,7 @@ from typing import Any
 
 from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import ReviewContextProvider
+from reviewkit.decision import DecisionClient
 from reviewkit.document import DocumentParser, ReviewDocument
 from reviewkit.llm import LLMClient
 from reviewkit.models import ReviewAction, ReviewFinding, ReviewResult, ReviewStats
@@ -24,11 +25,15 @@ def review_tree(
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
     pack: Pack | None = None,
+    decision: DecisionClient | None = None,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
 
-    ``pack`` is the game: ontology, source units, and rules. ``None`` keeps the
-    single fused pass. The profile stays the reviewer's behavior.
+    ``pack`` is the game: ontology, source units, and rules. It is not the
+    profile, not instructions.md, and not external_review_context. ``None`` is
+    explicit legacy compat for the single fused pass. The host injects
+    ``decision`` (``DecisionClient.decide``) and ``llm``
+    (``LLMClient.complete_json``); ReviewKit does not ship a model runtime.
     """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
@@ -39,6 +44,7 @@ def review_tree(
         context_provider=context_provider,
         action_policy=action_policy,
         pack=pack,
+        decision=decision,
     )
     findings, actions, state = reviewer.review(document)
     if extra_actions:
