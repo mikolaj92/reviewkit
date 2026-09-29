@@ -21,6 +21,17 @@ node. The intended path always receives a Pack.
 | Pack | Ontology + source units + rules | Behave like a profile |
 | Profile | Reviewer behavior (role, language, action policy, pipeline) | Carry acts, ontology, or source units |
 
+## Platforms
+
+ReviewKit is the engine. Domain lives in a host Pack, not in `src/reviewkit`.
+
+| Surface | What it is |
+| --- | --- |
+| **Legal host (Temida)** | A product host. It builds a legal Pack and injects `DecisionClient` / `LLMClient`. Jurisdiction and statute text stay in that host Pack. |
+| **Scientific paper example** | A first-class **example Pack**, not a domain in core. Same engine and ontology *shape* (IMRaD functions); different units and rules. Meta: [`docs/platforms/scientific-paper-review.md`](docs/platforms/scientific-paper-review.md). Pack: [`examples/packs/scientific_paper.json`](examples/packs/scientific_paper.json). Behavior-only profile: [`examples/profiles/scientific.reviewer`](examples/profiles/scientific.reviewer). |
+
+Do not grow this library into a journal or a legal product. Composition is host + Pack.
+
 ## Host integration
 
 Load a Pack, inject a `DecisionClient`, run the two scans. Gaps are

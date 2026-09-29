@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Docs / examples
+
+Scientific paper review ships as a first-class **example Pack** (not a core
+domain): [`docs/platforms/scientific-paper-review.md`](docs/platforms/scientific-paper-review.md),
+[`examples/packs/scientific_paper.json`](examples/packs/scientific_paper.json),
+[`examples/profiles/scientific.reviewer`](examples/profiles/scientific.reviewer).
+Legal review stays a host (Temida); this library still has no domain ontology.
+
 Typing and public-export polish for the 0.24 Pack path. Hosts import Pack
 schemas, plugin sockets, and review entry points from `reviewkit`. No behavior
 change.
