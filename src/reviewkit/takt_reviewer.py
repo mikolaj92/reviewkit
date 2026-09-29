@@ -2,7 +2,7 @@
 
 Host (ReviewKit) owns:
   - document plant construction
-  - LLM detectors → RawSignal
+  - detectors → RawSignal
   - mapping decisions back to ReviewAction / findings
 
 Takt's Mojo cascade owns:
@@ -12,12 +12,16 @@ Takt's Mojo cascade owns:
 The official in-process binding is the only evaluation path; binding failures are
 propagated and are never downgraded to a local compatibility engine.
 
-Flow per matching node (post-order):
-1. Plant yields node (sentence, paragraph, section, document).
-2. Scope detector runs LLM → RawSignals + stored response.
-3. TaktClient.evaluate(plant_node, layers, raw_signals) → TaktDecision.
-4. ReviewEffector materializes ReviewActions with status.
-5. Deterministic post-processing preserves the public output contract.
+``pack=None`` keeps the legacy fused pass: one ``complete_json`` per node.
+
+With a Pack the host injects ``DecisionClient`` and ``LLMClient``. Flow:
+
+1. Name every enabled node (tags only). No cascade, no effector, tags are not
+   ``RawSignal``.
+2. Judge matching rules → findings → signals → takt → effector. Covered and
+   unmatched nodes short-circuit before evaluate.
+3. Optional act through ``LLMClient.complete_json`` only for change / delete /
+   insert at or above the confidence floor. ``missing`` is a finding, not a write.
 """
 
 from __future__ import annotations
@@ -27,16 +31,19 @@ import json
 from collections.abc import Mapping
 from typing import Any, cast
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import EmptyReviewContextProvider, ReviewContextProvider
 from reviewkit.decision import (
     DecisionAnswer,
+    DecisionAnswers,
     DecisionClient,
+    DecisionState,
     DocumentDecisionState,
     FragmentDecisionState,
     Question,
+    RawDecisionAnswer,
     coerce_answer,
     document_present_question,
     fragment_verdict_question,
@@ -47,7 +54,7 @@ from reviewkit.detectors import BaseLLMDetector, _lower_actions_for_prompt, _res
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.effectors import ReviewEffector
 from reviewkit.homeostat import build_layer_specs, scope_to_layer_index
-from reviewkit.llm import LLMClient
+from reviewkit.llm import LLMClient, LLMClientError, LLMClientFailure
 from reviewkit.models import (
     DocumentReviewResponse,
     FindingLineageEvent,
@@ -56,6 +63,8 @@ from reviewkit.models import (
     ReconciliationRequest,
     ReviewAction,
     ReviewActionType,
+    ReviewBoundError,
+    ReviewFailureClass,
     ReviewFinding,
     ReviewLocator,
     ReviewResponse,
@@ -101,8 +110,8 @@ _ACTION_TYPE = {
     VerdictKind.CHANGE: ReviewActionType.REPLACE_TEXT,
     VerdictKind.DELETE: ReviewActionType.DELETE_TEXT,
     VerdictKind.INSERT: ReviewActionType.INSERT_TEXT,
-    VerdictKind.MISSING: ReviewActionType.INSERT_TEXT,
 }
+_ACT_KINDS = frozenset(_ACTION_TYPE)
 
 _RESPONSE_SCHEMA: dict[ReviewScope, type[ReviewResponse]] = {
     ReviewScope.SENTENCE: SentenceReviewResponse,
@@ -163,6 +172,7 @@ class TaktReviewer:
             )
         state = ReviewState()
         self.state = state
+        self.traces = []
         effector = ReviewEffector(state)
 
         layers = build_layer_specs(self.profile)
@@ -192,15 +202,20 @@ class TaktReviewer:
             detector = detectors[scope]
             if self.pack is not None:
                 signals = detector.judge(node)
+                if not signals:
+                    # Covered, untagged, empty-rule, and all-keep nodes skip takt.
+                    continue
             else:
                 detector.set_lower_actions(accumulated_lower_actions)
                 signals = detector.detect(node)
-            # Even with empty signals we still evaluate (stable / intrinsic value).
+            # pack=None: even empty signals still evaluate (stable / intrinsic value).
             decision = self.takt_client.evaluate(
                 plant_nodes=[node.to_plant_node(value=0.0)],
                 layers=layers,
                 raw_signals=signals,
             )
+            if self.pack is not None:
+                detector.act_after_judge(node)
             effector.apply_takt_decision(node.id, decision)
             accumulated_lower_actions = effector.actions
             if scope == ReviewScope.DOCUMENT and isinstance(
@@ -209,7 +224,11 @@ class TaktReviewer:
                 document_response = detector.last_response
 
         rereviewed: list[tuple[ReconciliationRequest, ReviewFinding]] = []
-        if self.profile.reconciliation_max_rounds and document_response is not None:
+        if (
+            self.pack is None
+            and self.profile.reconciliation_max_rounds
+            and document_response is not None
+        ):
             targets = select_reconciliation_targets(
                 document_response.reconciliation_requests,
                 scanned_nodes,
@@ -254,21 +273,24 @@ class TaktReviewer:
         assert self.pack is not None
         assert self.decision is not None
         enabled = set(self.profile.review_pipeline)
+        named: list[FunctionTag] = []
         for node in plant.sequential_scan():
             scope = node.scope()
             if scope is None or scope not in enabled:
                 continue
             inner = getattr(node, "inner", node)
             text = str(getattr(inner, "text", "") or "")
+            if not text.strip():
+                continue
             functions = naming_functions(self.pack, scope)
             if not functions:
                 continue
             questions = naming_questions(functions)
-            answers = self.decision.decide(text, questions)
+            answers = _plugin_decide(self.decision, text, questions, node_id=node.id)
             tagged = [
                 function_id
                 for function_id, raw in answers.items()
-                if function_id in questions and is_noul_yes(coerce_answer(raw))
+                if function_id in questions and is_noul_yes(_plugin_coerce(raw, node.id))
             ]
             response = NamingResponse(
                 tags=[FunctionTag(node_id=node.id, function_ids=tagged)] if tagged else []
@@ -279,7 +301,8 @@ class TaktReviewer:
                 None,
             )
             if tag is not None and tag.function_ids:
-                self.state.tags.append(tag)
+                named.append(tag)
+        self.state.tags.extend(named)
 
     def _build_detectors(
         self,
@@ -346,6 +369,9 @@ class _LLMDetectorAdapter:
         self.effector = effector
         self._lower_actions: list[ReviewAction] = []
         self.last_response: ReviewResponse | None = None
+        self._pending_verdicts: list[Verdict] = []
+        self._pending_units: dict[str, SourceUnit] = {}
+        self._pending_scope: ReviewScope = scope
 
     def set_lower_actions(self, actions: list[ReviewAction]) -> None:
         self._lower_actions = list(actions)
@@ -362,7 +388,12 @@ class _LLMDetectorAdapter:
         return self._judge_with_pack(node, effective_scope)
 
     def _judge_with_pack(self, node: DocNode, scope: ReviewScope) -> list[RawSignal]:
+        """Second scan. Findings and signals only; the effector does not write yet."""
         assert self.pack is not None
+        self._pending_verdicts = []
+        self._pending_units = {}
+        self._pending_scope = scope
+        self.last_response = None
         node_id = getattr(node, "id", "?")
         function_ids = self.inner.state.functions_for(node_id)
         covered = self.inner.state.covered()
@@ -397,11 +428,30 @@ class _LLMDetectorAdapter:
             return []
         response = _RESPONSE_SCHEMA[scope](
             findings=self._findings(verdicts),
-            actions=self._actions(node_id, scope, verdicts, units),
+            actions=[],
         )
+        self._pending_verdicts = verdicts
+        self._pending_units = units
         self.last_response = response
         self._record(node, scope, response)
         return _response_to_signals(response, node_id, f"llm_{scope.value}", scope)
+
+    def act_after_judge(self, node: DocNode) -> None:
+        """Optional write: change/delete/insert at or above the confidence floor."""
+        response = self.last_response
+        if response is None or not self._pending_verdicts:
+            return
+        node_id = getattr(node, "id", "?")
+        actions = self._actions(
+            node_id, self._pending_scope, self._pending_verdicts, self._pending_units
+        )
+        if not actions:
+            return
+        response.actions.extend(actions)
+        node_text = str(self.document.get_node_text(node_id) or "")
+        self._attach_action_lineage(
+            response, node_id=node_id, scope=self._pending_scope, node_text=node_text
+        )
 
     def _verdicts(
         self,
@@ -419,6 +469,7 @@ class _LLMDetectorAdapter:
         for rule in rules:
             unit = units.get(rule.function_id)
             answer, kind = self._decide_rule(
+                node_id=node_id,
                 rule=rule,
                 unit=unit,
                 text=text,
@@ -445,6 +496,7 @@ class _LLMDetectorAdapter:
     def _decide_rule(
         self,
         *,
+        node_id: str,
         rule: Rule,
         unit: SourceUnit | None,
         text: str,
@@ -463,8 +515,8 @@ class _LLMDetectorAdapter:
             questions: Mapping[str, Question] = document_present_question(
                 function_label(self.pack, rule.function_id)
             )
-            answers = self.decision.decide(state, questions)
-            answer = coerce_answer(answers.get("present"))
+            answers = _plugin_decide(self.decision, state, questions, node_id=node_id)
+            answer = _plugin_coerce(answers.get("present"), node_id)
             kind = VerdictKind.KEEP if is_noul_yes(answer) else VerdictKind.MISSING
             return answer, kind
         fragment_state: FragmentDecisionState = {
@@ -472,8 +524,10 @@ class _LLMDetectorAdapter:
             "tags": function_ids,
             "unit": dumped,
         }
-        answers = self.decision.decide(fragment_state, fragment_verdict_question())
-        answer = coerce_answer(answers.get("verdict"))
+        answers = _plugin_decide(
+            self.decision, fragment_state, fragment_verdict_question(), node_id=node_id
+        )
+        answer = _plugin_coerce(answers.get("verdict"), node_id)
         return answer, _verdict_kind(answer)
 
     def _findings(self, verdicts: list[Verdict]) -> list[ReviewFinding]:
@@ -482,6 +536,7 @@ class _LLMDetectorAdapter:
                 node_id=verdict.node_id,
                 title=verdict.kind.value,
                 description=verdict.reason or verdict.function_id,
+                confidence=verdict.confidence,
             )
             for verdict in verdicts
             if verdict.kind is not VerdictKind.KEEP
@@ -497,24 +552,16 @@ class _LLMDetectorAdapter:
         floor = self.inner.profile.resolved_action_policy().min_confidence_for_auto_apply
         text = str(self.document.get_node_text(node_id) or "")
         actions: list[ReviewAction] = []
+        self.inner._active_node_id = node_id
         for verdict in verdicts:
-            if verdict.kind is VerdictKind.KEEP or verdict.kind not in _ACTION_TYPE:
+            if verdict.kind not in _ACT_KINDS:
                 continue
             human = verdict.confidence < floor
             replacement = None
             if not human:
-                written = self.inner._complete(
-                    action_prompt(
-                        self.inner.profile,
-                        node_id=node_id,
-                        text=text,
-                        verdict=verdict,
-                        unit=units.get(verdict.function_id),
-                    ),
-                    ActionText,
+                replacement, human = self._replacement_text(
+                    node_id, text, verdict, units.get(verdict.function_id)
                 )
-                assert isinstance(written, ActionText)
-                replacement = written.replacement_text
             actions.append(
                 ReviewAction(
                     scope=scope,
@@ -529,6 +576,45 @@ class _LLMDetectorAdapter:
                 )
             )
         return actions
+
+    def _replacement_text(
+        self,
+        node_id: str,
+        text: str,
+        verdict: Verdict,
+        unit: SourceUnit | None,
+    ) -> tuple[str | None, bool]:
+        """Write replacement text, or degrade to a person on plugin failure."""
+        try:
+            written = self.inner._complete(
+                action_prompt(
+                    self.inner.profile,
+                    node_id=node_id,
+                    text=text,
+                    verdict=verdict,
+                    unit=unit,
+                ),
+                ActionText,
+            )
+        except (ReviewBoundError, LLMClientError, TimeoutError, ValidationError) as exc:
+            bound = _plugin_bound_error(exc, node_id)
+            self.traces.append(
+                PassTrace(
+                    checks=(
+                        ProcessCheck(
+                            name="act_plugin_failed",
+                            passed=False,
+                            detail=bound.failure_class.value,
+                        ),
+                    )
+                )
+            )
+            self.inner.state.warnings.append(
+                f"Action write failed for node {node_id}: plugin_failure"
+            )
+            return None, True
+        assert isinstance(written, ActionText)
+        return written.replacement_text, False
 
     def _record(self, node: DocNode, scope: ReviewScope, response: ReviewResponse) -> None:
         node_id = getattr(node, "id", "?")
@@ -685,12 +771,39 @@ class _LLMDetectorAdapter:
             )
             finding.lineage = (*finding.lineage, event)
 
+        self._attach_action_lineage(response, node_id=node_id, scope=scope, node_text=node_text)
+
+    def _attach_action_lineage(
+        self,
+        response: Any,
+        *,
+        node_id: str,
+        scope: ReviewScope,
+        node_text: str,
+    ) -> None:
+        profile_digest = hashlib.sha256(
+            json.dumps(
+                self.inner.profile.model_dump(mode="json"),
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        source_locator = ReviewLocator(
+            node_id=node_id,
+            char_start=0,
+            char_end=len(node_text),
+            original_text=node_text,
+            text_hash=ReviewLocator.hash_text(node_text),
+            node_hash=ReviewLocator.hash_text(node_text),
+        )
         finding_events = {finding.finding_id: finding.lineage for finding in response.findings}
         for existing in self.inner.state.findings:
             finding_events[existing.finding_id] = existing.lineage
             for alias in existing.metadata.get("merged_finding_ids", []):
                 finding_events[alias] = existing.lineage
         for action in response.actions:
+            if action.lineage:
+                continue
             if action.finding_id in finding_events:
                 action.lineage = tuple(finding_events[action.finding_id])
             elif action.finding_id is None:
@@ -714,6 +827,60 @@ class _LLMDetectorAdapter:
 
     def signals_for_response(self, response: ReviewResponse, node_id: str) -> list[RawSignal]:
         return _response_to_signals(response, node_id, "llm_reconciliation", self.scope)
+
+
+def _plugin_bound_error(exc: BaseException, node_id: str) -> ReviewBoundError:
+    """Map a host plugin failure to a content-free structured bound."""
+    if isinstance(exc, ReviewBoundError):
+        return exc
+    if isinstance(exc, TimeoutError):
+        return ReviewBoundError(
+            failure_class=ReviewFailureClass.TIMEOUT,
+            node_id=node_id,
+            reason="plugin_failure",
+        )
+    if isinstance(exc, LLMClientError):
+        failure_class = {
+            LLMClientFailure.TIMEOUT: ReviewFailureClass.TIMEOUT,
+            LLMClientFailure.RESPONSE_SCHEMA: ReviewFailureClass.SCHEMA_MISMATCH,
+            LLMClientFailure.TRANSPORT: ReviewFailureClass.UNSUPPORTED_SHAPE,
+        }[exc.failure]
+        return ReviewBoundError(
+            failure_class=failure_class,
+            node_id=node_id,
+            reason="plugin_failure",
+        )
+    if isinstance(exc, ValidationError):
+        return ReviewBoundError(
+            failure_class=ReviewFailureClass.SCHEMA_MISMATCH,
+            node_id=node_id,
+            reason="plugin_failure",
+        )
+    return ReviewBoundError(
+        failure_class=ReviewFailureClass.UNSUPPORTED_SHAPE,
+        node_id=node_id,
+        reason="plugin_failure",
+    )
+
+
+def _plugin_decide(
+    client: DecisionClient,
+    state: DecisionState,
+    questions: Mapping[str, Question],
+    *,
+    node_id: str,
+) -> DecisionAnswers:
+    try:
+        return client.decide(state, questions)
+    except Exception as exc:
+        raise _plugin_bound_error(exc, node_id) from exc
+
+
+def _plugin_coerce(raw: RawDecisionAnswer | None, node_id: str) -> DecisionAnswer:
+    try:
+        return coerce_answer(raw)
+    except (ValidationError, ValueError, TypeError) as exc:
+        raise _plugin_bound_error(exc, node_id) from exc
 
 
 def _stable_evidence_ref(finding_id: str, index: int, evidence: object) -> str:

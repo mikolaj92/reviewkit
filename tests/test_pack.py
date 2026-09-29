@@ -256,11 +256,8 @@ def test_a_pack_names_before_it_judges() -> None:
     assert [finding.title for finding in findings] == ["missing"]
     assert findings[0].description == "purposes"
     assert findings[0].dimension is None
-    assert actions[0].replacement_text == "Cele: swiadczenie uslugi."
-    assert actions[0].tags == ["purposes"]
-    assert all(_payload(call)["pass"] == "action" for call in llm.calls)
-    assert _payload(llm.calls[0])["verdict"]["kind"] == "missing"
-    assert _payload(llm.calls[0])["source"]["id"] == "unit-controller"
+    assert actions == []
+    assert llm.calls == []
     assert all(
         "current_review_state" not in _dump(call.state)
         and "external_review_context" not in _dump(call.state)
@@ -647,29 +644,28 @@ def test_two_scans_name_before_takt_and_keep_tags_off_raw_signals() -> None:
     assert len(naming) == 4
     assert events[:4] == ["decide", "decide", "decide", "decide"]
     assert "evaluate" not in events[:4]
-    assert events.count("evaluate") == 4
+    assert events.count("evaluate") == 1
     assert state.covered() == {"controller_identity": ["p1.s1"]}
     signals = [signal for call in takt.calls for signal in call.get("raw_signals") or ()]
     assert signals
     for signal in signals:
         assert "tags" not in signal.to_json()
         assert "tags" not in signal.evidence
-    assert all(_payload(call)["pass"] == "action" for call in llm.calls)
+    assert llm.calls == []
 
 
 def test_pack_review_calls_llm_only_to_act() -> None:
     document = parse_text("Kontakt: biuro@firma.pl.")
     decision = MockDecisionClient(
         answers=[
-            _named("controller_identity"),
+            _named("controller_identity", "purposes"),
             _named(),
             _named(),
             _named(),
-            {"verdict": "keep"},
-            {"present": False},
+            {"verdict": {"value": "change", "confidence": 0.95}},
         ]
     )
-    llm = MockLLMClient(responses=[{"replacement_text": "Cele: swiadczenie uslugi."}])
+    llm = MockLLMClient(responses=[{"replacement_text": "rewritten lead"}])
 
     _reviewer(llm, _pack(), decision).review(document)
 

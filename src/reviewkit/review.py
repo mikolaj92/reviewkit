@@ -31,8 +31,10 @@ def review_tree(
 
     ``pack`` is the game: ontology, source units, and rules. It is not the
     profile, not instructions.md, and not external_review_context. ``None`` is
-    explicit legacy compat for the single fused pass. The host injects
-    ``decision`` (``DecisionClient.decide``) and ``llm``
+    explicit legacy compat for the single fused pass (including reconciliation).
+    A pack review names, then judges, then optionally writes; it does not fuse
+    detect into actions and does not run the fused reconciliation pass. The host
+    injects ``decision`` (``DecisionClient.decide``) and ``llm``
     (``LLMClient.complete_json``); ReviewKit does not ship a model runtime.
     """
     profile = (

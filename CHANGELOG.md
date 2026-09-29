@@ -6,6 +6,13 @@ Typing and public-export polish for the 0.24 Pack path. Hosts import Pack
 schemas, plugin sockets, and review entry points from `reviewkit`. No behavior
 change.
 
+### Fixes
+
+Pack two-scan loop: name does not touch the effector; judge short-circuits covered /
+unmatched nodes before takt; `missing` and below-confidence verdicts do not call
+`LLMClient`; act-plugin failures degrade to a person with a structured trace;
+re-runs reset traces.
+
 ## 0.24.0
 
 Breaking change. A review given a `Pack` runs two scans plus an optional write.

@@ -172,6 +172,8 @@ def _review_tree(
         pack=pack,
         decision=decision,
     )
+    # Pack reviews name → judge → optional act inside TaktReviewer. extra_actions
+    # stay a host-side append after that loop, never a fused detect→write.
     findings, actions, state = reviewer.review(document)
     if extra_actions:
         prepared_extra = prepare_actions(document, profile, extra_actions, policy=action_policy)
