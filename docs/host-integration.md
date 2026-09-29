@@ -64,7 +64,10 @@ review_document(input_path, profile, llm, pack, decision)
 review_tree(document, profile, llm, pack, decision)
 
 findings, actions, state = TaktReviewer(
-    profile=profile, llm=llm, pack=pack, decision=decision,
+    profile=profile,
+    llm=llm,
+    pack=pack,
+    decision=decision,
 ).review(document)
 gaps = pack.ontology.function_ids() - set(state.covered())
 ```

@@ -61,9 +61,7 @@ from reviewkit import (
 )
 
 pack = Pack(
-    ontology=Ontology(
-        functions=[Function(id="opening", label="Opening", attach_to=["sentence"])]
-    ),
+    ontology=Ontology(functions=[Function(id="opening", label="Opening", attach_to=["sentence"])]),
     units={
         "unit-opening": SourceUnit(
             id="unit-opening",
@@ -87,7 +85,7 @@ pack = Pack(
 # File edge only:
 # pack = Pack.model_validate_json(Path("examples/packs/story.json").read_text())
 profile = load_profile("examples/profiles/story.teacher")
-llm = MockLLMClient()          # host plugin: LLMClient.complete_json
+llm = MockLLMClient()  # host plugin: LLMClient.complete_json
 decision = MockDecisionClient()  # host plugin: DecisionClient.decide
 
 # DOCX artifacts (reviewed / corrected / JSON report):
