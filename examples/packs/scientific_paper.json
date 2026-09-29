@@ -1,0 +1,427 @@
+{
+  "ontology": {
+    "functions": [
+      {
+        "id": "abstract",
+        "label": "Abstract",
+        "attach_to": ["paragraph", "section"]
+      },
+      {
+        "id": "research_question",
+        "label": "Research question",
+        "attach_to": ["sentence", "paragraph"]
+      },
+      {
+        "id": "related_work",
+        "label": "Related work",
+        "attach_to": ["paragraph", "section"]
+      },
+      {
+        "id": "methods",
+        "label": "Methods",
+        "attach_to": ["paragraph", "section"]
+      },
+      {
+        "id": "results",
+        "label": "Results",
+        "attach_to": ["sentence", "paragraph", "section"]
+      },
+      {
+        "id": "discussion",
+        "label": "Discussion",
+        "attach_to": ["paragraph", "section"]
+      },
+      {
+        "id": "limitations",
+        "label": "Limitations",
+        "attach_to": ["sentence", "paragraph", "section"]
+      },
+      {
+        "id": "citations",
+        "label": "Citations",
+        "attach_to": ["sentence", "paragraph"]
+      },
+      {
+        "id": "novelty_claim",
+        "label": "Novelty claim",
+        "attach_to": ["sentence", "paragraph"]
+      },
+      {
+        "id": "reproducibility",
+        "label": "Reproducibility",
+        "attach_to": ["paragraph", "section"]
+      }
+    ]
+  },
+  "units": {
+    "unit-imrad": {
+      "id": "unit-imrad",
+      "source_id": "imrad-expectation",
+      "locator": "imrad",
+      "text": "Any topic paper uses the same shape. Abstract: question, method, result, bounded conclusion — no claim absent from the body. Research question: a testable question or hypothesis. Related work: positions the question against identifiable prior work. Methods: design and procedure that could produce the reported results. Results: measurements and estimates that match the methods; no silent outcome swap. Discussion: interpretation that does not outrun the results. Limitations: what the design cannot support. Reproducibility: enough detail for an independent reader to repeat or audit the work. Topic (physics, trials, software, observation) is unit data, not a new function.",
+      "force": "expectation"
+    },
+    "unit-consort": {
+      "id": "unit-consort",
+      "source_id": "reporting-guideline",
+      "locator": "consort-pattern",
+      "text": "CONSORT-style pattern (randomized trials), not a core Function. When the paper reports a randomized trial, methods name trial design, participants, interventions, randomization, blinding, primary outcome, sample size, and a participant flow. Results report each pre-specified outcome with denominator and an estimated effect with precision. Hosts replace this sample with the checklist the journal uses. If the paper is not a trial, keep.",
+      "url": "https://www.consort-statement.org/",
+      "force": "recommended"
+    },
+    "unit-prisma": {
+      "id": "unit-prisma",
+      "source_id": "reporting-guideline",
+      "locator": "prisma-pattern",
+      "text": "PRISMA-style pattern (systematic reviews), not a core Function. When the paper is a systematic review or meta-analysis, related work and methods name eligibility criteria, information sources, search strategy, selection process, and synthesis. Results distinguish included studies from narrative extras. Hosts replace this sample with the checklist the journal uses. If the paper is not a review, keep.",
+      "url": "https://www.prisma-statement.org/",
+      "force": "recommended"
+    },
+    "unit-strobe": {
+      "id": "unit-strobe",
+      "source_id": "reporting-guideline",
+      "locator": "strobe-pattern",
+      "text": "STROBE-style pattern (observational studies), not a core Function. When the paper is cohort, case-control, or cross-sectional, methods name study design, setting, participants, variables, bias, and study size. Results report participant numbers at each stage and unadjusted plus adjusted estimates. Hosts replace this sample with the checklist the journal uses. If the paper is not observational, keep.",
+      "url": "https://www.strobe-statement.org/",
+      "force": "recommended"
+    },
+    "unit-citation-needed": {
+      "id": "unit-citation-needed",
+      "source_id": "citation-integrity",
+      "locator": "citation-needed",
+      "text": "A specific, contestable assertion (prior result, prevalence, mechanism, priority) needs an in-text citation to a resolvable work. Common knowledge and the paper's own results just shown do not. Absence of a cite on a loaded claim is a defect, not a style note.",
+      "force": "heuristic"
+    },
+    "unit-citation-provenance": {
+      "id": "unit-citation-provenance",
+      "source_id": "citation-integrity",
+      "locator": "provenance",
+      "text": "Provenance is what they cite, not that a reference list exists. Each in-text citation must identify one real work (authors, year, title, venue, and a resolver such as DOI or URL when claimed). The cited work must contain the statement attributed to it. Fail: decorative name-drops, a secondary summary standing in for the primary source, a cite that cannot be resolved, or a bibliography whose entries are never used to support a claim. Egg and low-quality papers typically fail here first.",
+      "force": "heuristic"
+    },
+    "unit-claim-evidence": {
+      "id": "unit-claim-evidence",
+      "source_id": "citation-integrity",
+      "locator": "claim-evidence",
+      "text": "A novelty or result claim must link to evidence in this paper: a result, table, figure, estimate, or a method that could have produced it. A methods paragraph elsewhere, a citation to unrelated work, or rhetoric in the discussion is not that link. If the claim cannot be walked to evidence, it is a defect.",
+      "force": "heuristic"
+    },
+    "unit-overclaim": {
+      "id": "unit-overclaim",
+      "source_id": "citation-integrity",
+      "locator": "overclaim",
+      "text": "Overclaim: causal language from a non-causal design; 'proves', 'first ever', or unbounded generalization beyond sample, setting, or outcome. Hedge to what the design and results support. This is domain-agnostic: it does not encode a field's substance, only the warrant of the sentence.",
+      "force": "heuristic"
+    },
+    "unit-hallucinated-refs": {
+      "id": "unit-hallucinated-refs",
+      "source_id": "citation-integrity",
+      "locator": "hallucinated-refs",
+      "text": "A citation is hallucinated when author, year, title, venue, or DOI/PMID do not resolve to one work, or when they resolve to a different work than the one named. Invented papers, swapped titles, and fabricated identifiers are defects on the citation fragment. Do not treat a fluent-looking reference list as coverage.",
+      "force": "heuristic"
+    },
+    "unit-p-hacking": {
+      "id": "unit-p-hacking",
+      "source_id": "citation-integrity",
+      "locator": "p-hacking",
+      "text": "P-hacking flags (domain-agnostic): undisclosed multiple comparisons; outcome switching relative to the stated question; optional stopping; HARKing (hypothesis presented as if pre-specified after seeing results); dropping conditions or covariates only when they move the estimate. A result fragment that looks selected for significance without the analysis plan is a defect.",
+      "force": "heuristic"
+    },
+    "unit-primer-scientific-method": {
+      "id": "unit-primer-scientific-method",
+      "source_id": "primer",
+      "locator": "scientific-method",
+      "text": "Stanford Encyclopedia of Philosophy, Scientific Method — optional primer for manuscripts that have IMRaD headings but no testable question, no possible disconfirmation, and no result that could answer the question.",
+      "url": "https://plato.stanford.edu/entries/scientific-method/",
+      "force": "optional"
+    },
+    "unit-primer-information-theory": {
+      "id": "unit-primer-information-theory",
+      "source_id": "primer",
+      "locator": "shannon-1948",
+      "text": "Claude E. Shannon, A Mathematical Theory of Communication, Bell System Technical Journal, 1948 — optional primer when 'information', 'entropy', or 'signal' is claimed without a defined measure, channel, or observable. Title and URL are unit data, not Python.",
+      "url": "https://people.math.harvard.edu/~ctm/home/text/others/shannon/entropy/entropy.pdf",
+      "force": "optional"
+    },
+    "unit-primer-cargo-cult": {
+      "id": "unit-primer-cargo-cult",
+      "source_id": "primer",
+      "locator": "feynman-cargo-cult",
+      "text": "Richard Feynman, Cargo Cult Science, Caltech commencement 1974 — optional primer for form-without-test: headings, p-values, and citations that do not constrain a claim. Title and URL are unit data, not Python.",
+      "url": "https://calteches.library.caltech.edu/51/2/CargoCult.htm",
+      "force": "optional"
+    }
+  },
+  "rules": [
+    {
+      "id": "label-abstract",
+      "kind": "label",
+      "function_id": "abstract",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-research-question",
+      "kind": "label",
+      "function_id": "research_question",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-related-work",
+      "kind": "label",
+      "function_id": "related_work",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-methods",
+      "kind": "label",
+      "function_id": "methods",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-results",
+      "kind": "label",
+      "function_id": "results",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-discussion",
+      "kind": "label",
+      "function_id": "discussion",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-limitations",
+      "kind": "label",
+      "function_id": "limitations",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-citations",
+      "kind": "label",
+      "function_id": "citations",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-novelty-claim",
+      "kind": "label",
+      "function_id": "novelty_claim",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-reproducibility",
+      "kind": "label",
+      "function_id": "reproducibility",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "defect-imrad-abstract",
+      "kind": "defect",
+      "function_id": "abstract",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "defect-imrad-methods",
+      "kind": "defect",
+      "function_id": "methods",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "defect-imrad-results",
+      "kind": "defect",
+      "function_id": "results",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "defect-consort-methods",
+      "kind": "defect",
+      "function_id": "methods",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-consort"
+    },
+    {
+      "id": "defect-prisma-related-work",
+      "kind": "defect",
+      "function_id": "related_work",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-prisma"
+    },
+    {
+      "id": "defect-strobe-methods",
+      "kind": "defect",
+      "function_id": "methods",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-strobe"
+    },
+    {
+      "id": "defect-citation-needed",
+      "kind": "defect",
+      "function_id": "novelty_claim",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-citation-needed"
+    },
+    {
+      "id": "defect-citation-needed-results",
+      "kind": "defect",
+      "function_id": "results",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-citation-needed"
+    },
+    {
+      "id": "defect-citation-provenance",
+      "kind": "defect",
+      "function_id": "citations",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-citation-provenance"
+    },
+    {
+      "id": "defect-claim-evidence",
+      "kind": "defect",
+      "function_id": "novelty_claim",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-claim-evidence"
+    },
+    {
+      "id": "defect-overclaim",
+      "kind": "defect",
+      "function_id": "novelty_claim",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-overclaim"
+    },
+    {
+      "id": "defect-hallucinated-refs",
+      "kind": "defect",
+      "function_id": "citations",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-hallucinated-refs"
+    },
+    {
+      "id": "defect-p-hacking",
+      "kind": "defect",
+      "function_id": "results",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-p-hacking"
+    },
+    {
+      "id": "defect-claim-evidence-results",
+      "kind": "defect",
+      "function_id": "results",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-claim-evidence"
+    },
+    {
+      "id": "defect-research-question-method",
+      "kind": "defect",
+      "function_id": "research_question",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-primer-scientific-method"
+    },
+    {
+      "id": "close-abstract",
+      "kind": "close",
+      "function_id": "abstract",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "close-research-question",
+      "kind": "close",
+      "function_id": "research_question",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "close-related-work",
+      "kind": "close",
+      "function_id": "related_work",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "close-methods",
+      "kind": "close",
+      "function_id": "methods",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "close-results",
+      "kind": "close",
+      "function_id": "results",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "close-discussion",
+      "kind": "close",
+      "function_id": "discussion",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "close-limitations",
+      "kind": "close",
+      "function_id": "limitations",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-imrad"
+    },
+    {
+      "id": "close-citations",
+      "kind": "close",
+      "function_id": "citations",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-citation-provenance"
+    },
+    {
+      "id": "close-novelty-claim",
+      "kind": "close",
+      "function_id": "novelty_claim",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-claim-evidence"
+    },
+    {
+      "id": "close-reproducibility",
+      "kind": "close",
+      "function_id": "reproducibility",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-imrad"
+    }
+  ]
+}

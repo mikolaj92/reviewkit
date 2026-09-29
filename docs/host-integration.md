@@ -32,9 +32,30 @@ A Pack review raises if `decision` is omitted. `llm` is still required: scan 3
 writes replacement text through `LLMClient.complete_json`.
 
 Runnable sketch: [`examples/host_pack_review.py`](../examples/host_pack_review.py).
-Example Pack: [`examples/packs/story.json`](../examples/packs/story.json).
-Example profile (behavior only):
-[`examples/profiles/story.teacher`](../examples/profiles/story.teacher).
+Example Packs:
+[`examples/packs/story.json`](../examples/packs/story.json) (story),
+[`examples/packs/scientific_paper.json`](../examples/packs/scientific_paper.json)
+(scientific paper). Example profiles (behavior only):
+[`examples/profiles/story.teacher`](../examples/profiles/story.teacher),
+[`examples/profiles/scientific.reviewer`](../examples/profiles/scientific.reviewer).
+
+## Platforms
+
+ReviewKit is a platform engine. Hosts own domain Packs and plugins.
+
+| Surface | Owns | Not in ReviewKit core |
+| --- | --- | --- |
+| **Legal host (Temida)** | Legal ontology, source acts, label/defect/close rules, `DecisionClient` / `LLMClient` | Statutes, jurisdiction text, a legal fork of this library |
+| **Scientific paper example** | IMRaD functions, reporting-guideline and citation-integrity units, peer-reviewer profile | CONSORT/PRISMA/STROBE as Python; a science module |
+
+Scientific paper review is a first-class **example Pack**, not a domain baked
+into core. It is also the **testbed** for name → judge → act (same reading
+process as a reviewer) before Temida-scale legal packs. Meta:
+[`docs/platforms/scientific-paper-review.md`](platforms/scientific-paper-review.md).
+Egg fixture: [`examples/papers/egg-low-quality.md`](../examples/papers/egg-low-quality.md).
+Sketch: [`examples/scientific_paper_review.py`](../examples/scientific_paper_review.py).
+Load the Pack with `Pack.model_validate_json` (or `Pack.model_validate`).
+Gaps stay `ontology.function_ids() − covered()` on the host.
 
 ## What each object is
 
