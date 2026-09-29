@@ -15,6 +15,15 @@ def _sketch() -> ModuleType:
     return module
 
 
+def _scientific_sketch() -> ModuleType:
+    path = Path(__file__).resolve().parents[1] / "examples" / "scientific_paper_review.py"
+    spec = importlib.util.spec_from_file_location("scientific_paper_review", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def test_example_pack_is_the_public_pack_shape() -> None:
     pack = _sketch().load_example_pack()
     assert pack.ontology.function_ids() == {"opening", "conflict", "resolution"}
@@ -81,6 +90,28 @@ def test_scientific_reviewer_profile_is_behavior_only() -> None:
     dumped = " ".join(profile.markdown_files.values()).lower()
     assert "function_id" not in dumped
     assert "source_unit" not in dumped
+
+
+def test_scientific_paper_pack_runs_name_judge_act_on_egg_fixture() -> None:
+    findings, actions, state, pack, llm = _scientific_sketch().review_egg_paper()
+    tagged = {node_id for nodes in state.covered().values() for node_id in nodes}
+    assert any("." in node_id for node_id in tagged)
+    assert "p1" in tagged
+    assert "s1" in tagged
+    assert "document" in tagged
+    assert "abstract" in state.covered()
+    assert "novelty_claim" in state.covered()
+    assert "citations" in state.covered()
+    assert "results" in state.covered()
+    gaps = pack.ontology.function_ids() - set(state.covered())
+    assert "methods" in gaps
+    assert "research_question" in gaps
+    titles = {finding.title for finding in findings}
+    assert "change" in titles
+    assert "missing" in titles
+    assert llm.calls
+    assert any(getattr(call.schema, "__name__", "") == "ActionText" for call in llm.calls)
+    assert any(action.replacement_text for action in actions)
 
 
 def test_docs_name_pack_and_two_scans_not_stale_host_apis() -> None:

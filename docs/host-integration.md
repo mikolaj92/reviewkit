@@ -49,10 +49,13 @@ ReviewKit is a platform engine. Hosts own domain Packs and plugins.
 | **Scientific paper example** | IMRaD functions, reporting-guideline and citation-integrity units, peer-reviewer profile | CONSORT/PRISMA/STROBE as Python; a science module |
 
 Scientific paper review is a first-class **example Pack**, not a domain baked
-into core. Meta: [`docs/platforms/scientific-paper-review.md`](platforms/scientific-paper-review.md).
-Load it with `Pack.model_validate_json` (or `Pack.model_validate`) the same
-way as the story Pack. Gaps stay `ontology.function_ids() − covered()` on
-the host.
+into core. It is also the **testbed** for name → judge → act (same reading
+process as a reviewer) before Temida-scale legal packs. Meta:
+[`docs/platforms/scientific-paper-review.md`](platforms/scientific-paper-review.md).
+Egg fixture: [`examples/papers/egg-low-quality.md`](../examples/papers/egg-low-quality.md).
+Sketch: [`examples/scientific_paper_review.py`](../examples/scientific_paper_review.py).
+Load the Pack with `Pack.model_validate_json` (or `Pack.model_validate`).
+Gaps stay `ontology.function_ids() − covered()` on the host.
 
 ## What each object is
 

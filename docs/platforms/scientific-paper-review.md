@@ -14,6 +14,27 @@ Pack. Neither domain belongs in `src/reviewkit`.
 | This example | [`examples/packs/scientific_paper.json`](../../examples/packs/scientific_paper.json) | CONSORT/PRISMA/STROBE as Python, journal policy, a “science” module |
 | Profile | Reviewer behavior only — [`examples/profiles/scientific.reviewer`](../../examples/profiles/scientific.reviewer) | Function ids, source units, reporting checklists |
 
+## Testbed for name → judge → act
+
+This Pack is how we **stress-test the three transitions** a real reviewer
+makes, and surface wrong assumptions **before Temida-scale legal packs**:
+
+1. **Name** every sentence, then paragraph, section, and document against
+   the IMRaD dictionary (`naming_functions`). Tags only.
+2. **Judge / evaluate** matching functions against at most one `SourceUnit`
+   per rule (`keep` / `change` / `delete` / `insert` / `missing`).
+3. **Act** = apply score (takt actuation vs interlock vs stable) plus an
+   optional rewrite through `LLMClient.complete_json` for `change` /
+   `delete` / `insert` above the profile floor.
+
+The ontology stays IMRaD (domain-agnostic structure). Topic, checklists, and
+primers are unit data. A synthetic egg paper —
+[`examples/papers/egg-low-quality.md`](../../examples/papers/egg-low-quality.md)
+— plants an overclaim in the abstract, a fake-looking citation, an
+unsupported result claim, and missing methods. The runnable sketch
+[`examples/scientific_paper_review.py`](../../examples/scientific_paper_review.py)
+injects `MockDecisionClient` and `MockLLMClient` into `TaktReviewer`.
+
 Call site (host wires the sockets; this library does not review the paper
 itself):
 
