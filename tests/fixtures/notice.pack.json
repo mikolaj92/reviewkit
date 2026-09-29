@@ -1,0 +1,63 @@
+{
+  "ontology": {
+    "functions": [
+      {
+        "id": "controller_identity",
+        "label": "Administrator",
+        "attach_to": ["sentence"]
+      },
+      {
+        "id": "purposes",
+        "label": "Cele",
+        "attach_to": ["sentence"]
+      }
+    ]
+  },
+  "units": {
+    "unit-controller": {
+      "id": "unit-controller",
+      "source_id": "source",
+      "locator": "§1",
+      "text": "identity of the controller",
+      "force": "binding"
+    },
+    "unused": {
+      "id": "unused",
+      "source_id": "source",
+      "locator": "§99",
+      "text": "the whole unused corpus",
+      "force": "dead"
+    }
+  },
+  "rules": [
+    {
+      "id": "label-controller",
+      "kind": "label",
+      "function_id": "controller_identity",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-purposes",
+      "kind": "label",
+      "function_id": "purposes",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "defect-controller",
+      "kind": "defect",
+      "function_id": "controller_identity",
+      "scope": "fragment",
+      "when": "function_present"
+    },
+    {
+      "id": "close-purposes",
+      "kind": "close",
+      "function_id": "purposes",
+      "scope": "document",
+      "when": "function_absent",
+      "source_unit_id": "unit-controller"
+    }
+  ]
+}
