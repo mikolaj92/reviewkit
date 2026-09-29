@@ -129,6 +129,8 @@ def test_profiles_and_grounding_use_one_public_review_topology(
             "llm": llm,
             "context_provider": context,
             "action_policy": None,
+            "pack": None,
+            "decision": None,
         }
     ]
     assert [finding.scope for finding in result.findings] == ["paragraph", "document"]
