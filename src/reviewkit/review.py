@@ -69,10 +69,23 @@ def review_source(
     parser: DocumentParser,
     profile_path: str | Path | ReviewProfile,
     llm: LLMClient,
-    **kwargs: Any,
+    context_provider: ReviewContextProvider | None = None,
+    action_policy: ActionPolicy | None = None,
+    extra_actions: list[ReviewAction] | None = None,
+    pack: Pack | None = None,
+    decision: DecisionClient | None = None,
 ) -> ReviewResult:
     """Parse through an injected format adapter and review the resulting typed tree."""
-    return review_tree(parser.parse(source), profile_path, llm, **kwargs)
+    return review_tree(
+        parser.parse(source),
+        profile_path,
+        llm,
+        context_provider=context_provider,
+        action_policy=action_policy,
+        extra_actions=extra_actions,
+        pack=pack,
+        decision=decision,
+    )
 
 
 def document_warnings(document: ReviewDocument) -> list[str]:
@@ -92,3 +105,11 @@ def unresolved_finding_id_warnings(
         for action in actions
         if action.finding_id and action.finding_id not in known
     ]
+
+
+__all__ = [
+    "document_warnings",
+    "review_source",
+    "review_tree",
+    "unresolved_finding_id_warnings",
+]

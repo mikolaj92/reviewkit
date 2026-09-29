@@ -34,11 +34,11 @@ from reviewkit import (
     MockDecisionClient,
     MockLLMClient,
     Pack,
+    TaktReviewer,
     load_profile,
     parse_text,
     review_document,
 )
-from reviewkit.takt_reviewer import TaktReviewer
 
 pack = Pack.model_validate_json(Path("examples/packs/story.json").read_text())
 profile = load_profile("examples/profiles/story.teacher")
@@ -106,25 +106,14 @@ the document plant, Pack/plugin orchestration, and deterministic effectors.
 
 ## Plugin sockets
 
+Hosts implement these Protocols from `reviewkit`. There is no public `detect()`
+API; naming and judging go through `DecisionClient.decide`.
+
 ```python
-from typing import Any, Mapping, Protocol
-from pydantic import BaseModel
+from reviewkit import DecisionClient, LLMClient
 
-
-class DecisionClient(Protocol):
-    def decide(
-        self,
-        state: str | Mapping[str, Any],
-        questions: Mapping[str, object],
-    ) -> Mapping[str, object]: ...
-
-
-class LLMClient(Protocol):
-    def complete_json(
-        self,
-        messages: list[dict[str, str]],
-        schema: type[BaseModel],
-    ) -> BaseModel: ...
+# DecisionClient.decide(state, questions) -> answers   (name + judge)
+# LLMClient.complete_json(messages, schema) -> action  (replacement text)
 ```
 
 Call site: `review_tree(..., pack=..., decision=..., llm=...)` or

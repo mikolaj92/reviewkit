@@ -12,8 +12,7 @@ Pack load  →  inject DecisionClient  →  two scans (name, then judge)
 ```
 
 ```python
-from reviewkit import Pack, load_profile, review_document, review_tree
-from reviewkit.takt_reviewer import TaktReviewer
+from reviewkit import Pack, TaktReviewer, load_profile, review_document, review_tree
 
 pack = Pack.model_validate_json(pack_json)
 profile = load_profile(profile_dir)  # behavior only

@@ -27,10 +27,15 @@ import json
 from collections.abc import Mapping
 from typing import Any, cast
 
+from pydantic import BaseModel
+
+from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import EmptyReviewContextProvider, ReviewContextProvider
 from reviewkit.decision import (
     DecisionAnswer,
     DecisionClient,
+    DocumentDecisionState,
+    FragmentDecisionState,
     Question,
     coerce_answer,
     document_present_question,
@@ -38,7 +43,7 @@ from reviewkit.decision import (
     is_noul_yes,
     naming_questions,
 )
-from reviewkit.detectors import BaseLLMDetector, _lower_actions_for_prompt
+from reviewkit.detectors import BaseLLMDetector, _lower_actions_for_prompt, _response_to_signals
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.effectors import ReviewEffector
 from reviewkit.homeostat import build_layer_specs, scope_to_layer_index
@@ -48,10 +53,12 @@ from reviewkit.models import (
     FindingLineageEvent,
     ParagraphReviewResponse,
     ReconciliationDisposition,
+    ReconciliationRequest,
     ReviewAction,
     ReviewActionType,
     ReviewFinding,
     ReviewLocator,
+    ReviewResponse,
     ReviewScope,
     SectionReviewResponse,
     SentenceReviewResponse,
@@ -97,7 +104,7 @@ _ACTION_TYPE = {
     VerdictKind.MISSING: ReviewActionType.INSERT_TEXT,
 }
 
-_RESPONSE_SCHEMA = {
+_RESPONSE_SCHEMA: dict[ReviewScope, type[ReviewResponse]] = {
     ReviewScope.SENTENCE: SentenceReviewResponse,
     ReviewScope.PARAGRAPH: ParagraphReviewResponse,
     ReviewScope.SECTION: SectionReviewResponse,
@@ -132,8 +139,9 @@ class TaktReviewer:
         self.llm = llm
         self.context_provider = context_provider or EmptyReviewContextProvider()
         self.action_policy = action_policy
-        self.pack = pack
-        self.decision = decision
+        self.pack: Pack | None = pack
+        self.decision: DecisionClient | None = decision
+        self.state = ReviewState()
         if self.pack is not None and self.decision is None:
             raise ValueError(
                 "pack reviews name and judge through an injected DecisionClient; "
@@ -200,7 +208,7 @@ class TaktReviewer:
             ):
                 document_response = detector.last_response
 
-        rereviewed: list[tuple[Any, ReviewFinding]] = []
+        rereviewed: list[tuple[ReconciliationRequest, ReviewFinding]] = []
         if self.profile.reconciliation_max_rounds and document_response is not None:
             targets = select_reconciliation_targets(
                 document_response.reconciliation_requests,
@@ -221,8 +229,6 @@ class TaktReviewer:
                 effector.apply_takt_decision(node.id, decision)
                 for finding in response.findings:
                     rereviewed.append((request, finding))
-
-        from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 
         prepared = prepare_actions(
             document, self.profile, effector.actions, policy=self.action_policy
@@ -339,12 +345,12 @@ class _LLMDetectorAdapter:
         self.document = document
         self.effector = effector
         self._lower_actions: list[ReviewAction] = []
-        self.last_response: Any = None
+        self.last_response: ReviewResponse | None = None
 
     def set_lower_actions(self, actions: list[ReviewAction]) -> None:
-        self._lower_actions = list(actions or [])
+        self._lower_actions = list(actions)
 
-    def judge(self, node: DocNode | Any) -> list[RawSignal]:
+    def judge(self, node: DocNode) -> list[RawSignal]:
         """Second scan. Matched rules and the single unit each one cites.
 
         Pack reviews do not go through the fused ``detect()`` LLM path.
@@ -355,7 +361,7 @@ class _LLMDetectorAdapter:
             effective_scope = ReviewScope.DOCUMENT
         return self._judge_with_pack(node, effective_scope)
 
-    def _judge_with_pack(self, node: DocNode | Any, scope: ReviewScope) -> list[RawSignal]:
+    def _judge_with_pack(self, node: DocNode, scope: ReviewScope) -> list[RawSignal]:
         assert self.pack is not None
         node_id = getattr(node, "id", "?")
         function_ids = self.inner.state.functions_for(node_id)
@@ -384,7 +390,7 @@ class _LLMDetectorAdapter:
         units = {
             rule.function_id: unit
             for rule in rules
-            if (unit := cited_unit(self.pack, getattr(rule, "source_unit_id", None))) is not None
+            if (unit := cited_unit(self.pack, rule.source_unit_id)) is not None
         }
         verdicts = self._verdicts(node_id, scope, rules, units, function_ids)
         if not verdicts:
@@ -395,8 +401,6 @@ class _LLMDetectorAdapter:
         )
         self.last_response = response
         self._record(node, scope, response)
-        from reviewkit.detectors import _response_to_signals
-
         return _response_to_signals(response, node_id, f"llm_{scope.value}", scope)
 
     def _verdicts(
@@ -449,9 +453,9 @@ class _LLMDetectorAdapter:
     ) -> tuple[DecisionAnswer, VerdictKind | None]:
         assert self.decision is not None
         assert self.pack is not None
-        dumped = None if unit is None else unit.model_dump(mode="json")
+        dumped: dict[str, Any] | None = None if unit is None else unit.model_dump(mode="json")
         if rule.kind == "close" or rule.when == "function_absent":
-            state: str | dict[str, Any] = {
+            state: DocumentDecisionState = {
                 "covered": covered.get(rule.function_id, []),
                 "candidate": rule.function_id,
                 "unit": dumped,
@@ -463,8 +467,12 @@ class _LLMDetectorAdapter:
             answer = coerce_answer(answers.get("present"))
             kind = VerdictKind.KEEP if is_noul_yes(answer) else VerdictKind.MISSING
             return answer, kind
-        state = {"text": text, "tags": function_ids, "unit": dumped}
-        answers = self.decision.decide(state, fragment_verdict_question())
+        fragment_state: FragmentDecisionState = {
+            "text": text,
+            "tags": function_ids,
+            "unit": dumped,
+        }
+        answers = self.decision.decide(fragment_state, fragment_verdict_question())
         answer = coerce_answer(answers.get("verdict"))
         return answer, _verdict_kind(answer)
 
@@ -522,13 +530,13 @@ class _LLMDetectorAdapter:
             )
         return actions
 
-    def _record(self, node: DocNode | Any, scope: ReviewScope, response: Any) -> None:
+    def _record(self, node: DocNode, scope: ReviewScope, response: ReviewResponse) -> None:
         node_id = getattr(node, "id", "?")
         node_text = str(self.document.get_node_text(node_id) or "")
         self._enrich_response_lineage(response, node_id=node_id, scope=scope, node_text=node_text)
         self.effector.register_response(node_id, scope, response)
 
-    def detect(self, node: DocNode | Any) -> list[RawSignal]:
+    def detect(self, node: DocNode) -> list[RawSignal]:
         inner_node = getattr(node, "inner", node)
         effective_scope = self.scope
         if isinstance(inner_node, ReviewDocument):
@@ -539,11 +547,13 @@ class _LLMDetectorAdapter:
         )
 
         original_complete = self.inner._complete
-        captured: dict[str, Any] = {"resp": None}
+        captured: dict[str, ReviewResponse | None] = {"resp": None}
 
-        def capturing_complete(messages: list[dict[str, str]], schema: type) -> Any:
+        def capturing_complete(
+            messages: list[dict[str, str]], schema: type[BaseModel]
+        ) -> BaseModel:
             resp = original_complete(messages, schema)
-            captured["resp"] = resp
+            captured["resp"] = resp if isinstance(resp, ReviewResponse) else None
             return resp
 
         self.inner._complete = capturing_complete  # type: ignore[method-assign]
@@ -571,7 +581,9 @@ class _LLMDetectorAdapter:
 
         return signals
 
-    def reconcile(self, node: DocNode, request: Any, document_summary: str | None) -> Any:
+    def reconcile(
+        self, node: DocNode, request: ReconciliationRequest, document_summary: str | None
+    ) -> SentenceReviewResponse:
         """Rereview one host-selected node; model output cannot redirect it."""
         inner_node = getattr(node, "inner", node)
         prompt = reconciliation_review_prompt(
@@ -581,7 +593,9 @@ class _LLMDetectorAdapter:
             request,
             document_summary,
         )
-        response = self.inner._complete(prompt, SentenceReviewResponse)
+        response = cast(
+            SentenceReviewResponse, self.inner._complete(prompt, SentenceReviewResponse)
+        )
         target_text = str(self.document.get_node_text(node.id) or "")
         for finding in response.findings:
             finding.node_id = node.id
@@ -624,7 +638,7 @@ class _LLMDetectorAdapter:
 
     def _enrich_response_lineage(
         self,
-        response: Any,
+        response: ReviewResponse,
         *,
         node_id: str,
         scope: ReviewScope,
@@ -698,13 +712,11 @@ class _LLMDetectorAdapter:
                     ),
                 )
 
-    def signals_for_response(self, response: Any, node_id: str) -> list[RawSignal]:
-        from reviewkit.detectors import _response_to_signals
-
+    def signals_for_response(self, response: ReviewResponse, node_id: str) -> list[RawSignal]:
         return _response_to_signals(response, node_id, "llm_reconciliation", self.scope)
 
 
-def _stable_evidence_ref(finding_id: str, index: int, evidence: Any) -> str:
+def _stable_evidence_ref(finding_id: str, index: int, evidence: object) -> str:
     payload = evidence.model_dump(mode="json") if hasattr(evidence, "model_dump") else evidence
     digest = hashlib.sha256(
         json.dumps([finding_id, index, payload], ensure_ascii=False, sort_keys=True).encode("utf-8")

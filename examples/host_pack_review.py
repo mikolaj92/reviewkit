@@ -13,8 +13,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from reviewkit import MockDecisionClient, MockLLMClient, Pack, load_profile, parse_text
-from reviewkit.takt_reviewer import TaktReviewer
+from reviewkit import (
+    MockDecisionClient,
+    MockLLMClient,
+    Pack,
+    TaktReviewer,
+    load_profile,
+    parse_text,
+)
 from reviewkit.takt_types import TaktDecision
 
 _EXAMPLES = Path(__file__).resolve().parent
