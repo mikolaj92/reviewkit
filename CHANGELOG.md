@@ -7,7 +7,8 @@ Docs now match the 0.24.1 Pack surface: `review_tree` / `review_source` /
 `LLMRequestOptions`. Removed insertion-engine claims the package no longer
 exports, and the unimplemented local takt source-checkout knob. Comment
 balloon offsets no longer import python-docx; physical DOCX stays behind
-Docxtor.
+Docxtor. Reviewed-comment `anchor_text` accepts a missing original quote
+(`str | None`), so `uv run mypy` is clean.
 
 ## 0.24.1
 
