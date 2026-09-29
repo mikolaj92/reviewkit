@@ -1,9 +1,36 @@
-"""Public API for ReviewKit."""
+"""Public API for ReviewKit.
+
+Hosts should import from this package. The 0.24 Pack path is:
+
+* schemas: ``Pack``, ``Ontology``, ``Function``, ``SourceUnit``, ``Rule``
+* plugin sockets: ``DecisionClient.decide``, ``LLMClient.complete_json``
+* fakes: ``MockDecisionClient``, ``MockLLMClient``
+* entry points: ``review_tree``, ``review_source``, ``review_document``
+* naming/judge types: ``FunctionTag``, ``NamingResponse``, ``Verdict``,
+  ``VerdictKind``, ``ActionText``, ``ReviewState`` (``covered()``)
+
+Helpers such as ``judge_rules`` and ``naming_questions`` stay on
+``reviewkit.pack`` and ``reviewkit.decision``.
+"""
 
 from reviewkit.anchors import (
     ANCHOR_LAST,
     is_supported_anchor,
     parse_body_anchor_index,
+)
+from reviewkit.artifact_preservation import (
+    ReviewArtifactPreservationError,
+    assert_docx_structure_preserved,
+)
+from reviewkit.artifact_purity import ReviewArtifactPurityAssessment, assess_review_artifact_purity
+from reviewkit.comment_remarks import (
+    RemarkDisposition,
+    RemarkWeight,
+    ReviewRemark,
+    compare_review_remarks,
+    remark_disposition,
+    remark_weight,
+    review_remarks,
 )
 from reviewkit.comments import DocxComment, comments_for_locator, read_comments
 from reviewkit.comparison import attribute_docx_changes
@@ -22,9 +49,14 @@ from reviewkit.context import (
 )
 from reviewkit.decision import (
     ChoiceQuestion,
+    DecisionAnswer,
+    DecisionCall,
     DecisionClient,
+    DocumentDecisionState,
+    FragmentDecisionState,
     MockDecisionClient,
     NoulQuestion,
+    Question,
 )
 from reviewkit.document import DocumentParser, ReviewDocument
 from reviewkit.finality import (
@@ -79,6 +111,7 @@ from reviewkit.models import (
     canonical_action_dump,
 )
 from reviewkit.pack import (
+    ActionText,
     Function,
     FunctionTag,
     NamingResponse,
@@ -89,11 +122,20 @@ from reviewkit.pack import (
     Rule,
     SourceUnit,
     Verdict,
+    VerdictKind,
 )
 from reviewkit.parser_docx import DocxDocumentParser, DocxFootnote, load_docx, read_footnotes
 from reviewkit.parser_text import TextDocumentParser, parse_text
 from reviewkit.pipeline import review_document
 from reviewkit.policy import ActionPolicy, PolicyGuard
+from reviewkit.portable_trail import (
+    PortableReviewTrailError,
+    PortableReviewTrailProfile,
+    append_portable_review_trail,
+    has_portable_review_trail,
+    strip_portable_review_trail,
+    write_portable_review_trail,
+)
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 from reviewkit.renderer_docx import RenderIntegrityError
 from reviewkit.review import review_source, review_tree
@@ -115,6 +157,8 @@ from reviewkit.revisions import (
     accept_all_revisions,
     apply_reviewed_markup,
 )
+from reviewkit.state import ReviewState
+from reviewkit.takt_reviewer import TaktReviewer
 
 __all__ = [
     "ANCHOR_LAST",
@@ -123,10 +167,14 @@ __all__ = [
     "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
+    "ActionText",
     "ChangeProvenance",
     "ChoiceQuestion",
     "ComparisonProvenance",
+    "DecisionAnswer",
+    "DecisionCall",
     "DecisionClient",
+    "DocumentDecisionState",
     "DocumentParser",
     "DocumentTransitionEvidence",
     "DocxComment",
@@ -135,6 +183,7 @@ __all__ = [
     "EmptyReviewContextProvider",
     "EvidenceRef",
     "FindingLineageEvent",
+    "FragmentDecisionState",
     "Function",
     "FunctionTag",
     "IncorporatedCommentOutcome",
@@ -159,6 +208,7 @@ __all__ = [
     "ProcessCheck",
     "ProvenanceDiagnostic",
     "ProvenanceStatus",
+    "Question",
     "RejectRevisionsError",
     "RemarkDisposition",
     "RemarkWeight",
@@ -186,6 +236,7 @@ __all__ = [
     "ReviewResponse",
     "ReviewResult",
     "ReviewScope",
+    "ReviewState",
     "ReviewStats",
     "RevisionCoverageError",
     "RevisionCoverageState",
@@ -195,8 +246,10 @@ __all__ = [
     "SourceRevisionKind",
     "SourceUnit",
     "StructuredOutputMode",
+    "TaktReviewer",
     "TextDocumentParser",
     "Verdict",
+    "VerdictKind",
     "accept_all_revisions",
     "append_portable_review_trail",
     "apply_reviewed_markup",
@@ -238,27 +291,3 @@ __all__ = [
     "strip_portable_review_trail",
     "write_portable_review_trail",
 ]
-
-from reviewkit.artifact_preservation import (
-    ReviewArtifactPreservationError,
-    assert_docx_structure_preserved,
-)
-from reviewkit.artifact_purity import ReviewArtifactPurityAssessment, assess_review_artifact_purity
-from reviewkit.comment_remarks import (
-    RemarkDisposition,
-    RemarkWeight,
-    ReviewRemark,
-    compare_review_remarks,
-    remark_disposition,
-    remark_weight,
-    review_remarks,
-)
-
-from .portable_trail import (
-    PortableReviewTrailError,
-    PortableReviewTrailProfile,
-    append_portable_review_trail,
-    has_portable_review_trail,
-    strip_portable_review_trail,
-    write_portable_review_trail,
-)

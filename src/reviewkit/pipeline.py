@@ -39,7 +39,11 @@ def review_tree(
     pack: Pack | None = None,
     decision: DecisionClient | None = None,
 ) -> ReviewResult:
-    """Review an already parsed tree without reading or rendering any file format."""
+    """Review an already parsed tree without reading or rendering any file format.
+
+    Hosts that need DOCX artifacts should call :func:`review_document` instead.
+    ``pack`` and ``decision`` match :func:`reviewkit.review.review_tree`.
+    """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
     )
@@ -99,6 +103,10 @@ def review_document(
     include them: reviewed.docx as tracked edits/comments, corrected.docx applying
     only the APPLIED ones. With ``extra_actions=None`` or ``[]`` the result is
     identical to omitting the parameter.
+
+    ``pack`` is ontology + rules + units, not the profile. Inject ``decision``
+    (:meth:`DecisionClient.decide`) together with ``llm``
+    (:meth:`LLMClient.complete_json`). ``pack=None`` is the single fused pass.
     """
     # Accept an already-built profile as well as a folder path: callers that construct or cache
     # a ReviewProfile in memory shouldn't be forced to round-trip it through disk.
@@ -153,8 +161,8 @@ def _review_tree(
     context_provider: ReviewContextProvider | None,
     action_policy: ActionPolicy | None,
     extra_actions: list[ReviewAction] | None,
-    pack: Pack | None = None,
-    decision: DecisionClient | None = None,
+    pack: Pack | None,
+    decision: DecisionClient | None,
 ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
     reviewer = TaktReviewer(
         profile=profile,
@@ -221,3 +229,6 @@ def _artifacts(*, reviewed_path: Path | None, corrected_path: Path | None) -> di
     if corrected_path is not None:
         artifacts["corrected_docx"] = str(corrected_path)
     return artifacts
+
+
+__all__ = ["REVIEW_ENGINE_SCOPES", "review_document", "review_tree"]

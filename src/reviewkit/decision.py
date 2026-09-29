@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -47,20 +47,46 @@ class DecisionAnswer(BaseModel):
     reason: str = ""
 
 
+class FragmentDecisionState(TypedDict):
+    """Scan-2 fragment payload: the node text, its tags, and the cited unit dump."""
+
+    text: str
+    tags: list[str]
+    unit: dict[str, Any] | None
+
+
+class DocumentDecisionState(TypedDict):
+    """Scan-2 document payload: coverage for one function and the cited unit dump."""
+
+    covered: list[str]
+    candidate: str
+    unit: dict[str, Any] | None
+
+
+type DecisionState = str | FragmentDecisionState | DocumentDecisionState
+type RawDecisionAnswer = DecisionAnswer | bool | str | Mapping[str, Any]
+type DecisionAnswers = Mapping[str, RawDecisionAnswer]
+
+
 @runtime_checkable
-class _Labeled(Protocol):
+class LabeledFunction(Protocol):
     id: str
     label: str
 
 
+@runtime_checkable
 class DecisionClient(Protocol):
-    """Decision dependency supplied by the ReviewKit host."""
+    """Decision dependency supplied by the ReviewKit host.
+
+    Naming passes the fragment text (``str``). Judging passes
+    :class:`FragmentDecisionState` or :class:`DocumentDecisionState`.
+    """
 
     def decide(
         self,
         state: str | Mapping[str, Any],
         questions: Mapping[str, Question],
-    ) -> Mapping[str, DecisionAnswer | bool | str | Mapping[str, Any]]: ...
+    ) -> DecisionAnswers: ...
 
 
 @dataclass(frozen=True)
@@ -74,8 +100,7 @@ class MockDecisionClient:
 
     def __init__(
         self,
-        answers: Sequence[Mapping[str, DecisionAnswer | bool | str | Mapping[str, Any]]]
-        | None = None,
+        answers: Sequence[DecisionAnswers] | None = None,
     ) -> None:
         self._answers = list(answers or [])
         self.calls: list[DecisionCall] = []
@@ -99,9 +124,7 @@ class MockDecisionClient:
         return result
 
 
-def coerce_answer(
-    raw: DecisionAnswer | bool | str | Mapping[str, Any] | None,
-) -> DecisionAnswer:
+def coerce_answer(raw: RawDecisionAnswer | None) -> DecisionAnswer:
     if raw is None:
         return DecisionAnswer(value=False)
     if isinstance(raw, DecisionAnswer):
@@ -119,7 +142,7 @@ def is_noul_yes(answer: DecisionAnswer) -> bool:
     return str(answer.value).strip().lower() in {"yes", "true", "1"}
 
 
-def naming_questions(functions: Sequence[_Labeled]) -> dict[str, NoulQuestion]:
+def naming_questions(functions: Sequence[LabeledFunction]) -> dict[str, NoulQuestion]:
     """One noul per function. The caller passes ontology functions, not rules."""
     return {
         function.id: NoulQuestion(yes=function.label, no="not this function")
@@ -138,11 +161,17 @@ def document_present_question(label: str) -> dict[str, NoulQuestion]:
 __all__ = [
     "ChoiceQuestion",
     "DecisionAnswer",
+    "DecisionAnswers",
     "DecisionCall",
     "DecisionClient",
+    "DecisionState",
+    "DocumentDecisionState",
+    "FragmentDecisionState",
+    "LabeledFunction",
     "MockDecisionClient",
     "NoulQuestion",
     "Question",
+    "RawDecisionAnswer",
     "coerce_answer",
     "document_present_question",
     "fragment_verdict_question",

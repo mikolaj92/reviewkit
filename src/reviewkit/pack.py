@@ -19,13 +19,18 @@ from reviewkit.models import ReviewScope
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 
+type FunctionAttachTo = Literal["sentence", "paragraph", "section"]
+type RuleKind = Literal["label", "close", "defect"]
+type RuleScope = Literal["fragment", "document"]
+type RuleWhen = Literal["always", "function_present", "function_absent"]
+
 
 class Function(BaseModel):
     model_config = _STRICT
 
     id: str
     label: str
-    attach_to: list[Literal["sentence", "paragraph", "section"]]
+    attach_to: list[FunctionAttachTo]
 
 
 class Ontology(BaseModel):
@@ -52,10 +57,10 @@ class Rule(BaseModel):
     model_config = _STRICT
 
     id: str
-    kind: Literal["label", "close", "defect"]
+    kind: RuleKind
     function_id: str
-    scope: Literal["fragment", "document"]
-    when: Literal["always", "function_present", "function_absent"]
+    scope: RuleScope
+    when: RuleWhen
     source_unit_id: str | None = None
 
 
@@ -230,6 +235,7 @@ def function_label(pack: Pack, function_id: str) -> str:
 __all__ = [
     "ActionText",
     "Function",
+    "FunctionAttachTo",
     "FunctionTag",
     "NamingResponse",
     "Ontology",
@@ -237,6 +243,9 @@ __all__ = [
     "PassTrace",
     "ProcessCheck",
     "Rule",
+    "RuleKind",
+    "RuleScope",
+    "RuleWhen",
     "SourceUnit",
     "Verdict",
     "VerdictKind",

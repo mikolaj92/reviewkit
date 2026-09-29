@@ -104,3 +104,6 @@ def _finding_content_key(finding: ReviewFinding) -> tuple[str, str, str, str, st
         str(finding.dimension),
         finding.severity,
     )
+
+
+__all__ = ["ReviewState"]

@@ -68,7 +68,9 @@ def test_review_source_passes_the_parser_tree_to_format_neutral_review(monkeypat
     assert captured["document"].metadata["source_name"] == "note.txt"
     assert captured["profile_path"] == "profile"
     assert captured["llm"] is llm
-    assert captured["kwargs"] == {"context_provider": "context"}
+    assert captured["kwargs"]["context_provider"] == "context"
+    assert captured["kwargs"]["pack"] is None
+    assert captured["kwargs"]["decision"] is None
 
 
 def test_text_parser_is_a_public_document_parser_adapter() -> None:
