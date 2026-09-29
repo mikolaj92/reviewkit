@@ -1,15 +1,21 @@
 """Public API for ReviewKit.
 
-Hosts should import from this package. The 0.24 Pack path is:
+0.24 is a domain-generic review process: Pack + two scans + plugin sockets.
+The same engine reviews any Pack; core does not encode a statute or product
+domain.
+
+Hosts import typed objects from this package and pass instances:
 
 * schemas: ``Pack``, ``Ontology``, ``Function``, ``SourceUnit``, ``Rule``
 * plugin sockets: ``DecisionClient.decide``, ``LLMClient.complete_json``
+* decision payloads: ``FragmentDecisionState``, ``DocumentDecisionState``
 * fakes: ``MockDecisionClient``, ``MockLLMClient``
 * entry points: ``review_tree``, ``review_source``, ``review_document``
 * naming/judge types: ``FunctionTag``, ``NamingResponse``, ``Verdict``,
   ``VerdictKind``, ``ActionText``, ``ReviewState`` (``covered()``)
 
-``detect()`` is not a host API. Helpers such as ``judge_rules`` and
+JSON files load through ``Pack.model_validate`` / ``Pack.model_validate_json``
+only. ``detect()`` is not a host API. Helpers such as ``judge_rules`` and
 ``naming_questions`` stay on ``reviewkit.pack`` and ``reviewkit.decision``.
 """
 
@@ -52,6 +58,7 @@ from reviewkit.decision import (
     DecisionAnswer,
     DecisionCall,
     DecisionClient,
+    DecisionState,
     DocumentDecisionState,
     FragmentDecisionState,
     MockDecisionClient,
@@ -174,6 +181,7 @@ __all__ = [
     "DecisionAnswer",
     "DecisionCall",
     "DecisionClient",
+    "DecisionState",
     "DocumentDecisionState",
     "DocumentParser",
     "DocumentTransitionEvidence",

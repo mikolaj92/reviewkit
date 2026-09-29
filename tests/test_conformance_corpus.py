@@ -115,10 +115,14 @@ def test_profiles_and_grounding_use_one_public_review_topology(
     monkeypatch.setattr(pipeline, "ReviewResult", SimpleNamespace)
     monkeypatch.setattr(pipeline.ReviewStats, "from_actions", lambda _: SimpleNamespace())
 
+    pack = object()
+    decision = object()
     result = pipeline.review_document(
         tmp_path / f"{case.name}.docx",
         tmp_path / f"{case.name}-profile",
         llm,
+        pack=pack,
+        decision=decision,
         context_provider=context,
     )
 
@@ -127,10 +131,10 @@ def test_profiles_and_grounding_use_one_public_review_topology(
         {
             "profile": profile,
             "llm": llm,
+            "pack": pack,
+            "decision": decision,
             "context_provider": context,
             "action_policy": None,
-            "pack": None,
-            "decision": None,
         }
     ]
     assert [finding.scope for finding in result.findings] == ["paragraph", "document"]

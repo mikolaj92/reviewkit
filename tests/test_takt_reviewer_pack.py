@@ -108,7 +108,7 @@ class _BoomDecision:
 
 def _reviewer(
     llm: MockLLMClient,
-    pack: Pack | None,
+    pack: Pack,
     decision: object | None = None,
     *,
     takt: object | None = None,
@@ -165,7 +165,7 @@ def test_empty_units_still_judge_rules_that_cite_none() -> None:
 
     assert state.covered() == {"lead": ["p1.s1"]}
     fragment = next(call for call in decision.calls if "verdict" in call.questions)
-    assert fragment.state["unit"] is None
+    assert fragment.state.unit is None
     assert findings == []
     assert actions == []
 
@@ -390,13 +390,3 @@ def test_review_tree_entry_forwards_pack_and_skips_act_on_missing(
     assert [finding.title for finding in result.findings] == ["missing"]
     assert result.actions == []
     assert llm.calls == []
-
-
-def test_without_a_pack_empty_signals_still_evaluate() -> None:
-    document = parse_text("One sentence.")
-    takt = _RecordingTakt()
-    llm = MockLLMClient(responses=[{}, {}, {}, {}])
-    _reviewer(llm, None, MockDecisionClient(), takt=takt).review(document)
-
-    assert len(takt.calls) == 4
-    assert llm.calls

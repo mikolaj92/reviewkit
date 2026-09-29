@@ -12,6 +12,7 @@ from unittest.mock import Mock
 
 import pytest
 from docx import Document as DocxDocument
+from pack_support import change_decision, defect_pack, silent_decision, silent_pack
 
 from reviewkit import review_document
 from reviewkit.llm import MockLLMClient
@@ -33,7 +34,7 @@ def test_docs_match_pinned_takt_version() -> None:
     """README and homeostat must name the same takt pin as pyproject.toml."""
     root = Path(__file__).resolve().parents[1]
     pyproject = (root / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'takt @ git+https://github.com/mikolaj92/takt.git@v0.3.2' in pyproject
+    assert "takt @ git+https://github.com/mikolaj92/takt.git@v0.3.2" in pyproject
     assert "takt.git@v0.3.1" not in pyproject
 
     readme = (root / "README.md").read_text(encoding="utf-8")
@@ -122,14 +123,9 @@ def test_takt_reviewer_does_not_synthesize_a_layer(monkeypatch, tmp_path: Path) 
     takt_client.evaluate.return_value = TaktDecision(outcome="stable", node_id="node")
     reviewer = TaktReviewer(
         profile=load_profile("examples/profiles/story.teacher"),
-        llm=MockLLMClient(
-            responses=[
-                {"actions": [], "summary": "ok"},
-                {"actions": [], "summary": "ok"},
-                {"actions": [], "summary": "ok"},
-                {"actions": [], "summary": "ok"},
-            ]
-        ),
+        llm=MockLLMClient(responses=[{"replacement_text": "rewritten"}]),
+        pack=defect_pack(),
+        decision=change_decision(),
         takt_client=takt_client,
     )
 
@@ -157,23 +153,15 @@ def test_review_document_plant_builds_correct_tree(tmp_path: Path) -> None:
 def test_takt_reviewer_basic_run(tmp_path: Path) -> None:
     """End-to-end through TaktReviewer (the new core)."""
     docx = _make_docx(tmp_path, "Ala ma kota.")
-
-    llm = MockLLMClient(
-        responses=[
-            {"actions": [], "summary": "ok"},
-            {"actions": [], "summary": "ok"},
-            {"actions": [], "summary": "ok"},
-            {"actions": [], "summary": "Dokument ok."},
-        ]
-    )
+    from reviewkit.parser_docx import load_docx
     from reviewkit.profile import load_profile
 
-    profile = load_profile("examples/profiles/story.teacher")
     reviewer = TaktReviewer(
-        profile=profile,
-        llm=llm,
+        profile=load_profile("examples/profiles/story.teacher"),
+        llm=MockLLMClient(),
+        pack=silent_pack(),
+        decision=silent_decision(),
     )
-    from reviewkit.parser_docx import load_docx
 
     document = load_docx(docx)
     findings, actions, _state = reviewer.review(document)
@@ -186,19 +174,12 @@ def test_public_api_still_works_with_takt(tmp_path: Path) -> None:
     """The main user entrypoint must continue to work after the total migration."""
     docx = _make_docx(tmp_path, "Test input for full pipeline.")
 
-    llm = MockLLMClient(
-        responses=[
-            {"actions": [], "summary": "s"},
-            {"actions": [], "summary": "p"},
-            {"actions": [], "summary": "sec"},
-            {"actions": [], "summary": "doc"},
-        ]
-    )
-
     result = review_document(
         input_path=docx,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=MockLLMClient(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "r.docx",
         out_corrected=tmp_path / "c.docx",
     )

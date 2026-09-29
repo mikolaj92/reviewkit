@@ -4,7 +4,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from reviewkit.decision import MockDecisionClient, NoulQuestion
+from reviewkit.decision import (
+    DocumentDecisionState,
+    FragmentDecisionState,
+    MockDecisionClient,
+    NoulQuestion,
+)
 from reviewkit.llm import MockLLMClient
 from reviewkit.models import ReviewResponse, ReviewScope
 from reviewkit.pack import (
@@ -54,7 +59,11 @@ def _payload(call) -> dict:
 
 
 def _dump(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+    if isinstance(value, str):
+        return value
+    if hasattr(value, "model_dump"):
+        return json.dumps(value.model_dump(mode="json"), ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _naming_calls(decision: MockDecisionClient) -> list:
@@ -95,8 +104,8 @@ class _OrderedDecision(MockDecisionClient):
 
 def _reviewer(
     llm: MockLLMClient,
-    pack: Pack | None,
-    decision: MockDecisionClient | None = None,
+    pack: Pack,
+    decision: MockDecisionClient,
     takt_client=None,
 ) -> TaktReviewer:
     return TaktReviewer(
@@ -231,27 +240,24 @@ def test_a_pack_names_before_it_judges() -> None:
     assert gaps == {"purposes"}
 
     fragment = next(
-        call for call in decision.calls if isinstance(call.state, dict) and "tags" in call.state
+        call for call in decision.calls if isinstance(call.state, FragmentDecisionState)
     )
     assert list(fragment.questions) == ["verdict"]
     assert fragment.questions["verdict"].kind == "choice"
     assert fragment.questions["verdict"].options == ("keep", "change", "delete")
     assert "present" not in fragment.questions
-    assert fragment.state["tags"] == ["controller_identity"]
-    assert fragment.state["unit"] is None
+    assert fragment.state.tags == ["controller_identity"]
+    assert fragment.state.unit is None
     assert "the whole unused corpus" not in _dump(fragment.state)
 
-    closing = next(
-        call
-        for call in decision.calls
-        if isinstance(call.state, dict) and "candidate" in call.state
-    )
+    closing = next(call for call in decision.calls if isinstance(call.state, DocumentDecisionState))
     assert list(closing.questions) == ["present"]
     assert closing.questions["present"].kind == "noul"
-    assert closing.state["candidate"] == "purposes"
-    assert closing.state["candidate"] not in state.covered()
-    assert closing.state["unit"]["id"] == "unit-controller"
-    assert closing.state["unit"]["force"] == "binding"
+    assert closing.state.candidate == "purposes"
+    assert closing.state.candidate not in state.covered()
+    assert closing.state.unit is not None
+    assert closing.state.unit.id == "unit-controller"
+    assert closing.state.unit.force == "binding"
     assert "the whole unused corpus" not in _dump(closing.state)
     assert [finding.title for finding in findings] == ["missing"]
     assert findings[0].description == "purposes"
@@ -264,8 +270,8 @@ def test_a_pack_names_before_it_judges() -> None:
         and "missing_elements" not in _dump(call.state)
         for call in decision.calls
     )
-    assert set(fragment.state) == {"text", "tags", "unit"}
-    assert set(closing.state) == {"covered", "candidate", "unit"}
+    assert set(FragmentDecisionState.model_fields) == {"text", "tags", "unit"}
+    assert set(DocumentDecisionState.model_fields) == {"covered", "candidate", "unit"}
 
 
 def test_judge_on_a_fragment_never_asks_a_close_rule() -> None:
@@ -286,16 +292,14 @@ def test_judge_on_a_fragment_never_asks_a_close_rule() -> None:
     assert llm.calls == []
     assert set(state.covered()) == {"controller_identity", "purposes"}
     fragment_calls = [
-        call for call in decision.calls if isinstance(call.state, dict) and "tags" in call.state
+        call for call in decision.calls if isinstance(call.state, FragmentDecisionState)
     ]
     assert fragment_calls
     for call in fragment_calls:
         assert list(call.questions) == ["verdict"]
         assert call.questions["verdict"].kind == "choice"
         assert "present" not in call.questions
-    assert not any(
-        isinstance(call.state, dict) and "candidate" in call.state for call in decision.calls
-    )
+    assert not any(isinstance(call.state, DocumentDecisionState) for call in decision.calls)
 
 
 def test_document_missing_comes_only_from_covered_gaps() -> None:
@@ -318,13 +322,9 @@ def test_document_missing_comes_only_from_covered_gaps() -> None:
     assert [finding.description for finding in findings if finding.title == "missing"] == [
         "purposes"
     ]
-    closing = [
-        call
-        for call in decision.calls
-        if isinstance(call.state, dict) and "candidate" in call.state
-    ]
-    assert closing[0].state["candidate"] == "purposes"
-    assert [call.state["candidate"] for call in closing] == ["purposes"]
+    closing = [call for call in decision.calls if isinstance(call.state, DocumentDecisionState)]
+    assert closing[0].state.candidate == "purposes"
+    assert [call.state.candidate for call in closing] == ["purposes"]
 
 
 def test_a_low_confidence_action_goes_to_a_person() -> None:
@@ -347,19 +347,11 @@ def test_a_low_confidence_action_goes_to_a_person() -> None:
     assert llm.calls == []
 
 
-def test_without_a_pack_the_review_stays_one_pass() -> None:
-    """Legacy compat: pack=None keeps the single fused LLMClient scan."""
-    document = parse_text("Jedno zdanie.")
-    llm = MockLLMClient(responses=[{}, {}, {}])
-    decision = MockDecisionClient(answers=[{"should": "not be called"}])
-
-    _reviewer(llm, None, decision).review(document)
-
-    assert llm.calls
-    assert decision.calls == []
-    assert all('"pass": "naming"' not in call.content for call in llm.calls)
-    assert all('"pass": "assessment"' not in call.content for call in llm.calls)
-    assert all(call.schema.__name__.endswith("ReviewResponse") for call in llm.calls)
+def test_review_requires_pack_and_decision_client() -> None:
+    with pytest.raises(TypeError):
+        TaktReviewer(profile=_profile(), llm=MockLLMClient())
+    with pytest.raises(TypeError):
+        TaktReviewer(profile=_profile(), llm=MockLLMClient(), pack=_pack())
 
 
 def test_review_response_has_no_missing_elements_gap_field() -> None:
@@ -370,11 +362,6 @@ def test_review_response_has_no_missing_elements_gap_field() -> None:
     assert not hasattr(prompts, "naming_prompt")
     assert not hasattr(prompts, "judge_prompt")
     assert not hasattr(pack, "VerdictResponse")
-
-
-def test_a_pack_review_needs_a_decision_client() -> None:
-    with pytest.raises(ValueError, match="DecisionClient"):
-        TaktReviewer(profile=_profile(), llm=MockLLMClient(), pack=_pack())
 
 
 def test_reviewkit_core_is_sockets_not_a_model_runtime() -> None:

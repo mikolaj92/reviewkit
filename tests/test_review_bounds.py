@@ -1,14 +1,19 @@
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
+from pack_support import silent_decision, silent_pack
 from pydantic import BaseModel
 
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
 from reviewkit.llm import MockLLMClient
 from reviewkit.models import ReviewBoundError, ReviewFailureClass, SectionReviewResponse
+from reviewkit.pack import Function, Ontology, Pack, Rule
 from reviewkit.profile import ReviewProfile
 from reviewkit.review_bounds import bound_document_sections, validate_review_payload
 from reviewkit.takt_reviewer import TaktReviewer
+from reviewkit.takt_types import TaktDecision
 
 
 def _profile(**kwargs: object) -> ReviewProfile:
@@ -98,30 +103,57 @@ def test_single_paragraph_over_budget_fails_closed() -> None:
 
 
 def test_reviewer_does_not_publish_partial_actions_on_schema_failure() -> None:
+    from reviewkit.decision import MockDecisionClient
+
     document = _document("short")
+    pack = Pack(
+        ontology=Ontology(
+            functions=[
+                Function(id="claim", label="Claim", attach_to=["sentence", "paragraph", "section"])
+            ]
+        ),
+        units={},
+        rules=[
+            Rule(
+                id="defect",
+                kind="defect",
+                function_id="claim",
+                scope="fragment",
+                when="function_present",
+            )
+        ],
+    )
+    decision = MockDecisionClient(answers=[{"claim": True}, {"verdict": "change"}])
     llm = MockLLMClient(responses=[[{"title": "not-an-object"}]])
-    reviewer = TaktReviewer(profile=_profile(section_char_budget=4000), llm=llm)
-    with pytest.raises(ReviewBoundError) as caught:
-        reviewer.review(document)
-    assert caught.value.failure_class is ReviewFailureClass.UNSUPPORTED_SHAPE
-    assert llm.calls  # provider was reached
-    # Fail closed before aggregate: no second-level call after the bad section.
+    takt = Mock()
+    takt.evaluate.return_value = TaktDecision(outcome="stable", node_id="s1")
+    reviewer = TaktReviewer(
+        profile=_profile(section_char_budget=4000),
+        llm=llm,
+        pack=pack,
+        decision=decision,
+        takt_client=takt,
+    )
+    findings, actions, state = reviewer.review(document)
+    assert [finding.title for finding in findings] == ["change"]
+    assert actions[0].requires_human_decision is True
+    assert actions[0].replacement_text is None
+    assert llm.calls
     assert len(llm.calls) == 1
+    assert any("plugin_failure" in warning for warning in state.warnings)
 
 
 def test_split_sections_preserve_order_and_keep_review_deterministic() -> None:
     document = _document("aaaa", "bbbb")
-    llm = MockLLMClient(
-        responses=[
-            {"summary": "chunk-0"},
-            {"summary": "chunk-1"},
-        ]
+    decision = silent_decision()
+    reviewer = TaktReviewer(
+        profile=_profile(section_char_budget=6),
+        llm=MockLLMClient(),
+        pack=silent_pack(),
+        decision=decision,
     )
-    reviewer = TaktReviewer(profile=_profile(section_char_budget=6), llm=llm)
     findings, actions, _state = reviewer.review(document)
     assert findings == []
     assert actions == []
-    assert [call.schema.__name__ for call in llm.calls] == [
-        "SectionReviewResponse",
-        "SectionReviewResponse",
-    ]
+    assert len(decision.calls) == 2
+    assert all(isinstance(call.state, str) for call in decision.calls)
