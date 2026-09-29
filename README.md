@@ -27,17 +27,19 @@ instances. JSON files load through `Pack.model_validate` /
 ## Platforms
 
 ReviewKit is the engine. Domain lives in a host Pack, not in `src/reviewkit`.
+The same engine reviews a privacy notice or a newspaper article; only Pack
+content changes.
 
 | Surface | What it is |
 | --- | --- |
-| **Legal host (Temida)** | A product host. It builds a legal Pack and injects `DecisionClient` / `LLMClient`. Jurisdiction and statute text stay in that host Pack. |
-| **Scientific paper example** | A first-class **example Pack**, not a domain in core. Same engine and ontology *shape* (IMRaD functions); different units and rules. Testbed for name → judge → act before Temida-scale legal packs. Meta: [`docs/platforms/scientific-paper-review.md`](docs/platforms/scientific-paper-review.md). Pack: [`examples/packs/scientific_paper.json`](examples/packs/scientific_paper.json). Egg fixture: [`examples/papers/egg-low-quality.md`](examples/papers/egg-low-quality.md). Sketch: [`examples/scientific_paper_review.py`](examples/scientific_paper_review.py). Behavior-only profile: [`examples/profiles/scientific.reviewer`](examples/profiles/scientific.reviewer). |
+| **Host Pack** | Typed `Pack` / `Ontology` / `Rule` / `SourceUnit` the host constructs in Python, or loads once with `Pack.model_validate_json` at a file edge. Domain names stay in that Pack. |
+| **Scientific paper example** | A first-class **example Pack**, not a domain in core. Same engine and ontology *shape* (IMRaD functions); different units and rules. Testbed for name → judge → act. Meta: [`docs/platforms/scientific-paper-review.md`](docs/platforms/scientific-paper-review.md). Pack: [`examples/packs/scientific_paper.json`](examples/packs/scientific_paper.json). Egg fixture: [`examples/papers/egg-low-quality.md`](examples/papers/egg-low-quality.md). Sketch: [`examples/scientific_paper_review.py`](examples/scientific_paper_review.py). Behavior-only profile: [`examples/profiles/scientific.reviewer`](examples/profiles/scientific.reviewer). |
 
 Do not grow this library into a journal or a legal product. Composition is host + Pack.
 
 ## Host integration
 
-Load a Pack as a typed object, inject a `DecisionClient`, run the two scans.
+Construct a Pack as a typed object, inject a `DecisionClient`, run the two scans.
 Gaps are `ontology.function_ids() − covered()` on the host — not
 `missing_elements`, and not `ReviewFinding.dimension`.
 
@@ -45,16 +47,45 @@ Gaps are `ontology.function_ids() − covered()` on the host — not
 from pathlib import Path
 
 from reviewkit import (
+    Function,
     MockDecisionClient,
     MockLLMClient,
+    Ontology,
     Pack,
+    Rule,
+    SourceUnit,
     TaktReviewer,
     load_profile,
     parse_text,
     review_document,
 )
 
-pack = Pack.model_validate_json(Path("examples/packs/story.json").read_text())
+pack = Pack(
+    ontology=Ontology(
+        functions=[Function(id="opening", label="Opening", attach_to=["sentence"])]
+    ),
+    units={
+        "unit-opening": SourceUnit(
+            id="unit-opening",
+            source_id="host",
+            locator="§1",
+            text="Stories open.",
+            force="binding",
+        )
+    },
+    rules=[
+        Rule(
+            id="defect-opening",
+            kind="defect",
+            function_id="opening",
+            scope="fragment",
+            when="function_present",
+            source_unit_id="unit-opening",
+        )
+    ],
+)
+# File edge only:
+# pack = Pack.model_validate_json(Path("examples/packs/story.json").read_text())
 profile = load_profile("examples/profiles/story.teacher")
 llm = MockLLMClient()          # host plugin: LLMClient.complete_json
 decision = MockDecisionClient()  # host plugin: DecisionClient.decide

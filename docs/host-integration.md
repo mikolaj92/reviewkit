@@ -97,20 +97,23 @@ Example Packs:
 
 ## Platforms
 
-ReviewKit is a platform engine. Hosts own domain Packs and plugins.
+ReviewKit is a platform engine. Hosts own domain Packs and plugins. The same
+engine reviews a privacy notice or a newspaper article; only Pack content
+changes.
 
 | Surface | Owns | Not in ReviewKit core |
 | --- | --- | --- |
-| **Legal host (Temida)** | Legal ontology, source acts, label/defect/close rules, `DecisionClient` / `LLMClient` | Statutes, jurisdiction text, a legal fork of this library |
+| **Host Pack** | Typed `Pack` / `Ontology` / `Rule` / `SourceUnit`, plus `DecisionClient` / `LLMClient` | Domain statutes, product names, a domain fork of this library |
 | **Scientific paper example** | IMRaD functions, reporting-guideline and citation-integrity units, peer-reviewer profile | CONSORT/PRISMA/STROBE as Python; a science module |
 
 Scientific paper review is a first-class **example Pack**, not a domain baked
 into core. It is also the **testbed** for name → judge → act (same reading
-process as a reviewer) before Temida-scale legal packs. Meta:
+process as a reviewer). Meta:
 [`docs/platforms/scientific-paper-review.md`](platforms/scientific-paper-review.md).
 Egg fixture: [`examples/papers/egg-low-quality.md`](../examples/papers/egg-low-quality.md).
 Sketch: [`examples/scientific_paper_review.py`](../examples/scientific_paper_review.py).
-Load the Pack with `Pack.model_validate_json` (or `Pack.model_validate`).
+Construct `Pack(...)` in Python, or load a Pack file once with
+`Pack.model_validate_json` (or `Pack.model_validate`) at the edge.
 Gaps stay `ontology.function_ids() − covered()` on the host.
 
 ## What each object is

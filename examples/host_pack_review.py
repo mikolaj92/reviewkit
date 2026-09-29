@@ -1,10 +1,11 @@
-"""Host integration sketch: load Pack as a typed object, inject DecisionClient.
+"""Host integration sketch: construct or load Pack as a typed object.
 
 This is what a host does. ReviewKit is a generic review process. The same
 engine reviews a privacy notice or a newspaper article; only Pack content
 changes. ReviewKit does not build the Pack, does not ship a model runtime,
-and does not treat profile markdown as the review payload. JSON files load
-through Pack.model_validate_json only; the review call site receives Pack,
+and does not treat profile markdown as the review payload. Hosts construct
+Pack / Ontology / Rule / SourceUnit in Python, or load a file once with
+Pack.model_validate_json. The review call site receives Pack,
 DecisionClient, and LLMClient instances.
 
 Run from the repo root:

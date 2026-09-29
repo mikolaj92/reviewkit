@@ -4,20 +4,20 @@ ReviewKit is a **platform**: a document-review engine plus two host-injected
 sockets (`DecisionClient`, `LLMClient`). It is not a journal, not a legal
 product, and not a domain library.
 
-This page is the meta for one **example Pack**. Legal review lives in a host
-such as Temida. Scientific paper review is the same engine with a different
-Pack. Neither domain belongs in `src/reviewkit`.
+This page is the meta for one **example Pack**. A legal review, a privacy
+notice, or a newspaper article is the same engine with a different Pack.
+Neither domain belongs in `src/reviewkit`.
 
 | Surface | Owns | Does not belong in ReviewKit core |
 | --- | --- | --- |
-| Legal host (Temida) | Legal ontology, source acts, jurisdiction units, label/defect/close rules, model plugins | Statutes, jurisdiction text, a legal engine fork |
+| Host Pack | Typed ontology, source units, label/defect/close rules, model plugins | Statutes, jurisdiction text, a domain engine fork |
 | This example | [`examples/packs/scientific_paper.json`](../../examples/packs/scientific_paper.json) | CONSORT/PRISMA/STROBE as Python, journal policy, a “science” module |
 | Profile | Reviewer behavior only — [`examples/profiles/scientific.reviewer`](../../examples/profiles/scientific.reviewer) | Function ids, source units, reporting checklists |
 
 ## Testbed for name → judge → act
 
 This Pack is how we **stress-test the three transitions** a real reviewer
-makes, and surface wrong assumptions **before Temida-scale legal packs**:
+makes, and surface wrong assumptions before a host-scale Pack:
 
 1. **Name** every sentence, then paragraph, section, and document against
    the IMRaD dictionary (`naming_functions`). Tags only.
@@ -175,11 +175,11 @@ is that fragments were *named*; integrity is the defect on those fragments.
 ## Host wiring
 
 ```text
-Pack load  →  inject DecisionClient  →  name, then judge
-                                         → optional LLMClient act
+Pack (typed object)  →  inject DecisionClient  →  name, then judge
+                                                 → optional LLMClient act
 ```
 
-- Temida (legal) and a paper-review app are both hosts. They do not share
+- A legal host and a paper-review app are both hosts. They do not share
   ontology ids. They share this library’s Pack schema and sockets.
 - Model runtimes stay in the host. Tests and examples use
   `MockDecisionClient` / `MockLLMClient` only.
