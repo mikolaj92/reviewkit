@@ -49,6 +49,10 @@ def _pack() -> Pack:
     return Pack.model_validate_json(_PACK_FIXTURE.read_text(encoding="utf-8"))
 
 
+def _payload(call) -> dict:
+    return json.loads(call.messages[1]["content"].split("\n\n", 1)[1])
+
+
 def _dump(value: object) -> str:
     return json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
 
