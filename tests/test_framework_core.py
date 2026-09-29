@@ -1498,6 +1498,28 @@ def test_action_policy_modules_stay_unix_sized_and_import_stable() -> None:
         assert text.count("\n") <= 350, module_name
 
 
+def test_readme_advertised_imports_exist_on_the_package_root() -> None:
+    import re
+
+    import reviewkit
+
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+    names: list[str] = []
+    for match in re.finditer(r"from reviewkit import \((.*?)\)", readme, flags=re.DOTALL):
+        for raw in match.group(1).splitlines():
+            name = raw.split("#", 1)[0].strip().rstrip(",")
+            if name:
+                names.append(name)
+    for match in re.finditer(r"from reviewkit import ([^\n(]+)", readme):
+        for raw in match.group(1).split(","):
+            name = raw.strip()
+            if name:
+                names.append(name)
+    assert names
+    missing = [name for name in names if name not in reviewkit.__all__]
+    assert missing == []
+
+
 def test_readme_points_at_existing_sibling_docs() -> None:
     readme = Path(__file__).resolve().parents[1] / "README.md"
     text = readme.read_text(encoding="utf-8")
@@ -1511,6 +1533,7 @@ def test_readme_points_at_existing_sibling_docs() -> None:
 def test_fallbacks_inventory_lists_only_remaining_promoted_paths() -> None:
     root = Path(__file__).resolve().parents[1]
     inventory = (root / "FALLBACKS.md").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
     src_text = "\n".join(
         path.read_text(encoding="utf-8") for path in (root / "src" / "reviewkit").rglob("*.py")
     )
@@ -1519,9 +1542,11 @@ def test_fallbacks_inventory_lists_only_remaining_promoted_paths() -> None:
         "build_layered_homeostats",
         "_DocNode",
         "InsertionValidator",
+        "ParagraphInserter",
         "_opaque_ranges",
     ):
         assert stale not in src_text
         assert stale not in inventory
+        assert stale not in readme
     assert "| **Delete** |" not in inventory
     assert "**Promote**" in inventory

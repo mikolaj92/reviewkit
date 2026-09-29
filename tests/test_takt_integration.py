@@ -6,7 +6,6 @@ They are intentionally small and do not duplicate all old hierarchical tests.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -98,7 +97,6 @@ def test_takt_binding_does_not_discover_local_checkout(monkeypatch, tmp_path: Pa
     monkeypatch.delenv("TAKT_HOME", raising=False)
 
     def evaluate(_request):
-        assert "TAKT_HOME" not in os.environ
         return {"outcome": "stable"}
 
     monkeypatch.setattr("takt.cascade_step", evaluate)
@@ -110,6 +108,17 @@ def test_takt_binding_does_not_discover_local_checkout(monkeypatch, tmp_path: Pa
 
     assert decision.outcome == "stable"
     assert not hasattr(decision, "engine")
+
+
+def test_docs_do_not_promise_takt_home() -> None:
+    """README and TaktClient share one contract: no TAKT_HOME knob."""
+    root = Path(__file__).resolve().parents[1]
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    src = "\n".join(
+        path.read_text(encoding="utf-8") for path in (root / "src" / "reviewkit").rglob("*.py")
+    )
+    assert "TAKT_HOME" not in readme
+    assert "TAKT_HOME" not in src
 
 
 def test_takt_reviewer_does_not_synthesize_a_layer(monkeypatch, tmp_path: Path) -> None:

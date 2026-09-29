@@ -125,6 +125,20 @@ def test_docs_name_pack_and_two_scans_not_stale_host_apis() -> None:
         assert "required-clauses.md" not in text
         assert "ParagraphInserter" not in text
         assert "InsertionValidator" not in text
+        assert "TAKT_HOME" not in text
+        assert "are unchanged" not in text
+    for name in (
+        "review_tree",
+        "review_source",
+        "review_document",
+        "TaktReviewer",
+        "LLMCapabilities",
+        "LLMRequestOptions",
+    ):
+        assert name in readme
+        assert name in guide
+    assert "def capabilities(self) -> LLMCapabilities" in readme
+    assert "options: LLMRequestOptions | None = None" in readme
     assert "## Platforms" in readme
     assert "## Platforms" in guide
     assert "scientific_paper.json" in readme

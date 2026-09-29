@@ -29,8 +29,10 @@ from reviewkit import (
     Rule,
     SourceUnit,
     TaktReviewer,
+    TextDocumentParser,
     load_profile,
     review_document,
+    review_source,
     review_tree,
 )
 
@@ -62,6 +64,7 @@ profile = load_profile(profile_dir)  # behavior only
 
 review_document(input_path, profile, llm, pack, decision)
 review_tree(document, profile, llm, pack, decision)
+review_source(source, TextDocumentParser(), profile, llm, pack, decision)
 
 findings, actions, state = TaktReviewer(
     profile=profile,
@@ -72,8 +75,17 @@ findings, actions, state = TaktReviewer(
 gaps = pack.ontology.function_ids() - set(state.covered())
 ```
 
-`pack` and `decision` are required. `llm` writes replacement text through
-`LLMClient.complete_json`.
+`pack` and `decision` are required. `review_tree` reviews an already parsed
+`ReviewDocument` without reading or rendering a file. `review_source` injects
+a `DocumentParser` adapter, then calls `review_tree`. `review_document` loads
+DOCX and optionally renders `reviewed.docx` / `corrected.docx`. The CLI is
+the same Pack path: `reviewkit input.docx --profile … --pack … --decision …
+--llm …`.
+
+`llm` writes replacement text through `LLMClient.complete_json`. Hosts
+implement `LLMClient.capabilities` (`LLMCapabilities`) and
+`complete_json(..., options: LLMRequestOptions | None = None)`. The engine
+currently calls `complete_json(messages, schema)` without `options`.
 
 A `DecisionClient.decide` plugin receives `str` (name) or a
 `FragmentDecisionState` / `DocumentDecisionState` (judge), including the cited

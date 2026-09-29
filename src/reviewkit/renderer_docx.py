@@ -282,10 +282,9 @@ def _physical_comment(locator: str, text: str, action: ReviewAction) -> Physical
     start, end = resolved if resolved is not None else (None, None)
     if start is not None and end is not None and not 0 <= start < end <= len(text):
         start, end = None, None
-    if start is not None and end is not None:
-        quoted = text[start:end]
-    else:
-        quoted = action.original_text
+    quoted: str | None = (
+        text[start:end] if start is not None and end is not None else action.original_text
+    )
     return PhysicalReviewComment(
         locator,
         format_action_comment(action),
