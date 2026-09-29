@@ -1505,7 +1505,7 @@ def test_readme_advertised_imports_exist_on_the_package_root() -> None:
 
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
     names: list[str] = []
-    for match in re.finditer(r"from reviewkit import \((.*?)\)", readme, flags=re.S):
+    for match in re.finditer(r"from reviewkit import \((.*?)\)", readme, flags=re.DOTALL):
         for raw in match.group(1).splitlines():
             name = raw.split("#", 1)[0].strip().rstrip(",")
             if name:
