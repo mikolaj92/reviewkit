@@ -374,7 +374,6 @@ class ReviewResponse(BaseModel):
     style_observations: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     questions: list[str] = Field(default_factory=list)
-    missing_elements: list[str] = Field(default_factory=list)
     human_decisions: list[str] = Field(default_factory=list)
 
 

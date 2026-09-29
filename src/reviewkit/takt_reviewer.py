@@ -182,9 +182,11 @@ class TaktReviewer:
 
             scanned_nodes[node.id] = node
             detector = detectors[scope]
-            detector.set_lower_actions(accumulated_lower_actions)
-
-            signals = detector.detect(node)
+            if self.pack is not None:
+                signals = detector.judge(node)
+            else:
+                detector.set_lower_actions(accumulated_lower_actions)
+                signals = detector.detect(node)
             # Even with empty signals we still evaluate (stable / intrinsic value).
             decision = self.takt_client.evaluate(
                 plant_nodes=[node.to_plant_node(value=0.0)],
@@ -342,8 +344,18 @@ class _LLMDetectorAdapter:
     def set_lower_actions(self, actions: list[ReviewAction]) -> None:
         self._lower_actions = list(actions or [])
 
-    def _detect_with_pack(self, node: DocNode | Any, scope: ReviewScope) -> list[RawSignal]:
-        """Second scan. Matched rules and the single unit each one cites."""
+    def judge(self, node: DocNode | Any) -> list[RawSignal]:
+        """Second scan. Matched rules and the single unit each one cites.
+
+        Pack reviews do not go through the fused ``detect()`` LLM path.
+        """
+        inner_node = getattr(node, "inner", node)
+        effective_scope = self.scope
+        if isinstance(inner_node, ReviewDocument):
+            effective_scope = ReviewScope.DOCUMENT
+        return self._judge_with_pack(node, effective_scope)
+
+    def _judge_with_pack(self, node: DocNode | Any, scope: ReviewScope) -> list[RawSignal]:
         assert self.pack is not None
         node_id = getattr(node, "id", "?")
         function_ids = self.inner.state.functions_for(node_id)
@@ -525,9 +537,6 @@ class _LLMDetectorAdapter:
         self.inner.lower_actions_for_prompt = _lower_actions_for_prompt(
             self.scope, inner_node, self._lower_actions
         )
-
-        if self.pack is not None:
-            return self._detect_with_pack(node, effective_scope)
 
         original_complete = self.inner._complete
         captured: dict[str, Any] = {"resp": None}

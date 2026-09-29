@@ -52,8 +52,6 @@ class ReviewEffector:
             _extend_unique(self.state.questions, response.questions)
         if hasattr(response, "repeated_issues"):
             _extend_unique(self.state.repeated_issues, response.repeated_issues)
-        if hasattr(response, "missing_elements"):
-            _extend_unique(self.state.missing_elements, response.missing_elements)
 
     def apply_takt_decision(self, node_id: str, decision: TaktDecision) -> list[ReviewAction]:
         """Turn one takt decision into zero or more ReviewActions with status."""

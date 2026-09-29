@@ -214,12 +214,6 @@ class Verdict(BaseModel):
     confidence: float = 1.0
 
 
-class VerdictResponse(BaseModel):
-    model_config = _STRICT
-
-    verdicts: list[Verdict] = Field(default_factory=list)
-
-
 class ActionText(BaseModel):
     model_config = _STRICT
 
@@ -246,7 +240,6 @@ __all__ = [
     "SourceUnit",
     "Verdict",
     "VerdictKind",
-    "VerdictResponse",
     "accepted_tags",
     "check_naming",
     "cited_unit",
