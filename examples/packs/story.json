@@ -1,0 +1,68 @@
+{
+  "ontology": {
+    "functions": [
+      {
+        "id": "opening",
+        "label": "Opening",
+        "attach_to": ["sentence", "paragraph"]
+      },
+      {
+        "id": "conflict",
+        "label": "Conflict",
+        "attach_to": ["sentence", "paragraph"]
+      },
+      {
+        "id": "resolution",
+        "label": "Resolution",
+        "attach_to": ["sentence", "paragraph", "section"]
+      }
+    ]
+  },
+  "units": {
+    "unit-opening": {
+      "id": "unit-opening",
+      "source_id": "host-pack",
+      "locator": "opening",
+      "text": "The story opens by placing someone in a situation.",
+      "force": "binding"
+    }
+  },
+  "rules": [
+    {
+      "id": "label-opening",
+      "kind": "label",
+      "function_id": "opening",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-conflict",
+      "kind": "label",
+      "function_id": "conflict",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "label-resolution",
+      "kind": "label",
+      "function_id": "resolution",
+      "scope": "fragment",
+      "when": "always"
+    },
+    {
+      "id": "defect-opening",
+      "kind": "defect",
+      "function_id": "opening",
+      "scope": "fragment",
+      "when": "function_present",
+      "source_unit_id": "unit-opening"
+    },
+    {
+      "id": "close-conflict",
+      "kind": "close",
+      "function_id": "conflict",
+      "scope": "document",
+      "when": "function_absent"
+    }
+  ]
+}

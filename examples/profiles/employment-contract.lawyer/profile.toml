@@ -1,3 +1,5 @@
+# Behavior only: role, pipeline, action policy. Ontology, source units, and
+# rules live in a Pack (see examples/packs/), not in this folder.
 name = "employment-contract.lawyer"
 language = "pl"
 document_type = "umowa o pracę"

@@ -5,6 +5,11 @@
 Breaking change. A review given a `Pack` runs two scans plus an optional write.
 The host injects model plugins; ReviewKit does not ship a model runtime.
 
+Host guide: load Pack → inject `DecisionClient` → two scans. See the README
+and [`docs/host-integration.md`](docs/host-integration.md). Gaps are
+`ontology.function_ids() − covered()` on the host, not `missing_elements`.
+`ReviewFinding.dimension` is not a function id. `detect()` is internal.
+
 ### Pack
 
 `Pack` is the game: `ontology` + `rules` + `units`. It is not the profile, not

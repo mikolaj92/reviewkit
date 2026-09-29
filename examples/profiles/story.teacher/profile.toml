@@ -1,3 +1,4 @@
+# Behavior only: role, pipeline, action policy. Pair with examples/packs/story.json.
 name = "story.teacher"
 language = "pl"
 document_type = "opowiadanie ucznia"
