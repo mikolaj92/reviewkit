@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from reviewkit.decision import MockDecisionClient, NoulQuestion
 from reviewkit.llm import MockLLMClient
-from reviewkit.models import ReviewScope
+from reviewkit.models import ReviewResponse, ReviewScope
 from reviewkit.pack import (
     Function,
     FunctionTag,
@@ -279,10 +279,20 @@ def test_a_pack_names_before_it_judges() -> None:
     assert "the whole unused corpus" not in _dump(closing.state)
     assert [finding.title for finding in findings] == ["missing"]
     assert findings[0].description == "purposes"
+    assert findings[0].dimension is None
     assert actions[0].replacement_text == "Cele: swiadczenie uslugi."
-    assert _payload(llm.calls[0])["pass"] == "action"
+    assert actions[0].tags == ["purposes"]
+    assert all(_payload(call)["pass"] == "action" for call in llm.calls)
     assert _payload(llm.calls[0])["verdict"]["kind"] == "missing"
     assert _payload(llm.calls[0])["source"]["id"] == "unit-controller"
+    assert all(
+        "current_review_state" not in _dump(call.state)
+        and "external_review_context" not in _dump(call.state)
+        and "missing_elements" not in _dump(call.state)
+        for call in decision.calls
+    )
+    assert set(fragment.state) == {"text", "tags", "unit"}
+    assert set(closing.state) == {"covered", "candidate", "unit"}
 
 
 def test_judge_on_a_fragment_never_asks_a_close_rule() -> None:
@@ -374,7 +384,18 @@ def test_without_a_pack_the_review_stays_one_pass() -> None:
     assert llm.calls
     assert decision.calls == []
     assert all('"pass": "naming"' not in call.content for call in llm.calls)
+    assert all('"pass": "assessment"' not in call.content for call in llm.calls)
     assert all(call.schema.__name__.endswith("ReviewResponse") for call in llm.calls)
+
+
+def test_review_response_has_no_missing_elements_gap_field() -> None:
+    assert "missing_elements" not in ReviewResponse.model_fields
+    assert "tags" not in ReviewResponse.model_fields
+    from reviewkit import pack, prompts
+
+    assert not hasattr(prompts, "naming_prompt")
+    assert not hasattr(prompts, "judge_prompt")
+    assert not hasattr(pack, "VerdictResponse")
 
 
 def test_a_pack_review_needs_a_decision_client() -> None:

@@ -18,74 +18,9 @@ from reviewkit.models import (
     SectionReviewResponse,
     SentenceReviewResponse,
 )
-from reviewkit.pack import (
-    ActionText,
-    Function,
-    NamingResponse,
-    Rule,
-    SourceUnit,
-    Verdict,
-)
+from reviewkit.pack import ActionText, SourceUnit, Verdict
 from reviewkit.profile import ReviewProfile
 from reviewkit.state import ReviewState
-
-
-def naming_prompt(
-    profile: ReviewProfile,
-    node_id: str,
-    text: str,
-    functions: list[Function],
-) -> list[dict[str, str]]:
-    """Pass 1. The fragment and the function dictionary, nothing else."""
-    payload = {
-        "pass": "naming",
-        "current_fragment": {"node_id": node_id, "text": text},
-        "functions": [{"id": function.id, "label": function.label} for function in functions],
-        "schema": NamingResponse.model_json_schema(),
-    }
-    system = (
-        f"You are acting as: {profile.reviewer_role}.\n"
-        "Name this fragment with function ids from the list. "
-        "Return tags only. Do not judge, edit, or report anything missing."
-    )
-    return _pass_messages(system, payload)
-
-
-def judge_prompt(
-    profile: ReviewProfile,
-    *,
-    node_id: str,
-    scope: str,
-    function_ids: list[str],
-    covered: dict[str, list[str]],
-    rules: list[Rule],
-    units: list[SourceUnit],
-    schema: type[BaseModel],
-) -> list[dict[str, str]]:
-    """Pass 2. The node's tags, the matched rules, and only the units they cite."""
-    payload = {
-        "pass": "assessment",
-        "scope": scope,
-        "node_id": node_id,
-        "function_ids": function_ids,
-        "covered": covered,
-        "rules": [rule.model_dump(mode="json") for rule in rules],
-        "sources": [unit.model_dump(mode="json") for unit in units],
-        "schema": schema.model_json_schema(),
-    }
-    if scope == "document":
-        instruction = (
-            "Judge the matched rules against the whole document. "
-            "covered maps each function to the fragments named with it. "
-            "A function mapped to nothing is absent, and only this pass may say so."
-        )
-    else:
-        instruction = (
-            "Judge the matched rules against this one fragment. "
-            "Do not report a missing function: absence is judged once, on the document."
-        )
-    system = f"You are acting as: {profile.reviewer_role}.\n{instruction}"
-    return _pass_messages(system, payload)
 
 
 def action_prompt(
@@ -195,7 +130,6 @@ def document_review_prompt(
         "section_summaries": state.section_summaries,
         "all_risks": state.risks,
         "all_questions": state.questions,
-        "missing_elements": state.missing_elements,
         "repeated_issues": state.repeated_issues,
         "section_review_results": _actions_payload(section_actions),
         "external_review_context": _context_payload(context),
@@ -273,7 +207,7 @@ def _state_payload(state: ReviewState) -> dict[str, Any]:
     # dropped, action-processing errors); they are not review substance. Feeding
     # them back into the next level's prompt only adds noise and risks the model
     # reacting to our own bookkeeping, so exclude them from the state it sees.
-    payload = state.model_dump(mode="json", exclude={"warnings", "findings"})
+    payload = state.model_dump(mode="json", exclude={"warnings", "findings", "tags"})
     payload["findings"] = [model_facing_finding_payload(finding) for finding in state.findings]
     return payload
 

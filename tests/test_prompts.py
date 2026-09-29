@@ -1,6 +1,7 @@
 import json
 
 from reviewkit.document import SentenceNode
+from reviewkit.pack import FunctionTag
 from reviewkit.profile import load_profile
 from reviewkit.prompts import sentence_review_prompt
 from reviewkit.state import ReviewState
@@ -12,7 +13,10 @@ def test_engine_warnings_are_not_leaked_into_the_model_prompt() -> None:
     # substance, and must not be fed back into the next level's prompt where the
     # model could react to them.
     profile = load_profile("examples/profiles/story.teacher")
-    state = ReviewState(warnings=["Dropped malformed risks list for sentence p1.s1"])
+    state = ReviewState(
+        warnings=["Dropped malformed risks list for sentence p1.s1"],
+        tags=[FunctionTag(node_id="p1.s1", function_ids=["lead"])],
+    )
 
     messages = sentence_review_prompt(
         profile, state, SentenceNode(id="p1.s1", text="Ala ma kota.", paragraph_id="p1")
@@ -22,3 +26,6 @@ def test_engine_warnings_are_not_leaked_into_the_model_prompt() -> None:
     assert "Dropped malformed risks list" not in user
     payload = json.loads(user.split("\n\n", 1)[1])
     assert "warnings" not in payload["current_review_state"]
+    assert "tags" not in payload["current_review_state"]
+    assert "missing_elements" not in payload["current_review_state"]
+    assert "missing_elements" not in payload
