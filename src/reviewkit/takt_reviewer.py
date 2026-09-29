@@ -136,7 +136,7 @@ class TaktReviewer:
         self.decision = decision
         if self.pack is not None and self.decision is None:
             raise ValueError(
-                "pack reviews name and judge through DecisionClient; "
+                "pack reviews name and judge through an injected DecisionClient; "
                 "omit pack to keep the single LLMClient pass"
             )
         self.takt_client = takt_client or TaktClient()

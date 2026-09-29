@@ -1,9 +1,8 @@
 """Provider-blind decision protocol for Pack naming and judging.
 
-The host injects the implementation. ReviewKit never imports a model server,
-weight name, or URL. A Pack review calls :meth:`DecisionClient.decide` once per
-fragment to name functions (separate noul questions, not one choice over the
-dictionary) and once per matched rule to judge. Replacement text still goes
+The host injects the plugin at the call site. This module is a socket, not a
+model runtime: no server client, weight name, or URL lives here. A Pack review
+calls :meth:`DecisionClient.decide` to name and judge. Replacement text goes
 through :class:`~reviewkit.llm.LLMClient`.
 """
 

@@ -31,8 +31,9 @@ def review_tree(
 
     ``pack`` is the game: ontology, source units, and rules. It is not the
     profile, not instructions.md, and not external_review_context. ``None`` is
-    explicit legacy compat for the single fused pass. A pack review names and
-    judges through ``decision``; replacement text still uses ``llm``.
+    explicit legacy compat for the single fused pass. The host injects
+    ``decision`` (``DecisionClient.decide``) and ``llm``
+    (``LLMClient.complete_json``); ReviewKit does not ship a model runtime.
     """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)

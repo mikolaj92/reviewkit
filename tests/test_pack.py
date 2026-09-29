@@ -382,8 +382,26 @@ def test_a_pack_review_needs_a_decision_client() -> None:
         TaktReviewer(profile=_profile(), llm=MockLLMClient(), pack=_pack())
 
 
-def test_reviewkit_core_does_not_name_model_hosts() -> None:
+def test_reviewkit_core_is_sockets_not_a_model_runtime() -> None:
+    from typing import Protocol
+
+    from reviewkit.decision import DecisionClient
+    from reviewkit.llm import LLMClient
+
+    assert issubclass(DecisionClient, Protocol)
+    assert issubclass(LLMClient, Protocol)
+    forbidden = (
+        "basal",
+        "qwen",
+        "vllm",
+        "jev",
+        "zenodo",
+        "fp8",
+        "nvfp4",
+        "http://",
+        "https://",
+    )
     for path in Path("src/reviewkit").rglob("*.py"):
         text = path.read_text().lower()
-        for token in ("basal", "qwen", "vllm"):
+        for token in forbidden:
             assert token not in text, f"{path} names {token}"
