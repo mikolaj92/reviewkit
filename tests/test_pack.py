@@ -6,22 +6,24 @@ from pydantic import ValidationError
 
 from reviewkit.decision import MockDecisionClient, NoulQuestion
 from reviewkit.llm import MockLLMClient
+from reviewkit.models import ReviewScope
 from reviewkit.pack import (
-    CloseRule,
-    DefectRule,
     Function,
     FunctionTag,
-    LabelRule,
     NamingResponse,
     Ontology,
     Pack,
+    Rule,
     SourceUnit,
+    judge_rules,
 )
 from reviewkit.parser_text import parse_text
 from reviewkit.profile import ReviewProfile
 from reviewkit.state import ReviewState
 from reviewkit.takt_reviewer import TaktReviewer
 from reviewkit.takt_types import TaktDecision
+
+_FUNCTIONS = ("controller_identity", "purposes")
 
 
 def _profile() -> ReviewProfile:
@@ -33,43 +35,62 @@ def _profile() -> ReviewProfile:
     )
 
 
+def _named(*yes: str) -> dict[str, bool]:
+    return {function_id: function_id in yes for function_id in _FUNCTIONS}
+
+
 def _pack() -> Pack:
     return Pack(
-        id="notice",
-        document_type="privacy_notice",
         ontology=Ontology(
             functions=[
                 Function(id="controller_identity", label="Administrator", attach_to=["sentence"]),
                 Function(id="purposes", label="Cele", attach_to=["sentence"]),
             ],
-            source_kinds=["statute"],
-            unit_kinds=["article"],
         ),
         units={
             "unit-controller": SourceUnit(
                 id="unit-controller",
                 source_id="source",
-                kind="article",
                 locator="§1",
                 text="identity of the controller",
-                status="binding",
+                force="binding",
             ),
             "unused": SourceUnit(
                 id="unused",
                 source_id="source",
-                kind="article",
                 locator="§99",
                 text="the whole unused corpus",
-                status="dead",
+                force="dead",
             ),
         },
         rules=[
-            LabelRule(id="label-controller", function_id="controller_identity"),
-            LabelRule(id="label-purposes", function_id="purposes"),
-            DefectRule(id="defect-controller", function_id="controller_identity"),
-            CloseRule(
-                id="close-purposes",
+            Rule(
+                id="label-controller",
+                kind="label",
+                function_id="controller_identity",
+                scope="fragment",
+                when="always",
+            ),
+            Rule(
+                id="label-purposes",
+                kind="label",
                 function_id="purposes",
+                scope="fragment",
+                when="always",
+            ),
+            Rule(
+                id="defect-controller",
+                kind="defect",
+                function_id="controller_identity",
+                scope="fragment",
+                when="function_present",
+            ),
+            Rule(
+                id="close-purposes",
+                kind="close",
+                function_id="purposes",
+                scope="document",
+                when="function_absent",
                 source_unit_id="unit-controller",
             ),
         ],
@@ -82,6 +103,14 @@ def _payload(call) -> dict:
 
 def _dump(value: object) -> str:
     return json.dumps(value, ensure_ascii=False) if not isinstance(value, str) else value
+
+
+def _naming_calls(decision: MockDecisionClient) -> list:
+    return [
+        call
+        for call in decision.calls
+        if "verdict" not in call.questions and "present" not in call.questions
+    ]
 
 
 class _Stable:
@@ -106,28 +135,71 @@ def _reviewer(
 def test_pack_rejects_a_rule_that_cites_an_unknown_function() -> None:
     with pytest.raises(ValidationError):
         Pack(
-            id="broken",
-            document_type="privacy_notice",
             ontology=Ontology(
                 functions=[Function(id="cookies", label="Cookies", attach_to=["sentence"])]
             ),
             units={},
-            rules=[LabelRule(id="label", function_id="controller_identity")],
+            rules=[
+                Rule(
+                    id="label",
+                    kind="label",
+                    function_id="controller_identity",
+                    scope="fragment",
+                    when="always",
+                )
+            ],
         )
 
 
 def test_pack_rejects_a_rule_that_cites_an_unknown_unit() -> None:
     with pytest.raises(ValidationError):
         Pack(
-            id="broken",
-            document_type="privacy_notice",
             ontology=Ontology(
                 functions=[Function(id="cookies", label="Cookies", attach_to=["sentence"])]
             ),
             units={},
             rules=[
-                CloseRule(id="close", function_id="cookies", source_unit_id="missing-unit"),
+                Rule(
+                    id="close",
+                    kind="close",
+                    function_id="cookies",
+                    scope="document",
+                    when="function_absent",
+                    source_unit_id="missing-unit",
+                ),
             ],
+        )
+
+
+def test_pack_rejects_a_close_rule_on_a_fragment() -> None:
+    with pytest.raises(ValidationError):
+        Pack(
+            ontology=Ontology(
+                functions=[Function(id="cookies", label="Cookies", attach_to=["sentence"])]
+            ),
+            units={},
+            rules=[
+                Rule(
+                    id="close",
+                    kind="close",
+                    function_id="cookies",
+                    scope="fragment",
+                    when="function_absent",
+                )
+            ],
+        )
+
+
+def test_source_unit_uses_force_not_status() -> None:
+    with pytest.raises(ValidationError):
+        SourceUnit.model_validate(
+            {
+                "id": "u",
+                "source_id": "s",
+                "locator": "§1",
+                "force": "binding",
+                "status": "binding",
+            }
         )
 
 
@@ -147,12 +219,22 @@ def test_covered_maps_function_ids_to_node_ids() -> None:
     assert state.covered() == {"lead": ["p1.s1", "p1.s2"], "numeric_claim": ["p1.s2"]}
 
 
+def test_judge_rules_never_return_document_rules_for_a_sentence() -> None:
+    rules = judge_rules(_pack(), ReviewScope.SENTENCE, ["controller_identity"], {})
+    assert rules
+    assert all(rule.scope == "fragment" and rule.kind != "close" for rule in rules)
+    assert all(rule.when != "function_absent" for rule in rules)
+
+
 def test_a_pack_names_before_it_judges() -> None:
     document = parse_text("Kontakt: biuro@firma.pl.")
     pack = _pack()
     decision = MockDecisionClient(
         answers=[
-            {"controller_identity": True, "purposes": False},
+            _named("controller_identity"),
+            _named(),
+            _named(),
+            _named(),
             {"verdict": "keep"},
             {"present": False},
         ]
@@ -161,18 +243,20 @@ def test_a_pack_names_before_it_judges() -> None:
 
     findings, actions, state = _reviewer(llm, pack, decision).review(document)
 
-    naming, fragment, closing = decision.calls
-    assert isinstance(naming.state, str)
-    assert [question.kind for question in naming.questions.values()] == ["noul", "noul"]
-    assert naming.questions["controller_identity"] == NoulQuestion(
+    naming = _naming_calls(decision)
+    assert len(naming) == 4
+    assert [question.kind for question in naming[0].questions.values()] == ["noul", "noul"]
+    assert naming[0].questions["controller_identity"] == NoulQuestion(
         yes="Administrator", no="not this function"
     )
-    assert "the whole unused corpus" not in _dump(naming.state)
+    assert all("the whole unused corpus" not in _dump(call.state) for call in naming)
     assert state.covered() == {"controller_identity": ["p1.s1"]}
     gaps = pack.ontology.function_ids() - set(state.covered())
     assert gaps == {"purposes"}
 
-    assert isinstance(fragment.state, dict)
+    fragment = next(
+        call for call in decision.calls if isinstance(call.state, dict) and "tags" in call.state
+    )
     assert list(fragment.questions) == ["verdict"]
     assert fragment.questions["verdict"].kind == "choice"
     assert fragment.questions["verdict"].options == ("keep", "change", "delete")
@@ -181,12 +265,17 @@ def test_a_pack_names_before_it_judges() -> None:
     assert fragment.state["unit"] is None
     assert "the whole unused corpus" not in _dump(fragment.state)
 
-    assert isinstance(closing.state, dict)
+    closing = next(
+        call
+        for call in decision.calls
+        if isinstance(call.state, dict) and "candidate" in call.state
+    )
     assert list(closing.questions) == ["present"]
     assert closing.questions["present"].kind == "noul"
     assert closing.state["candidate"] == "purposes"
     assert closing.state["candidate"] not in state.covered()
     assert closing.state["unit"]["id"] == "unit-controller"
+    assert closing.state["unit"]["force"] == "binding"
     assert "the whole unused corpus" not in _dump(closing.state)
     assert [finding.title for finding in findings] == ["missing"]
     assert findings[0].description == "purposes"
@@ -200,7 +289,10 @@ def test_judge_on_a_fragment_never_asks_a_close_rule() -> None:
     document = parse_text("Administratorem jest Firma.")
     decision = MockDecisionClient(
         answers=[
-            {"controller_identity": True, "purposes": True},
+            _named("controller_identity", "purposes"),
+            _named(),
+            _named(),
+            _named(),
             {"verdict": "keep"},
         ]
     )
@@ -217,13 +309,19 @@ def test_judge_on_a_fragment_never_asks_a_close_rule() -> None:
         assert list(call.questions) == ["verdict"]
         assert call.questions["verdict"].kind == "choice"
         assert "present" not in call.questions
+    assert not any(
+        isinstance(call.state, dict) and "candidate" in call.state for call in decision.calls
+    )
 
 
 def test_document_missing_comes_only_from_covered_gaps() -> None:
     document = parse_text("Administratorem jest Firma.")
     decision = MockDecisionClient(
         answers=[
-            {"controller_identity": True, "purposes": False},
+            _named("controller_identity"),
+            _named(),
+            _named(),
+            _named(),
             {"verdict": "keep"},
             {"present": False},
         ]
@@ -249,7 +347,10 @@ def test_a_low_confidence_action_goes_to_a_person() -> None:
     document = parse_text("Administratorem jest Firma.")
     decision = MockDecisionClient(
         answers=[
-            {"controller_identity": True, "purposes": True},
+            _named("controller_identity", "purposes"),
+            _named(),
+            _named(),
+            _named(),
             {"verdict": {"value": "change", "confidence": 0.2}},
         ]
     )
@@ -263,6 +364,7 @@ def test_a_low_confidence_action_goes_to_a_person() -> None:
 
 
 def test_without_a_pack_the_review_stays_one_pass() -> None:
+    """Legacy compat: pack=None keeps the single fused LLMClient scan."""
     document = parse_text("Jedno zdanie.")
     llm = MockLLMClient(responses=[{}, {}, {}])
     decision = MockDecisionClient(answers=[{"should": "not be called"}])

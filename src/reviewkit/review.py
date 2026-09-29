@@ -29,9 +29,10 @@ def review_tree(
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
 
-    ``pack`` is the game: ontology, source units, and rules. ``None`` keeps the
-    single fused pass. The profile stays the reviewer's behavior. A pack review
-    names and judges through ``decision``; replacement text still uses ``llm``.
+    ``pack`` is the game: ontology, source units, and rules. It is not the
+    profile, not instructions.md, and not external_review_context. ``None`` is
+    explicit legacy compat for the single fused pass. A pack review names and
+    judges through ``decision``; replacement text still uses ``llm``.
     """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)

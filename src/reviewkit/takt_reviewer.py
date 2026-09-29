@@ -58,23 +58,21 @@ from reviewkit.models import (
 )
 from reviewkit.pack import (
     ActionText,
-    CloseRule,
-    DefectRule,
     FunctionTag,
     NamingResponse,
     Pack,
     PassTrace,
     ProcessCheck,
+    Rule,
     SourceUnit,
     Verdict,
     VerdictKind,
     accepted_tags,
     check_naming,
     cited_unit,
-    close_rules,
-    defect_rules,
     function_label,
-    label_rules,
+    judge_rules,
+    naming_functions,
 )
 from reviewkit.plant import DocNode, ReviewDocumentPlant
 from reviewkit.policy import ActionPolicy
@@ -247,19 +245,14 @@ class TaktReviewer:
         """First scan. Tags only: no cascade evaluation and no effector."""
         assert self.pack is not None
         assert self.decision is not None
+        enabled = set(self.profile.review_pipeline)
         for node in plant.sequential_scan():
             scope = node.scope()
-            if scope is None or not label_rules(self.pack, scope):
+            if scope is None or scope not in enabled:
                 continue
             inner = getattr(node, "inner", node)
             text = str(getattr(inner, "text", "") or "")
-            if not text.strip():
-                continue
-            functions = [
-                function
-                for function in self.pack.ontology.functions
-                if scope.value in function.attach_to
-            ]
+            functions = naming_functions(self.pack, scope)
             if not functions:
                 continue
             questions = naming_questions(functions)
@@ -354,28 +347,22 @@ class _LLMDetectorAdapter:
         assert self.pack is not None
         node_id = getattr(node, "id", "?")
         function_ids = self.inner.state.functions_for(node_id)
-        rules: list[DefectRule | CloseRule] = []
-        if scope is ReviewScope.DOCUMENT:
-            rules.extend(close_rules(self.pack, self.inner.state.covered()))
-            absent = [
-                function.id
-                for function in self.pack.ontology.functions
-                if not self.inner.state.covered().get(function.id)
-            ]
-        else:
-            rules.extend(defect_rules(self.pack, function_ids))
-            absent = []
+        covered = self.inner.state.covered()
+        rules = judge_rules(self.pack, scope, function_ids, covered)
         self.traces.append(
             PassTrace(
                 checks=(
                     ProcessCheck(
                         name="fragment_has_no_close_rule",
                         passed=scope is ReviewScope.DOCUMENT
-                        or not any(rule.kind == "close" for rule in rules),
+                        or not any(
+                            rule.kind == "close" or rule.scope == "document" for rule in rules
+                        ),
                     ),
                     ProcessCheck(
                         name="absence_is_document_scope",
-                        passed=scope is ReviewScope.DOCUMENT or not absent,
+                        passed=scope is ReviewScope.DOCUMENT
+                        or not any(rule.when == "function_absent" for rule in rules),
                     ),
                 )
             )
@@ -404,7 +391,7 @@ class _LLMDetectorAdapter:
         self,
         node_id: str,
         scope: ReviewScope,
-        rules: list[DefectRule | CloseRule],
+        rules: list[Rule],
         units: dict[str, SourceUnit],
         function_ids: list[str],
     ) -> list[Verdict]:
@@ -442,7 +429,7 @@ class _LLMDetectorAdapter:
     def _decide_rule(
         self,
         *,
-        rule: DefectRule | CloseRule,
+        rule: Rule,
         unit: SourceUnit | None,
         text: str,
         covered: dict[str, list[str]],
@@ -451,7 +438,7 @@ class _LLMDetectorAdapter:
         assert self.decision is not None
         assert self.pack is not None
         dumped = None if unit is None else unit.model_dump(mode="json")
-        if isinstance(rule, CloseRule):
+        if rule.kind == "close" or rule.when == "function_absent":
             state: str | dict[str, Any] = {
                 "covered": covered.get(rule.function_id, []),
                 "candidate": rule.function_id,

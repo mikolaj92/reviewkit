@@ -20,10 +20,9 @@ from reviewkit.models import (
 )
 from reviewkit.pack import (
     ActionText,
-    CloseRule,
-    DefectRule,
     Function,
     NamingResponse,
+    Rule,
     SourceUnit,
     Verdict,
 )
@@ -59,7 +58,7 @@ def judge_prompt(
     scope: str,
     function_ids: list[str],
     covered: dict[str, list[str]],
-    rules: list[DefectRule | CloseRule],
+    rules: list[Rule],
     units: list[SourceUnit],
     schema: type[BaseModel],
 ) -> list[dict[str, str]]:
