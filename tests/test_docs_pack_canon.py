@@ -42,14 +42,14 @@ def test_docs_name_pack_and_two_scans_not_stale_host_apis() -> None:
         assert "required-clauses.md" not in text
         assert "ParagraphInserter" not in text
         assert "InsertionValidator" not in text
-    examples = "\n".join(
+    example_blobs = [
         path.read_text(encoding="utf-8")
         for path in (root / "examples").rglob("*")
         if path.is_file() and path.suffix in {".md", ".toml", ".py", ".json"}
-    )
-    docs = "\n".join((readme, guide, changelog, release, examples))
+    ]
+    docs = f"{readme}\n{guide}\n{changelog}\n{release}\n{''.join(example_blobs)}"
     for token in ("RODO", "PKE", "UODO", "Basal", "Qwen"):
-        assert token not in examples
+        assert all(token not in blob for blob in example_blobs)
         if token in {"Basal", "Qwen"}:
             continue
         assert token not in docs
