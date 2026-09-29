@@ -113,7 +113,7 @@ class FunctionTag(BaseModel):
 
 
 class NamingResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT
 
     tags: list[FunctionTag] = Field(default_factory=list)
 
@@ -218,15 +218,22 @@ class Verdict(BaseModel):
 
 
 class VerdictResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT
 
     verdicts: list[Verdict] = Field(default_factory=list)
 
 
 class ActionText(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = _STRICT
 
     replacement_text: str | None = None
+
+
+def function_label(pack: Pack, function_id: str) -> str:
+    for function in pack.ontology.functions:
+        if function.id == function_id:
+            return function.label
+    return function_id
 
 
 __all__ = [
@@ -252,5 +259,6 @@ __all__ = [
     "cited_unit",
     "close_rules",
     "defect_rules",
+    "function_label",
     "label_rules",
 ]

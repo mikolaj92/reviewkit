@@ -24,9 +24,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Mapping
 from typing import Any, cast
 
 from reviewkit.context import EmptyReviewContextProvider, ReviewContextProvider
+from reviewkit.decision import (
+    DecisionAnswer,
+    DecisionClient,
+    Question,
+    coerce_answer,
+    document_present_question,
+    fragment_verdict_question,
+    is_noul_yes,
+    naming_questions,
+)
 from reviewkit.detectors import BaseLLMDetector, _lower_actions_for_prompt
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.effectors import ReviewEffector
@@ -49,6 +60,7 @@ from reviewkit.pack import (
     ActionText,
     CloseRule,
     DefectRule,
+    FunctionTag,
     NamingResponse,
     Pack,
     PassTrace,
@@ -56,12 +68,12 @@ from reviewkit.pack import (
     SourceUnit,
     Verdict,
     VerdictKind,
-    VerdictResponse,
     accepted_tags,
     check_naming,
     cited_unit,
     close_rules,
     defect_rules,
+    function_label,
     label_rules,
 )
 from reviewkit.plant import DocNode, ReviewDocumentPlant
@@ -69,8 +81,6 @@ from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
 from reviewkit.prompts import (
     action_prompt,
-    judge_prompt,
-    naming_prompt,
     reconciliation_review_prompt,
 )
 from reviewkit.reconciliation import reconcile_findings, select_reconciliation_targets
@@ -97,6 +107,15 @@ _RESPONSE_SCHEMA = {
 }
 
 
+def _verdict_kind(answer: DecisionAnswer) -> VerdictKind | None:
+    if isinstance(answer.value, bool):
+        return None
+    try:
+        return VerdictKind(str(answer.value).strip().lower())
+    except ValueError:
+        return None
+
+
 class TaktReviewer:
     """Full takt v0.3.2-driven reviewer using the in-process Mojo binding."""
 
@@ -107,6 +126,7 @@ class TaktReviewer:
         context_provider: ReviewContextProvider | None = None,
         action_policy: ActionPolicy | None = None,
         pack: Pack | None = None,
+        decision: DecisionClient | None = None,
         *,
         takt_client: TaktClient | None = None,
     ) -> None:
@@ -115,6 +135,12 @@ class TaktReviewer:
         self.context_provider = context_provider or EmptyReviewContextProvider()
         self.action_policy = action_policy
         self.pack = pack
+        self.decision = decision
+        if self.pack is not None and self.decision is None:
+            raise ValueError(
+                "pack reviews name and judge through DecisionClient; "
+                "omit pack to keep the single LLMClient pass"
+            )
         self.takt_client = takt_client or TaktClient()
         self.traces: list[PassTrace] = []
 
@@ -220,6 +246,7 @@ class TaktReviewer:
     def _name(self, plant: ReviewDocumentPlant) -> None:
         """First scan. Tags only: no cascade evaluation and no effector."""
         assert self.pack is not None
+        assert self.decision is not None
         for node in plant.sequential_scan():
             scope = node.scope()
             if scope is None or not label_rules(self.pack, scope):
@@ -235,11 +262,16 @@ class TaktReviewer:
             ]
             if not functions:
                 continue
-            response = self.llm.complete_json(
-                naming_prompt(self.profile, node.id, text, functions),
-                NamingResponse,
+            questions = naming_questions(functions)
+            answers = self.decision.decide(text, questions)
+            tagged = [
+                function_id
+                for function_id, raw in answers.items()
+                if function_id in questions and is_noul_yes(coerce_answer(raw))
+            ]
+            response = NamingResponse(
+                tags=[FunctionTag(node_id=node.id, function_ids=tagged)] if tagged else []
             )
-            assert isinstance(response, NamingResponse)
             self.traces.append(check_naming(self.pack, response))
             tag = next(
                 (item for item in accepted_tags(self.pack, response) if item.node_id == node.id),
@@ -271,6 +303,7 @@ class TaktReviewer:
                     document_source_context if scope == ReviewScope.DOCUMENT else None
                 ),
                 pack=self.pack,
+                decision=self.decision,
                 traces=self.traces,
             )
             det.inner.set_document(document)
@@ -293,9 +326,11 @@ class _LLMDetectorAdapter:
         effector: ReviewEffector,
         document_source_context: dict[str, Any] | None,
         pack: Pack | None = None,
+        decision: DecisionClient | None = None,
         traces: list[PassTrace] | None = None,
     ) -> None:
         self.pack = pack
+        self.decision = decision
         self.traces = traces if traces is not None else []
         self.inner = BaseLLMDetector(
             profile=profile,
@@ -347,12 +382,12 @@ class _LLMDetectorAdapter:
         )
         if not rules:
             return []
-        units = [
-            unit
+        units = {
+            rule.function_id: unit
             for rule in rules
             if (unit := cited_unit(self.pack, getattr(rule, "source_unit_id", None))) is not None
-        ]
-        verdicts = self._verdicts(node_id, scope, rules, units, absent, function_ids)
+        }
+        verdicts = self._verdicts(node_id, scope, rules, units, function_ids)
         if not verdicts:
             return []
         response = _RESPONSE_SCHEMA[scope](
@@ -370,30 +405,69 @@ class _LLMDetectorAdapter:
         node_id: str,
         scope: ReviewScope,
         rules: list[DefectRule | CloseRule],
-        units: list[SourceUnit],
-        absent: list[str],
+        units: dict[str, SourceUnit],
         function_ids: list[str],
     ) -> list[Verdict]:
-        response = self.inner._complete(
-            judge_prompt(
-                self.inner.profile,
-                node_id=node_id,
-                scope="document" if scope is ReviewScope.DOCUMENT else "fragment",
-                function_ids=absent if scope is ReviewScope.DOCUMENT else function_ids,
-                covered=self.inner.state.covered(),
-                rules=rules,
-                units=units,
-                schema=VerdictResponse,
-            ),
-            VerdictResponse,
-        )
-        assert isinstance(response, VerdictResponse)
-        return [
-            verdict
-            for verdict in response.verdicts
-            if verdict.node_id == node_id
-            and not (verdict.kind is VerdictKind.MISSING and scope is not ReviewScope.DOCUMENT)
-        ]
+        assert self.decision is not None
+        assert self.pack is not None
+        text = str(self.document.get_node_text(node_id) or "")
+        covered = self.inner.state.covered()
+        verdicts: list[Verdict] = []
+        for rule in rules:
+            unit = units.get(rule.function_id)
+            answer, kind = self._decide_rule(
+                rule=rule,
+                unit=unit,
+                text=text,
+                covered=covered,
+                function_ids=function_ids,
+            )
+            if kind is None or kind is VerdictKind.KEEP:
+                continue
+            if kind is VerdictKind.MISSING and (
+                scope is not ReviewScope.DOCUMENT or covered.get(rule.function_id)
+            ):
+                continue
+            verdicts.append(
+                Verdict(
+                    node_id=node_id,
+                    kind=kind,
+                    function_id=rule.function_id,
+                    reason=answer.reason,
+                    confidence=answer.confidence,
+                )
+            )
+        return verdicts
+
+    def _decide_rule(
+        self,
+        *,
+        rule: DefectRule | CloseRule,
+        unit: SourceUnit | None,
+        text: str,
+        covered: dict[str, list[str]],
+        function_ids: list[str],
+    ) -> tuple[DecisionAnswer, VerdictKind | None]:
+        assert self.decision is not None
+        assert self.pack is not None
+        dumped = None if unit is None else unit.model_dump(mode="json")
+        if isinstance(rule, CloseRule):
+            state: str | dict[str, Any] = {
+                "covered": covered.get(rule.function_id, []),
+                "candidate": rule.function_id,
+                "unit": dumped,
+            }
+            questions: Mapping[str, Question] = document_present_question(
+                function_label(self.pack, rule.function_id)
+            )
+            answers = self.decision.decide(state, questions)
+            answer = coerce_answer(answers.get("present"))
+            kind = VerdictKind.KEEP if is_noul_yes(answer) else VerdictKind.MISSING
+            return answer, kind
+        state = {"text": text, "tags": function_ids, "unit": dumped}
+        answers = self.decision.decide(state, fragment_verdict_question())
+        answer = coerce_answer(answers.get("verdict"))
+        return answer, _verdict_kind(answer)
 
     def _findings(self, verdicts: list[Verdict]) -> list[ReviewFinding]:
         return [
@@ -411,11 +485,10 @@ class _LLMDetectorAdapter:
         node_id: str,
         scope: ReviewScope,
         verdicts: list[Verdict],
-        units: list[SourceUnit],
+        units: dict[str, SourceUnit],
     ) -> list[ReviewAction]:
         floor = self.inner.profile.resolved_action_policy().min_confidence_for_auto_apply
         text = str(self.document.get_node_text(node_id) or "")
-        unit = units[0] if units else None
         actions: list[ReviewAction] = []
         for verdict in verdicts:
             if verdict.kind is VerdictKind.KEEP or verdict.kind not in _ACTION_TYPE:
@@ -429,7 +502,7 @@ class _LLMDetectorAdapter:
                         node_id=node_id,
                         text=text,
                         verdict=verdict,
-                        unit=unit,
+                        unit=units.get(verdict.function_id),
                     ),
                     ActionText,
                 )
