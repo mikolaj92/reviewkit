@@ -368,7 +368,10 @@ def test_rerun_resets_traces_and_tags() -> None:
     assert state_b.covered() == state_a.covered()
 
 
-def test_review_tree_entry_forwards_pack_and_skips_act_on_missing() -> None:
+def test_review_tree_entry_forwards_pack_and_skips_act_on_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("reviewkit.takt_reviewer.TaktClient", _RecordingTakt)
     document = parse_text("A lead sentence.")
     decision = MockDecisionClient(
         answers=[
