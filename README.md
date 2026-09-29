@@ -55,9 +55,12 @@ from reviewkit import (
     Rule,
     SourceUnit,
     TaktReviewer,
+    TextDocumentParser,
     load_profile,
     parse_text,
     review_document,
+    review_source,
+    review_tree,
 )
 
 pack = Pack(
@@ -88,6 +91,21 @@ profile = load_profile("examples/profiles/story.teacher")
 llm = MockLLMClient()  # host plugin: LLMClient.complete_json
 decision = MockDecisionClient()  # host plugin: DecisionClient.decide
 
+document = parse_text("Once upon a time there was a storm.")
+
+# Format-neutral tree already in memory (no file I/O, no DOCX render):
+result = review_tree(document, profile, llm, pack, decision)
+
+# Inject a parser adapter, then review the resulting tree:
+result = review_source(
+    "Once upon a time there was a storm.",
+    TextDocumentParser(source_name="story.md"),
+    profile,
+    llm,
+    pack,
+    decision,
+)
+
 # DOCX artifacts (reviewed / corrected / JSON report):
 result = review_document(
     input_path="input.docx",
@@ -98,7 +116,6 @@ result = review_document(
 )
 
 # When the host needs the tag map / gaps:
-document = parse_text("Once upon a time there was a storm.")
 findings, actions, state = TaktReviewer(
     profile=profile,
     llm=llm,
@@ -154,17 +171,48 @@ Hosts implement these Protocols from `reviewkit`. There is no public `detect()`
 API; naming and judging go through `DecisionClient.decide`.
 
 ```python
-from reviewkit import DecisionClient, FragmentDecisionState, LLMClient
+from collections.abc import Mapping
+from typing import Protocol
 
-# DecisionClient.decide(state, questions) -> answers   (name + judge)
-# state is str | FragmentDecisionState | DocumentDecisionState
-# LLMClient.complete_json(messages, schema) -> action  (replacement text)
+from pydantic import BaseModel
+
+from reviewkit import DecisionState, LLMCapabilities, LLMRequestOptions, Question
+
+# state is DecisionState = str | FragmentDecisionState | DocumentDecisionState
+
+
+class DecisionClient(Protocol):
+    def decide(
+        self,
+        state: DecisionState,
+        questions: Mapping[str, Question],
+    ): ...
+
+
+class LLMClient(Protocol):
+    @property
+    def capabilities(self) -> LLMCapabilities: ...
+
+    def complete_json(
+        self,
+        messages: list[dict[str, str]],
+        schema: type[BaseModel],
+        *,
+        options: LLMRequestOptions | None = None,
+    ) -> BaseModel: ...
 ```
 
-Call site: `review_tree(document, profile, llm, pack, decision)` or
-`review_document(...)`. Tests and examples use `MockDecisionClient` and
-`MockLLMClient` only. Model runtimes stay in the host; they are not imported
-from `src/reviewkit`.
+`capabilities` is declared by the host client; ReviewKit does not infer it
+from a model name. `complete_json` accepts optional `LLMRequestOptions`
+(deadline, token bounds, temperature). The engine currently calls
+`complete_json(messages, schema)` without `options`.
+
+Call site: `review_tree(document, profile, llm, pack, decision)`,
+`review_source(source, parser, profile, llm, pack, decision)`, or
+`review_document(...)`. The CLI is `reviewkit input.docx --profile DIR
+--pack FILE --decision module:factory --llm module:factory`. Tests and
+examples use `MockDecisionClient` and `MockLLMClient` only. Model runtimes
+stay in the host; they are not imported from `src/reviewkit`.
 
 ## Profile (behavior only)
 
@@ -243,9 +291,8 @@ installs the Python packages only; the first review compiles and caches Takt's
 native module.
 
 The upstream Takt v0.3.2 manifest supports `osx-arm64` only. Install that Mojo
-build from Modular's stable Conda channel with Pixi. `TAKT_HOME` may point to
-a separate takt v0.3.2 source checkout, but is normally unnecessary because
-the package includes the sources.
+build from Modular's stable Conda channel with Pixi. ReviewKit imports the
+pinned `takt` Python package; it does not look for a local source checkout.
 
 The pinned `takt` dependency is the only cascade engine. `TaktClient` calls
 its `cascade_step` Python binding in-process and propagates import or

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from docx.oxml.ns import qn
-from docx.text.paragraph import Paragraph
 from docxtor import (
     AddressableComment,
     DocumentError,
@@ -14,8 +13,6 @@ from docxtor import (
     ReviewCoverage,
     inventory_review_markup,
 )
-
-_W_ID = qn("w:id")
 
 
 @dataclass(frozen=True)
@@ -93,24 +90,44 @@ def _marker_range(
 
 
 def _offsets_in_paragraph(
-    paragraph: Paragraph, comment_id: str
+    paragraph: object, comment_id: str
 ) -> tuple[int | None, int | None]:
+    element = getattr(paragraph, "_p", None)
+    if element is None or not hasattr(element, "iter"):
+        return (None, None)
     start: int | None = None
     end: int | None = None
     cursor = 0
-    for node in paragraph._p.iter():
-        local = node.tag.split("}")[-1]
-        if local == "commentRangeStart" and node.get(_W_ID) == comment_id:
+    for node in element.iter():
+        local = _local_name(getattr(node, "tag", ""))
+        marker_id = _attr(node, "id")
+        if local == "commentRangeStart" and marker_id == comment_id:
             start = cursor
-        elif local == "commentRangeEnd" and node.get(_W_ID) == comment_id:
+        elif local == "commentRangeEnd" and marker_id == comment_id:
             end = cursor
-        elif local == "t" and node.text:
-            cursor += len(node.text)
+        elif local == "t":
+            text = getattr(node, "text", None)
+            if text:
+                cursor += len(text)
         elif local == "tab" or local in {"br", "cr"}:
             cursor += 1
     if start is None or end is None or not 0 <= start < end:
         return (None, None)
     return (start, end)
+
+
+def _local_name(tag: object) -> str:
+    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
+
+
+def _attr(node: object, local: str) -> str | None:
+    attrib: Any = getattr(node, "attrib", None)
+    if not attrib:
+        return None
+    for name, value in attrib.items():
+        if _local_name(name) == local:
+            return value
+    return None
 
 
 def _unique_range(paragraph_text: str, anchor_text: str) -> tuple[int | None, int | None]:

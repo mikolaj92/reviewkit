@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Docs now match the 0.24.1 Pack surface: `review_tree` / `review_source` /
+`review_document` / `TaktReviewer` / CLI, plus `LLMClient.capabilities` and
+`LLMRequestOptions`. Removed insertion-engine claims the package no longer
+exports, and the unimplemented local takt source-checkout knob. Comment
+balloon offsets no longer import python-docx; physical DOCX stays behind
+Docxtor.
+
 ## 0.24.1
 
 Breaking cleanup of the public review API. Pack + `DecisionClient` +
