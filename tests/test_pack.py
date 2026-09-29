@@ -565,7 +565,6 @@ def test_ontology_gaps_come_from_covered_not_missing_elements() -> None:
     pack = _pack()
     state = ReviewState(
         tags=[FunctionTag(node_id="p1.s1", function_ids=["controller_identity"])],
-        missing_elements=["cookies", "purposes"],
     )
     covered = state.covered()
     assert covered == {"controller_identity": ["p1.s1"]}
@@ -573,8 +572,8 @@ def test_ontology_gaps_come_from_covered_not_missing_elements() -> None:
     assert "purposes" not in covered
     gaps = pack.ontology.function_ids() - set(covered)
     assert gaps == {"purposes"}
-    assert "cookies" not in gaps
-    assert state.missing_elements == ["cookies", "purposes"]
+    assert "missing_elements" not in ReviewState.model_fields
+    assert "missing_elements" not in ReviewResponse.model_fields
 
 
 def test_judge_rules_match_when_and_scope_not_labels() -> None:
