@@ -11,6 +11,7 @@ from reviewkit.models import (
     ReviewResponse,
     ReviewScope,
 )
+from reviewkit.pack import FunctionTag
 
 
 class ReviewState(BaseModel):
@@ -25,6 +26,23 @@ class ReviewState(BaseModel):
     section_summaries: dict[str, str] = Field(default_factory=dict)
     human_decisions: list[str] = Field(default_factory=list)
     document_summary: str | None = None
+    tags: list[FunctionTag] = Field(default_factory=list)
+
+    def covered(self) -> dict[str, list[str]]:
+        """Function id to the node ids named with it. The host computes gaps from this."""
+        found: dict[str, list[str]] = {}
+        for tag in self.tags:
+            for function_id in tag.function_ids:
+                nodes = found.setdefault(function_id, [])
+                if tag.node_id not in nodes:
+                    nodes.append(tag.node_id)
+        return found
+
+    def functions_for(self, node_id: str) -> list[str]:
+        for tag in self.tags:
+            if tag.node_id == node_id:
+                return list(tag.function_ids)
+        return []
 
     def absorb_response(
         self,

@@ -10,6 +10,7 @@ from reviewkit.context import ReviewContextProvider
 from reviewkit.document import DocumentParser, ReviewDocument
 from reviewkit.llm import LLMClient
 from reviewkit.models import ReviewAction, ReviewFinding, ReviewResult, ReviewStats
+from reviewkit.pack import Pack
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile, load_profile
 from reviewkit.takt_reviewer import TaktReviewer
@@ -22,8 +23,13 @@ def review_tree(
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
+    pack: Pack | None = None,
 ) -> ReviewResult:
-    """Review an already parsed tree without reading or rendering any file format."""
+    """Review an already parsed tree without reading or rendering any file format.
+
+    ``pack`` is the game: ontology, source units, and rules. ``None`` keeps the
+    single fused pass. The profile stays the reviewer's behavior.
+    """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
     )
@@ -32,6 +38,7 @@ def review_tree(
         llm=llm,
         context_provider=context_provider,
         action_policy=action_policy,
+        pack=pack,
     )
     findings, actions, state = reviewer.review(document)
     if extra_actions:

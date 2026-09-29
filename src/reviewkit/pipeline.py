@@ -15,6 +15,7 @@ from reviewkit.models import (
     ReviewResult,
     ReviewStats,
 )
+from reviewkit.pack import Pack
 from reviewkit.parser_docx import load_docx
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile, load_profile
@@ -34,6 +35,7 @@ def review_tree(
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
+    pack: Pack | None = None,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format."""
     profile = (
@@ -46,6 +48,7 @@ def review_tree(
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
+        pack=pack,
     )
     return ReviewResult(
         document=document,
@@ -70,6 +73,7 @@ def review_document(
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
+    pack: Pack | None = None,
 ) -> ReviewResult:
     """Run the domain-neutral hierarchical review and render its artifacts.
 
@@ -105,6 +109,7 @@ def review_document(
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
+        pack=pack,
     )
 
     reviewed_path: Path | None = None
@@ -143,12 +148,14 @@ def _review_tree(
     context_provider: ReviewContextProvider | None,
     action_policy: ActionPolicy | None,
     extra_actions: list[ReviewAction] | None,
+    pack: Pack | None = None,
 ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
     reviewer = TaktReviewer(
         profile=profile,
         llm=llm,
         context_provider=context_provider,
         action_policy=action_policy,
+        pack=pack,
     )
     findings, actions, state = reviewer.review(document)
     if extra_actions:

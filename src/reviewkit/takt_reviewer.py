@@ -35,17 +35,44 @@ from reviewkit.llm import LLMClient
 from reviewkit.models import (
     DocumentReviewResponse,
     FindingLineageEvent,
+    ParagraphReviewResponse,
     ReconciliationDisposition,
     ReviewAction,
+    ReviewActionType,
     ReviewFinding,
     ReviewLocator,
     ReviewScope,
+    SectionReviewResponse,
     SentenceReviewResponse,
+)
+from reviewkit.pack import (
+    ActionText,
+    CloseRule,
+    DefectRule,
+    NamingResponse,
+    Pack,
+    PassTrace,
+    ProcessCheck,
+    SourceUnit,
+    Verdict,
+    VerdictKind,
+    VerdictResponse,
+    accepted_tags,
+    check_naming,
+    cited_unit,
+    close_rules,
+    defect_rules,
+    label_rules,
 )
 from reviewkit.plant import DocNode, ReviewDocumentPlant
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
-from reviewkit.prompts import reconciliation_review_prompt
+from reviewkit.prompts import (
+    action_prompt,
+    judge_prompt,
+    naming_prompt,
+    reconciliation_review_prompt,
+)
 from reviewkit.reconciliation import reconcile_findings, select_reconciliation_targets
 from reviewkit.review_bounds import (
     bound_document_sections,
@@ -54,6 +81,20 @@ from reviewkit.review_bounds import (
 from reviewkit.state import ReviewState
 from reviewkit.takt_client import TaktClient
 from reviewkit.takt_types import RawSignal
+
+_ACTION_TYPE = {
+    VerdictKind.CHANGE: ReviewActionType.REPLACE_TEXT,
+    VerdictKind.DELETE: ReviewActionType.DELETE_TEXT,
+    VerdictKind.INSERT: ReviewActionType.INSERT_TEXT,
+    VerdictKind.MISSING: ReviewActionType.INSERT_TEXT,
+}
+
+_RESPONSE_SCHEMA = {
+    ReviewScope.SENTENCE: SentenceReviewResponse,
+    ReviewScope.PARAGRAPH: ParagraphReviewResponse,
+    ReviewScope.SECTION: SectionReviewResponse,
+    ReviewScope.DOCUMENT: DocumentReviewResponse,
+}
 
 
 class TaktReviewer:
@@ -65,6 +106,7 @@ class TaktReviewer:
         llm: LLMClient,
         context_provider: ReviewContextProvider | None = None,
         action_policy: ActionPolicy | None = None,
+        pack: Pack | None = None,
         *,
         takt_client: TaktClient | None = None,
     ) -> None:
@@ -72,7 +114,9 @@ class TaktReviewer:
         self.llm = llm
         self.context_provider = context_provider or EmptyReviewContextProvider()
         self.action_policy = action_policy
+        self.pack = pack
         self.takt_client = takt_client or TaktClient()
+        self.traces: list[PassTrace] = []
 
     def review(
         self, document: ReviewDocument
@@ -86,6 +130,7 @@ class TaktReviewer:
                 self.profile.document_source_char_budget,
             )
         state = ReviewState()
+        self.state = state
         effector = ReviewEffector(state)
 
         layers = build_layer_specs(self.profile)
@@ -99,6 +144,9 @@ class TaktReviewer:
             document_source_context=document_source_context,
         )
         enabled = set(self.profile.review_pipeline)
+
+        if self.pack is not None:
+            self._name(plant)
 
         accumulated_lower_actions: list[ReviewAction] = []
         scanned_nodes: dict[str, DocNode] = {}
@@ -137,9 +185,7 @@ class TaktReviewer:
                 scope = node.scope()
                 if scope is None or scope not in detectors:
                     continue
-                response = detectors[scope].reconcile(
-                    node, request, state.document_summary
-                )
+                response = detectors[scope].reconcile(node, request, state.document_summary)
                 signals = detectors[scope].signals_for_response(response, node.id)
                 decision = self.takt_client.evaluate(
                     plant_nodes=[node.to_plant_node(value=0.0)],
@@ -171,6 +217,37 @@ class TaktReviewer:
 
         return deduped_findings, final_actions, state
 
+    def _name(self, plant: ReviewDocumentPlant) -> None:
+        """First scan. Tags only: no cascade evaluation and no effector."""
+        assert self.pack is not None
+        for node in plant.sequential_scan():
+            scope = node.scope()
+            if scope is None or not label_rules(self.pack, scope):
+                continue
+            inner = getattr(node, "inner", node)
+            text = str(getattr(inner, "text", "") or "")
+            if not text.strip():
+                continue
+            functions = [
+                function
+                for function in self.pack.ontology.functions
+                if scope.value in function.attach_to
+            ]
+            if not functions:
+                continue
+            response = self.llm.complete_json(
+                naming_prompt(self.profile, node.id, text, functions),
+                NamingResponse,
+            )
+            assert isinstance(response, NamingResponse)
+            self.traces.append(check_naming(self.pack, response))
+            tag = next(
+                (item for item in accepted_tags(self.pack, response) if item.node_id == node.id),
+                None,
+            )
+            if tag is not None and tag.function_ids:
+                self.state.tags.append(tag)
+
     def _build_detectors(
         self,
         document: ReviewDocument,
@@ -193,6 +270,8 @@ class TaktReviewer:
                 document_source_context=(
                     document_source_context if scope == ReviewScope.DOCUMENT else None
                 ),
+                pack=self.pack,
+                traces=self.traces,
             )
             det.inner.set_document(document)
             detectors[scope] = det
@@ -213,7 +292,11 @@ class _LLMDetectorAdapter:
         document: ReviewDocument,
         effector: ReviewEffector,
         document_source_context: dict[str, Any] | None,
+        pack: Pack | None = None,
+        traces: list[PassTrace] | None = None,
     ) -> None:
+        self.pack = pack
+        self.traces = traces if traces is not None else []
         self.inner = BaseLLMDetector(
             profile=profile,
             llm=llm,
@@ -231,6 +314,148 @@ class _LLMDetectorAdapter:
     def set_lower_actions(self, actions: list[ReviewAction]) -> None:
         self._lower_actions = list(actions or [])
 
+    def _detect_with_pack(self, node: DocNode | Any, scope: ReviewScope) -> list[RawSignal]:
+        """Second scan. Matched rules and the single unit each one cites."""
+        assert self.pack is not None
+        node_id = getattr(node, "id", "?")
+        function_ids = self.inner.state.functions_for(node_id)
+        rules: list[DefectRule | CloseRule] = []
+        if scope is ReviewScope.DOCUMENT:
+            rules.extend(close_rules(self.pack, self.inner.state.covered()))
+            absent = [
+                function.id
+                for function in self.pack.ontology.functions
+                if not self.inner.state.covered().get(function.id)
+            ]
+        else:
+            rules.extend(defect_rules(self.pack, function_ids))
+            absent = []
+        self.traces.append(
+            PassTrace(
+                checks=(
+                    ProcessCheck(
+                        name="fragment_has_no_close_rule",
+                        passed=scope is ReviewScope.DOCUMENT
+                        or not any(rule.kind == "close" for rule in rules),
+                    ),
+                    ProcessCheck(
+                        name="absence_is_document_scope",
+                        passed=scope is ReviewScope.DOCUMENT or not absent,
+                    ),
+                )
+            )
+        )
+        if not rules:
+            return []
+        units = [
+            unit
+            for rule in rules
+            if (unit := cited_unit(self.pack, getattr(rule, "source_unit_id", None))) is not None
+        ]
+        verdicts = self._verdicts(node_id, scope, rules, units, absent, function_ids)
+        if not verdicts:
+            return []
+        response = _RESPONSE_SCHEMA[scope](
+            findings=self._findings(verdicts),
+            actions=self._actions(node_id, scope, verdicts, units),
+        )
+        self.last_response = response
+        self._record(node, scope, response)
+        from reviewkit.detectors import _response_to_signals
+
+        return _response_to_signals(response, node_id, f"llm_{scope.value}", scope)
+
+    def _verdicts(
+        self,
+        node_id: str,
+        scope: ReviewScope,
+        rules: list[DefectRule | CloseRule],
+        units: list[SourceUnit],
+        absent: list[str],
+        function_ids: list[str],
+    ) -> list[Verdict]:
+        response = self.inner._complete(
+            judge_prompt(
+                self.inner.profile,
+                node_id=node_id,
+                scope="document" if scope is ReviewScope.DOCUMENT else "fragment",
+                function_ids=absent if scope is ReviewScope.DOCUMENT else function_ids,
+                covered=self.inner.state.covered(),
+                rules=rules,
+                units=units,
+                schema=VerdictResponse,
+            ),
+            VerdictResponse,
+        )
+        assert isinstance(response, VerdictResponse)
+        return [
+            verdict
+            for verdict in response.verdicts
+            if verdict.node_id == node_id
+            and not (verdict.kind is VerdictKind.MISSING and scope is not ReviewScope.DOCUMENT)
+        ]
+
+    def _findings(self, verdicts: list[Verdict]) -> list[ReviewFinding]:
+        return [
+            ReviewFinding(
+                node_id=verdict.node_id,
+                title=verdict.kind.value,
+                description=verdict.reason or verdict.function_id,
+            )
+            for verdict in verdicts
+            if verdict.kind is not VerdictKind.KEEP
+        ]
+
+    def _actions(
+        self,
+        node_id: str,
+        scope: ReviewScope,
+        verdicts: list[Verdict],
+        units: list[SourceUnit],
+    ) -> list[ReviewAction]:
+        floor = self.inner.profile.resolved_action_policy().min_confidence_for_auto_apply
+        text = str(self.document.get_node_text(node_id) or "")
+        unit = units[0] if units else None
+        actions: list[ReviewAction] = []
+        for verdict in verdicts:
+            if verdict.kind is VerdictKind.KEEP or verdict.kind not in _ACTION_TYPE:
+                continue
+            human = verdict.confidence < floor
+            replacement = None
+            if not human:
+                written = self.inner._complete(
+                    action_prompt(
+                        self.inner.profile,
+                        node_id=node_id,
+                        text=text,
+                        verdict=verdict,
+                        unit=unit,
+                    ),
+                    ActionText,
+                )
+                assert isinstance(written, ActionText)
+                replacement = written.replacement_text
+            actions.append(
+                ReviewAction(
+                    scope=scope,
+                    action_type=_ACTION_TYPE[verdict.kind],
+                    node_id=node_id,
+                    original_text=text or None,
+                    replacement_text=replacement,
+                    reason=verdict.reason,
+                    confidence=verdict.confidence,
+                    requires_human_decision=human,
+                    tags=[verdict.function_id],
+                )
+            )
+        return actions
+
+    def _record(self, node: DocNode | Any, scope: ReviewScope, response: Any) -> None:
+        node_id = getattr(node, "id", "?")
+        node_text = str(self.document.get_node_text(node_id) or "")
+        self._enrich_response_lineage(response, node_id=node_id, scope=scope, node_text=node_text)
+        self.effector.register_response(node_id, scope, response)
+
     def detect(self, node: DocNode | Any) -> list[RawSignal]:
         inner_node = getattr(node, "inner", node)
         effective_scope = self.scope
@@ -240,6 +465,9 @@ class _LLMDetectorAdapter:
         self.inner.lower_actions_for_prompt = _lower_actions_for_prompt(
             self.scope, inner_node, self._lower_actions
         )
+
+        if self.pack is not None:
+            return self._detect_with_pack(node, effective_scope)
 
         original_complete = self.inner._complete
         captured: dict[str, Any] = {"resp": None}
@@ -309,15 +537,11 @@ class _LLMDetectorAdapter:
             node_text=target_text,
         )
         for action in response.actions:
-            if (
-                action.finding_id
-                and any(
-                    finding.finding_id == action.finding_id
-                    and finding.reconciliation_disposition
-                    != ReconciliationDisposition.CONFLICT
-                    and finding.reconciles_finding_id
-                    for finding in response.findings
-                )
+            if action.finding_id and any(
+                finding.finding_id == action.finding_id
+                and finding.reconciliation_disposition != ReconciliationDisposition.CONFLICT
+                and finding.reconciles_finding_id
+                for finding in response.findings
             ):
                 match = next(
                     finding
