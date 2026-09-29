@@ -94,3 +94,17 @@ def test_mock_clients_satisfy_host_sockets() -> None:
     answers = decision.decide("fragment", {"lead": NoulQuestion(yes="Lead")})
     assert answers["lead"] == DecisionAnswer(value=False)
     assert callable(llm.complete_json)
+
+
+def test_legacy_detect_apis_are_not_on_the_package_root() -> None:
+    for name in (
+        "BaseLLMDetector",
+        "RawSignal",
+        "TaktClient",
+        "DocNode",
+        "ReviewDocumentPlant",
+        "detect",
+        "judge",
+    ):
+        assert name not in reviewkit.__all__, name
+        assert not hasattr(reviewkit, name)

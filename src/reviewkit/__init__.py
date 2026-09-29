@@ -9,8 +9,8 @@ Hosts should import from this package. The 0.24 Pack path is:
 * naming/judge types: ``FunctionTag``, ``NamingResponse``, ``Verdict``,
   ``VerdictKind``, ``ActionText``, ``ReviewState`` (``covered()``)
 
-Helpers such as ``judge_rules`` and ``naming_questions`` stay on
-``reviewkit.pack`` and ``reviewkit.decision``.
+``detect()`` is not a host API. Helpers such as ``judge_rules`` and
+``naming_questions`` stay on ``reviewkit.pack`` and ``reviewkit.decision``.
 """
 
 from reviewkit.anchors import (
