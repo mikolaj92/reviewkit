@@ -1,8 +1,9 @@
 # Host integration: Pack + two scans
 
-ReviewKit 0.24.1 reviews through a **Pack** and two host-injected sockets. The
-host owns domain data and model plugins. This library does not review domain
-content itself.
+ReviewKit 0.24.1 is a generic review **process**: Pack + two scans +
+`DecisionClient` / `LLMClient` sockets. The same engine reviews a privacy notice or a newspaper article; only Pack content changes. The host owns
+domain data and model plugins. This library does not review domain content
+itself and does not encode a statute.
 
 Hosts pass **Python objects**. Import `Pack`, `DecisionClient`, `LLMClient`,
 and the rules/units models, then pass typed instances. Do not hand-decode JSON
@@ -116,7 +117,7 @@ Gaps stay `ontology.function_ids() − covered()` on the host.
 
 | Object | Contains | Does not contain |
 | --- | --- | --- |
-| `Pack` | `Ontology` (function dictionary), `SourceUnit`s, `Rule`s | Reviewer tone, action policy, pipeline |
+| `Pack` | Abstract `Ontology` (functions), `SourceUnit`s, `Rule`s | A legal domain, reviewer tone, action policy, pipeline |
 | `ReviewProfile` | Role, language, document type, pipeline, action policy | Acts, function ids, source text |
 | `DecisionClient` | Host plugin for name + judge (`decide`) | A ReviewKit-owned model server |
 | `LLMClient` | Host plugin for replacement text (`complete_json`) | Naming or judging on a Pack path |

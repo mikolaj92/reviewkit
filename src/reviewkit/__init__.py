@@ -1,5 +1,9 @@
 """Public API for ReviewKit.
 
+0.24 is a domain-generic review process: Pack + two scans + plugin sockets.
+The same engine reviews any Pack; core does not encode a statute or product
+domain.
+
 Hosts import typed objects from this package and pass instances:
 
 * schemas: ``Pack``, ``Ontology``, ``Function``, ``SourceUnit``, ``Rule``

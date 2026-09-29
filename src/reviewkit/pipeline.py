@@ -24,8 +24,8 @@ from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 from reviewkit.state import ReviewState
 from reviewkit.takt_reviewer import TaktReviewer
 
-# Public topology contract shared by every product. Products select what to review through
-# ReviewProfile and ReviewContextProvider; they do not add domain-specific pipeline stages.
+# Public topology contract shared by every product. Products select what to review
+# through ReviewProfile and a Pack; they do not add domain-specific pipeline stages.
 REVIEW_ENGINE_SCOPES = ("sentence", "paragraph", "section", "document")
 
 

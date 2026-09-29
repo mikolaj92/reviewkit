@@ -1,10 +1,12 @@
 """Pack: the game a review plays. The profile stays the reviewer's behavior.
 
-A pack is a separate object from instructions.md, external_review_context, and
-profile.toml. The ontology names functions; it holds no source text and no
-obligation. Units hold source text. A rule points at one function and, when it
-needs a source, at one unit. The host checks each pass and records the check in
-a :class:`PassTrace`.
+Pack schema is abstract: functions, rules, and units. It does not name a
+legal domain, statute, or product. A pack is a separate object from
+instructions.md, external_review_context, and profile.toml. The ontology
+names functions; it holds no source text and no obligation. Units hold
+source text. A rule points at one function and, when it needs a source, at
+one unit. The host checks each pass and records the check in a
+:class:`PassTrace`.
 """
 
 from __future__ import annotations

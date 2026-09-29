@@ -1,8 +1,10 @@
 # ReviewKit
 
-ReviewKit is a domain-agnostic document-review **engine**. A host builds a
-**Pack** and injects plugins; ReviewKit does not review domain content itself
-and does not ship a model runtime.
+ReviewKit is a domain-agnostic document-review **engine**. 0.24 is a refined
+generic review **process** (Pack + two scans + `DecisionClient` /
+`LLMClient` sockets). The same engine reviews a privacy notice or a newspaper article; only Pack content changes. A host builds a **Pack** and
+injects plugins; ReviewKit does not review domain content itself, does not
+encode a statute, and does not ship a model runtime.
 
 ```text
 document + profile (how) + pack (what)
@@ -66,7 +68,7 @@ result = review_document(
     decision=decision,
 )
 
-# When the host needs the tag map (sitko / gaps):
+# When the host needs the tag map / gaps:
 document = parse_text("Once upon a time there was a storm.")
 findings, actions, state = TaktReviewer(
     profile=profile,
@@ -88,8 +90,9 @@ only (`NamingResponse`); those tags are not `RawSignal`s and are not
 
 ## Pack
 
-`Pack` is the game: `ontology` + `rules` + `units`. It is not `profile.toml`,
-not `instructions.md`, and not `external_review_context`.
+`Pack` is abstract: `ontology` (functions) + `rules` + `units`. It is not a
+legal domain, not `profile.toml`, not `instructions.md`, and not
+`external_review_context`.
 
 - `Ontology.functions` — dictionary (`Function.id` / `label` / `attach_to`).
 - `SourceUnit.force` — data (`binding`, `dead`, …), not a profile flag.

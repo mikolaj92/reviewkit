@@ -1,9 +1,11 @@
 """Host integration sketch: load Pack as a typed object, inject DecisionClient.
 
-This is what a host does. ReviewKit does not build the Pack, does not ship a
-model runtime, and does not treat profile markdown as the review payload.
-JSON files load through Pack.model_validate_json only; the review call site
-receives Pack, DecisionClient, and LLMClient instances.
+This is what a host does. ReviewKit is a generic review process. The same
+engine reviews a privacy notice or a newspaper article; only Pack content
+changes. ReviewKit does not build the Pack, does not ship a model runtime,
+and does not treat profile markdown as the review payload. JSON files load
+through Pack.model_validate_json only; the review call site receives Pack,
+DecisionClient, and LLMClient instances.
 
 Run from the repo root:
 
@@ -50,7 +52,7 @@ def review_sample() -> tuple:
             {},
             {},
             {},
-    {"verdict": {"value": "change", "confidence": 0.95}},
+            {"verdict": {"value": "change", "confidence": 0.95}},
             {"present": False},
         ]
     )

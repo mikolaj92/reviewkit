@@ -133,6 +133,7 @@ def test_docs_name_pack_and_two_scans_not_stale_host_apis() -> None:
     assert "pack=None" not in readme
     assert "pack=None" not in guide
     assert "model_validate_json" in readme
+    assert "sitko" not in readme
     phrase = "privacy notice or a newspaper article"
     for text in (readme, guide, changelog, release):
         assert phrase in text
