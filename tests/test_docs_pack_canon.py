@@ -36,10 +36,10 @@ def test_host_sketch_names_then_judges_and_exposes_covered_gaps() -> None:
     assert state.covered() == {"opening": ["p1.s1"]}
     gaps = pack.ontology.function_ids() - set(state.covered())
     assert gaps == {"conflict", "resolution"}
-    assert [finding.title for finding in findings] == ["missing"]
+    assert [finding.title for finding in findings] == ["change", "missing"]
     assert findings[0].dimension is None
-    # Close / missing does not call LLMClient.complete_json (act is for change/delete/insert).
-    assert actions == []
+    assert findings[1].dimension is None
+    assert actions
 
 
 _SCIENTIFIC_FUNCTIONS = {
@@ -58,10 +58,9 @@ _SCIENTIFIC_FUNCTIONS = {
 
 def test_scientific_paper_pack_model_validate() -> None:
     root = Path(__file__).resolve().parents[1]
-    payload = json.loads(
+    pack = Pack.model_validate_json(
         (root / "examples" / "packs" / "scientific_paper.json").read_text(encoding="utf-8")
     )
-    pack = Pack.model_validate(payload)
     assert pack.ontology.function_ids() == _SCIENTIFIC_FUNCTIONS
     assert {rule.kind for rule in pack.rules} == {"label", "defect", "close"}
     assert all(rule.function_id in _SCIENTIFIC_FUNCTIONS for rule in pack.rules)
@@ -119,7 +118,7 @@ def test_docs_name_pack_and_two_scans_not_stale_host_apis() -> None:
     readme = (root / "README.md").read_text(encoding="utf-8")
     guide = (root / "docs" / "host-integration.md").read_text(encoding="utf-8")
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
-    release = (root / "docs" / "releases" / "0.24.0.md").read_text(encoding="utf-8")
+    release = (root / "docs" / "releases" / "0.24.1.md").read_text(encoding="utf-8")
     for text in (readme, guide, changelog, release):
         assert "Pack" in text
         assert "DecisionClient" in text
@@ -131,6 +130,12 @@ def test_docs_name_pack_and_two_scans_not_stale_host_apis() -> None:
     assert "## Platforms" in guide
     assert "scientific_paper.json" in readme
     assert "scientific_paper.json" in guide
+    assert "pack=None" not in readme
+    assert "pack=None" not in guide
+    assert "model_validate_json" in readme
+    phrase = "privacy notice or a newspaper article"
+    for text in (readme, guide, changelog, release):
+        assert phrase in text
     example_blobs = [
         path.read_text(encoding="utf-8")
         for path in (root / "examples").rglob("*")
@@ -142,3 +147,11 @@ def test_docs_name_pack_and_two_scans_not_stale_host_apis() -> None:
         if token in {"Basal", "Qwen"}:
             continue
         assert token not in docs
+
+
+def test_core_has_no_product_or_statute_domain() -> None:
+    root = Path(__file__).resolve().parents[1] / "src" / "reviewkit"
+    for path in root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        for token in ("RODO", "PKE", "UODO", "Temida"):
+            assert token not in text, f"{path} names {token}"

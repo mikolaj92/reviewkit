@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 from unittest.mock import Mock
 
-from reviewkit.actions import should_apply_to_corrected
+from reviewkit.decision import MockDecisionClient
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode
 from reviewkit.llm import MockLLMClient
 from reviewkit.models import (
     ActionStatus,
-    DocumentReviewResponse,
     FindingLineageEvent,
     ReconciliationDisposition,
     ReviewAction,
@@ -17,7 +16,8 @@ from reviewkit.models import (
     ReviewLocator,
     ReviewScope,
 )
-from reviewkit.profile import ActionPolicyConfig, ReviewProfile
+from reviewkit.pack import Function, Ontology, Pack, Rule
+from reviewkit.profile import ReviewProfile
 from reviewkit.prompts import section_review_prompt
 from reviewkit.state import ReviewState
 from reviewkit.takt_reviewer import TaktReviewer
@@ -31,6 +31,40 @@ def _profile() -> ReviewProfile:
         document_type="generic document",
         reviewer_role="generic reviewer",
         review_pipeline=[ReviewScope.SECTION],
+    )
+
+
+def _section_document(*, text: str = "Current source.") -> ReviewDocument:
+    return ReviewDocument(
+        sections=[
+            SectionNode(
+                id="section-1",
+                paragraphs=[
+                    ParagraphNode(
+                        id="p1",
+                        text=text,
+                        section_id="section-1",
+                        locator="body:p:1",
+                    )
+                ],
+            )
+        ]
+    )
+
+
+def _section_pack() -> Pack:
+    return Pack(
+        ontology=Ontology(functions=[Function(id="claim", label="Claim", attach_to=["section"])]),
+        units={},
+        rules=[
+            Rule(
+                id="defect-claim",
+                kind="defect",
+                function_id="claim",
+                scope="fragment",
+                when="function_present",
+            )
+        ],
     )
 
 
@@ -102,9 +136,7 @@ def test_model_prompt_excludes_host_audit_enrichment_but_keeps_semantic_evidence
     assert finding["evidence"][0]["excerpt"] == "source fragment " * 320
     assert finding["reconciles_finding_id"] == "prior-finding-1"
     assert finding["reconciliation_disposition"] == "enriched"
-    assert finding["metadata"] == {
-        "substantive_finding_note": "preserve this semantic metadata"
-    }
+    assert finding["metadata"] == {"substantive_finding_note": "preserve this semantic metadata"}
     assert "lineage" not in finding
     assert "host-event-1" not in json.dumps(finding)
 
@@ -133,445 +165,65 @@ def test_model_prompt_excludes_host_audit_enrichment_but_keeps_semantic_evidence
     assert "different current node or target is still a distinct finding" in messages[0]["content"]
 
 
-def test_host_rebuilds_audit_after_model_fields_are_normalized() -> None:
-    source_text = "semantic evidence " * 320
-    model_lineage = {
-        "event_id": "model-event-must-not-survive",
-        "kind": "source",
-        "scope": "section",
-        "node_id": "section-1",
-        "source_digest": "model-digest-must-not-survive",
-    }
-    llm = MockLLMClient(
-        responses=[
-            {
-                "findings": [
-                    {
-                        "finding_id": "finding-1",
-                        "node_id": "section-1",
-                        "title": "Substantive issue",
-                        "description": "The source needs review.",
-                        "evidence": [{"locator": "body:p:1", "excerpt": source_text}],
-                        "lineage": [model_lineage],
-                        "metadata": {"substantive_note": "keep this"},
-                    }
-                ],
-                "actions": [
-                    {
-                        "id": "action-1",
-                        "finding_id": "finding-1",
-                        "scope": "section",
-                        "action_type": "comment",
-                        "node_id": "section-1",
-                        "comment": "Review this issue.",
-                        "status": "applied",
-                        "policy_reason": "model policy must not survive",
-                        "lineage": [model_lineage],
-                    }
-                ],
-            },
-            {"summary": "document checked"},
-        ]
+def test_pack_review_attaches_host_source_lineage() -> None:
+    source_text = "Current source."
+    decision = MockDecisionClient(
+        answers=[{"claim": True}, {"verdict": {"value": "change", "confidence": 0.95}}]
     )
+    llm = MockLLMClient(responses=[{"replacement_text": "Updated source."}])
     takt_client = Mock()
     takt_client.evaluate.return_value = TaktDecision(outcome="stable", node_id="section-1")
-    profile = ReviewProfile(
-        name="audit-boundary",
-        language="en",
-        document_type="generic document",
-        reviewer_role="generic reviewer",
-        review_pipeline=[ReviewScope.SECTION, ReviewScope.DOCUMENT],
-    )
-    document = ReviewDocument(
-        sections=[
-            SectionNode(
-                id="section-1",
-                paragraphs=[
-                    ParagraphNode(
-                        id="p1",
-                        text="Current source.",
-                        section_id="section-1",
-                        locator="body:p:1",
-                    )
-                ],
-            )
-        ]
-    )
 
     findings, actions, state = TaktReviewer(
-        profile=profile,
+        profile=_profile(),
         llm=llm,
+        pack=_section_pack(),
+        decision=decision,
         takt_client=takt_client,
-    ).review(document)
+    ).review(_section_document(text=source_text))
 
     assert len(findings) == 1
-    assert findings[0].finding_id == "finding-1"
-    assert findings[0].evidence[0].excerpt == source_text
-    assert findings[0].metadata == {"substantive_note": "keep this"}
+    assert findings[0].title == "change"
+    assert findings[0].description == "claim"
+    assert findings[0].metadata == {}
     assert len(findings[0].lineage) == 1
-    assert findings[0].lineage[0].event_id != "model-event-must-not-survive"
-    assert findings[0].lineage[0].source_digest != "model-digest-must-not-survive"
-    assert actions[0].status is ActionStatus.NOT_APPLIED
-    assert all(event.event_id != "model-event-must-not-survive" for event in actions[0].lineage)
+    assert findings[0].lineage[0].kind == "source"
+    assert findings[0].lineage[0].source_digest == ReviewLocator.hash_text(source_text)
+    assert findings[0].lineage[0].model == "MockLLMClient"
     assert state.findings[0].lineage == findings[0].lineage
-    document_call = next(call for call in llm.calls if call.schema is DocumentReviewResponse)
-    assert "model-event-must-not-survive" not in document_call.content
-    assert source_text in document_call.content
+
+    assert actions
+    assert all(event.kind != "reconciliation" for event in actions[0].lineage)
+    source_events = [event for event in actions[0].lineage if event.kind == "source"]
+    assert source_events
+    assert source_events[0].source_digest == ReviewLocator.hash_text(source_text)
+    assert llm.calls
+    assert all(call.schema.__name__ == "ActionText" for call in llm.calls)
 
 
-def test_model_metadata_reserved_keys_are_sanitized_at_host_boundary() -> None:
-    document = ReviewDocument(
-        sections=[
-            SectionNode(
-                id="section-1",
-                paragraphs=[
-                    ParagraphNode(
-                        id="p1",
-                        text="Current source.",
-                        section_id="section-1",
-                        locator="body:p:1",
-                    )
-                ],
-            )
-        ]
+def test_pack_act_actions_receive_host_source_lineage_before_policy() -> None:
+    source_text = "Current source."
+    decision = MockDecisionClient(
+        answers=[{"claim": True}, {"verdict": {"value": "change", "confidence": 0.95}}]
     )
-    llm = MockLLMClient(
-        responses=[
-            {
-                "findings": [
-                    {
-                        "finding_id": "finding-1",
-                        "node_id": "section-1",
-                        "title": "Substantive issue",
-                        "description": "The source needs review.",
-                        "metadata": {
-                            "merged_finding_ids": ["ghost-alias"],
-                            "reconciliation_request_id": "fake-request",
-                            "real_finding_field": "must-survive",
-                        },
-                    }
-                ],
-                "actions": [
-                    {
-                        "id": "action-1",
-                        "finding_id": "finding-1",
-                        "scope": "section",
-                        "action_type": "replace",
-                        "node_id": "section-1",
-                        "original_text": "Current",
-                        "replacement_text": "Updated",
-                        "category": "typo",
-                        "confidence": 0.95,
-                        "apply_hint": True,
-                        "metadata": {
-                            "blocked_from_corrected": True,
-                            "real_action_field": "must-survive",
-                        },
-                    }
-                ],
-            }
-        ]
-    )
-    takt_client = Mock()
-    takt_client.evaluate.return_value = TaktDecision(outcome="actuation", node_id="section-1")
-    profile = ReviewProfile(
-        name="audit-boundary-metadata",
-        language="en",
-        document_type="generic document",
-        reviewer_role="generic reviewer",
-        review_pipeline=[ReviewScope.SECTION],
-        action_policy=ActionPolicyConfig(apply_policy={"typo": "apply"}),
-    )
-
-    findings, actions, _state = TaktReviewer(
-        profile=profile,
-        llm=llm,
-        takt_client=takt_client,
-    ).review(document)
-
-    assert findings[0].metadata == {"real_finding_field": "must-survive"}
-    assert actions[0].metadata == {"real_action_field": "must-survive"}
-    assert should_apply_to_corrected(actions[0])
-
-
-def test_standalone_action_gets_host_source_lineage_after_model_lineage_is_removed() -> None:
-    document = ReviewDocument(
-        sections=[
-            SectionNode(
-                id="section-1",
-                paragraphs=[
-                    ParagraphNode(
-                        id="p1",
-                        text="Current source.",
-                        section_id="section-1",
-                        locator="body:p:1",
-                    )
-                ],
-            )
-        ]
-    )
-    llm = MockLLMClient(
-        responses=[
-            {
-                "actions": [
-                    {
-                        "id": "standalone-action",
-                        "scope": "section",
-                        "action_type": "comment",
-                        "node_id": "section-1",
-                        "comment": "Review this source.",
-                        "lineage": [
-                            {
-                                "event_id": "model-event-must-not-survive",
-                                "kind": "source",
-                                "scope": "section",
-                                "node_id": "section-1",
-                            }
-                        ],
-                    }
-                ]
-            }
-        ]
-    )
+    llm = MockLLMClient(responses=[{"replacement_text": "Updated source."}])
     takt_client = Mock()
     takt_client.evaluate.return_value = TaktDecision(outcome="stable", node_id="section-1")
-    profile = ReviewProfile(
-        name="audit-boundary-standalone-action",
-        language="en",
-        document_type="generic document",
-        reviewer_role="generic reviewer",
-        review_pipeline=[ReviewScope.SECTION],
-    )
 
-    findings, actions, _state = TaktReviewer(
-        profile=profile,
+    _findings, actions, _state = TaktReviewer(
+        profile=_profile(),
         llm=llm,
+        pack=_section_pack(),
+        decision=decision,
         takt_client=takt_client,
-    ).review(document)
+    ).review(_section_document(text=source_text))
 
-    assert not findings
     source_events = [event for event in actions[0].lineage if event.kind == "source"]
     assert len(source_events) == 1
     assert source_events[0].node_id == "section-1"
-    assert source_events[0].source_digest == ReviewLocator.hash_text("Current source.")
+    assert source_events[0].source_digest == ReviewLocator.hash_text(source_text)
     assert source_events[0].model == "MockLLMClient"
-    assert source_events[0].action_id == "standalone-action"
-    assert all(event.event_id != "model-event-must-not-survive" for event in actions[0].lineage)
+    assert source_events[0].locator is not None
+    assert source_events[0].locator.original_text == source_text
     assert actions[0].lineage[-1].kind == "policy"
-
-
-def test_reconciliation_actions_get_host_source_lineage_before_policy_audit() -> None:
-    document = ReviewDocument(
-        sections=[
-            SectionNode(
-                id="section-1",
-                paragraphs=[
-                    ParagraphNode(
-                        id="p1",
-                        text="Current source.",
-                        section_id="section-1",
-                        locator="body:p:1",
-                    )
-                ],
-            )
-        ]
-    )
-    model_lineage = {
-        "event_id": "reconciliation-model-event-must-not-survive",
-        "kind": "source",
-        "scope": "section",
-        "node_id": "section-1",
-    }
-    llm = MockLLMClient(
-        responses=[
-            {
-                "findings": [
-                    {
-                        "finding_id": "initial",
-                        "node_id": "section-1",
-                        "title": "Initial assessment",
-                        "description": "The local text looked consistent.",
-                    }
-                ]
-            },
-            {
-                "reconciliation_requests": [
-                    {
-                        "request_id": "request-1",
-                        "target": {
-                            "node_id": "section-1",
-                            "text_hash": ReviewLocator.hash_text("Current source."),
-                        },
-                        "reason": "A later whole-document observation changes the context.",
-                        "evidence": ["document-context-1"],
-                        "expected_dimension": "consistency",
-                        "finding_ids": ["initial"],
-                    }
-                ]
-            },
-            {
-                "findings": [
-                    {
-                        "finding_id": "reconciled",
-                        "node_id": "section-1",
-                        "title": "Reconciled assessment",
-                        "description": "The whole-document context changes the result.",
-                        "reconciles_finding_id": "initial",
-                        "reconciliation_disposition": "superseded",
-                        "evidence": [{"locator": "body:p:1", "excerpt": "Current source."}],
-                        "lineage": [model_lineage],
-                    }
-                ],
-                "actions": [
-                    {
-                        "id": "recon-standalone",
-                        "scope": "section",
-                        "action_type": "comment",
-                        "node_id": "section-1",
-                        "comment": "Review the reconciled source.",
-                        "lineage": [model_lineage],
-                    },
-                    {
-                        "id": "recon-linked",
-                        "finding_id": "reconciled",
-                        "scope": "section",
-                        "action_type": "comment",
-                        "node_id": "section-1",
-                        "comment": "Review the reconciled finding.",
-                        "lineage": [model_lineage],
-                    },
-                ],
-            },
-        ]
-    )
-    takt_client = Mock()
-    takt_client.evaluate.return_value = TaktDecision(outcome="stable", node_id="section-1")
-    profile = ReviewProfile(
-        name="audit-boundary-reconciliation-actions",
-        language="en",
-        document_type="generic document",
-        reviewer_role="generic reviewer",
-        review_pipeline=[ReviewScope.SECTION, ReviewScope.DOCUMENT],
-        reconciliation_max_rounds=1,
-        reconciliation_max_nodes=1,
-    )
-
-    findings, actions, _state = TaktReviewer(
-        profile=profile,
-        llm=llm,
-        takt_client=takt_client,
-    ).review(document)
-
-    assert len(llm.calls) == 3
-    assert [finding.finding_id for finding in findings] == ["initial"]
-    final_finding = findings[0]
-    assert final_finding.reconciliation is not None
-    assert final_finding.reconciliation.request_id == "request-1"
-    assert final_finding.lineage[-1].kind == "reconciliation"
-    reconciliation_sources = [event for event in final_finding.lineage if event.kind == "source"]
-    assert len(reconciliation_sources) == 2
-    assert reconciliation_sources[-1].node_id == "section-1"
-    assert reconciliation_sources[-1].source_digest == ReviewLocator.hash_text("Current source.")
-    assert reconciliation_sources[-1].model == "MockLLMClient"
-    assert reconciliation_sources[-1].profile_digest
-
-    actions_by_id = {action.id: action for action in actions}
-    assert actions_by_id["recon-linked"].finding_id == "initial"
-    for action in actions:
-        source_events = [event for event in action.lineage if event.kind == "source"]
-        assert len(source_events) == 1
-        assert source_events[0].node_id == "section-1"
-        assert source_events[0].locator is not None
-        assert source_events[0].locator.original_text == "Current source."
-        assert source_events[0].source_digest == ReviewLocator.hash_text("Current source.")
-        assert source_events[0].model == "MockLLMClient"
-        assert source_events[0].profile_digest
-        assert all(
-            event.event_id != "reconciliation-model-event-must-not-survive"
-            for event in action.lineage
-        )
-        assert action.lineage[-1].kind == "policy"
-
-
-def test_reconciliation_request_and_identity_survive_model_boundary() -> None:
-    document = ReviewDocument(
-        sections=[
-            SectionNode(
-                id="section-1",
-                paragraphs=[
-                    ParagraphNode(
-                        id="p1",
-                        text="Current source.",
-                        section_id="section-1",
-                        locator="body:p:1",
-                    )
-                ],
-            )
-        ]
-    )
-    llm = MockLLMClient(
-        responses=[
-            {
-                "findings": [
-                    {
-                        "finding_id": "old-finding",
-                        "node_id": "section-1",
-                        "title": "Initial assessment",
-                        "description": "The local text looked consistent.",
-                    }
-                ],
-            },
-            {
-                "reconciliation_requests": [
-                    {
-                        "request_id": "request-1",
-                        "target": {
-                            "node_id": "section-1",
-                            "text_hash": ReviewLocator.hash_text("Current source."),
-                        },
-                        "reason": "A later whole-document observation changes the context.",
-                        "evidence": ["document-context-1"],
-                        "expected_dimension": "consistency",
-                        "finding_ids": ["old-finding"],
-                    }
-                ],
-            },
-            {
-                "findings": [
-                    {
-                        "finding_id": "new-finding",
-                        "node_id": "section-1",
-                        "title": "Reconciled assessment",
-                        "description": "The whole-document context changes the result.",
-                        "reconciles_finding_id": "old-finding",
-                        "reconciliation_disposition": "superseded",
-                        "evidence": [{"locator": "body:p:1", "excerpt": "Current source."}],
-                    }
-                ]
-            },
-        ]
-    )
-    takt_client = Mock()
-    takt_client.evaluate.return_value = TaktDecision(outcome="stable", node_id="section-1")
-    profile = ReviewProfile(
-        name="audit-boundary-reconciliation",
-        language="en",
-        document_type="generic document",
-        reviewer_role="generic reviewer",
-        review_pipeline=[ReviewScope.SECTION, ReviewScope.DOCUMENT],
-        reconciliation_max_rounds=1,
-        reconciliation_max_nodes=1,
-    )
-
-    findings, _actions, _state = TaktReviewer(
-        profile=profile,
-        llm=llm,
-        takt_client=takt_client,
-    ).review(document)
-
-    assert [finding.finding_id for finding in findings] == ["old-finding"]
-    assert findings[0].reconciliation is not None
-    assert findings[0].reconciliation.request_id == "request-1"
-    assert findings[0].reconciliation.disposition is ReconciliationDisposition.SUPERSEDED
-    assert findings[0].reconciles_finding_id == "old-finding"
-    assert findings[0].lineage[-1].kind == "reconciliation"
+    assert actions[0].status is ActionStatus.NEEDS_HUMAN_DECISION

@@ -5,6 +5,7 @@ from zipfile import ZipFile
 
 import pytest
 from docx import Document as DocxDocument
+from pack_support import silent_decision, silent_pack
 
 from reviewkit import ReviewResult, parser_docx, review_document, review_tree
 from reviewkit.context import ReviewContext, ReviewContextProvider
@@ -14,6 +15,8 @@ from reviewkit.models import (
     ActionStatus,
     ReviewAction,
     ReviewActionType,
+    ReviewBoundError,
+    ReviewFailureClass,
     ReviewFinding,
     ReviewScope,
 )
@@ -25,79 +28,61 @@ from reviewkit.takt_reviewer import TaktReviewer
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
-def test_hierarchical_review_passes_lower_level_results(tmp_path: Path) -> None:
+def test_hierarchical_review_renders_prepared_actions(tmp_path: Path) -> None:
     input_path = _make_docx(tmp_path, "Ala ma kota.")
     reviewed_path = tmp_path / "reviewed.docx"
     corrected_path = tmp_path / "corrected.docx"
-    llm = MockLLMClient(
-        responses=[
+    extras = [
+        ReviewAction.model_validate(
             {
-                "actions": [
-                    {
-                        "id": "a-sentence",
-                        "scope": "sentence",
-                        "action_type": "replace",
-                        "node_id": "p1.s1",
-                        "original_text": "kota",
-                        "replacement_text": "psa",
-                        "reason": "Zmiana testowa.",
-                        "category": "typo",
-                        "confidence": 0.9,
-                        "apply_hint": True,
-                    }
-                ],
-                "summary": "Zdanie sprawdzone.",
-            },
+                "id": "a-sentence",
+                "scope": "sentence",
+                "action_type": "replace",
+                "node_id": "p1.s1",
+                "original_text": "kota",
+                "replacement_text": "psa",
+                "reason": "Zmiana testowa.",
+                "category": "typo",
+                "confidence": 0.9,
+                "apply_hint": True,
+            }
+        ),
+        ReviewAction.model_validate(
             {
-                "actions": [
-                    {
-                        "id": "a-paragraph",
-                        "scope": "paragraph",
-                        "action_type": "comment",
-                        "node_id": "p1",
-                        "comment": "Akapit jest zrozumiały.",
-                        "confidence": 0.8,
-                    }
-                ],
-                "summary": "Akapit sprawdzony.",
-            },
+                "id": "a-paragraph",
+                "scope": "paragraph",
+                "action_type": "comment",
+                "node_id": "p1",
+                "comment": "Akapit jest zrozumiały.",
+                "confidence": 0.8,
+            }
+        ),
+        ReviewAction.model_validate(
             {
-                "actions": [
-                    {
-                        "id": "a-section",
-                        "scope": "section",
-                        "action_type": "summary",
-                        "node_id": "s1",
-                        "comment": "Sekcja jest krótka.",
-                        "confidence": 0.8,
-                    }
-                ],
-                "summary": "Sekcja sprawdzona.",
-            },
-            {
-                "actions": [],
-                "summary": "Dokument sprawdzony.",
-            },
-        ]
-    )
+                "id": "a-section",
+                "scope": "section",
+                "action_type": "summary",
+                "node_id": "s1",
+                "comment": "Sekcja jest krótka.",
+                "confidence": 0.8,
+            }
+        ),
+    ]
 
     result = review_document(
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=reviewed_path,
         out_corrected=corrected_path,
+        extra_actions=extras,
     )
 
     assert len(result.actions) == 3
     assert result.actions[0].status == ActionStatus.APPLIED
-    assert result.document_summary == "Dokument sprawdzony."
-    assert "sentence_review_results" in llm.calls[1].content
-    assert "a-sentence" in llm.calls[1].content
-    assert "paragraph_review_results" in llm.calls[2].content
-    assert "a-paragraph" in llm.calls[2].content
-    assert "section_review_results" in llm.calls[3].content
-    assert "a-section" in llm.calls[3].content
+    assert result.document_summary is None
 
 
 def test_review_tree_reviews_an_in_memory_document_without_rendering(tmp_path: Path) -> None:
@@ -132,10 +117,12 @@ def test_review_tree_reviews_an_in_memory_document_without_rendering(tmp_path: P
         document=document,
         profile_path="examples/profiles/story.teacher",
         llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
     )
 
     assert result.document is document
-    assert result.document_summary == "Dokument sprawdzony."
+    assert result.document_summary is None
     assert result.artifacts == {}
     assert result.reviewed_docx is None
     assert result.corrected_docx is None
@@ -150,25 +137,19 @@ def test_review_document_accepts_a_review_profile_object(tmp_path: Path) -> None
 
     input_path = _make_docx(tmp_path, "The cat sat.")
     profile = load_profile("examples/profiles/story.teacher")
-    llm = MockLLMClient(
-        responses=[
-            {"actions": [], "summary": "sentence"},
-            {"actions": [], "summary": "paragraph"},
-            {"actions": [], "summary": "section"},
-            {"actions": [], "summary": "Dokument sprawdzony."},
-        ]
-    )
 
     result = review_document(
         input_path=input_path,
         profile_path=profile,
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
     )
 
     assert isinstance(result, ReviewResult)
-    assert result.document_summary == "Dokument sprawdzony."
+    assert result.document_summary is None
 
 
 def test_overlapping_edits_from_different_scopes_both_escalate(tmp_path: Path) -> None:
@@ -177,51 +158,44 @@ def test_overlapping_edits_from_different_scopes_both_escalate(tmp_path: Path) -
     # on paragraph p1 ("The cat" at [0,7] vs "cat sat" at [4,11] overlap), and applying both
     # would clobber one silently. The post-hierarchy cross-scope pass must escalate both.
     input_path = _make_docx(tmp_path, "The cat sat.")
-    llm = MockLLMClient(
-        responses=[
+    extras = [
+        ReviewAction.model_validate(
             {
-                "actions": [
-                    {
-                        "id": "a-sentence",
-                        "scope": "sentence",
-                        "action_type": "replace",
-                        "node_id": "p1.s1",
-                        "original_text": "The cat",
-                        "replacement_text": "A feline",
-                        "category": "typo",
-                        "confidence": 1.0,
-                        "apply_hint": True,
-                    }
-                ],
-                "summary": "Sentence checked.",
-            },
+                "id": "a-sentence",
+                "scope": "sentence",
+                "action_type": "replace",
+                "node_id": "p1.s1",
+                "original_text": "The cat",
+                "replacement_text": "A feline",
+                "category": "typo",
+                "confidence": 1.0,
+                "apply_hint": True,
+            }
+        ),
+        ReviewAction.model_validate(
             {
-                "actions": [
-                    {
-                        "id": "a-paragraph",
-                        "scope": "paragraph",
-                        "action_type": "replace",
-                        "node_id": "p1",
-                        "original_text": "cat sat",
-                        "replacement_text": "dog ran",
-                        "category": "typo",
-                        "confidence": 1.0,
-                        "apply_hint": True,
-                    }
-                ],
-                "summary": "Paragraph checked.",
-            },
-            {"actions": [], "summary": "Section checked."},
-            {"actions": [], "summary": "Document checked."},
-        ]
-    )
+                "id": "a-paragraph",
+                "scope": "paragraph",
+                "action_type": "replace",
+                "node_id": "p1",
+                "original_text": "cat sat",
+                "replacement_text": "dog ran",
+                "category": "typo",
+                "confidence": 1.0,
+                "apply_hint": True,
+            }
+        ),
+    ]
 
     result = review_document(
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
+        extra_actions=extras,
     )
 
     statuses = {action.id: action.status for action in result.actions}
@@ -231,10 +205,7 @@ def test_overlapping_edits_from_different_scopes_both_escalate(tmp_path: Path) -
     assert _docx_text(result.corrected_docx) == "The cat sat."
 
 
-def test_subset_pipeline_does_not_roll_actions_across_skipped_scopes() -> None:
-    # Prompt inputs follow one canonical hierarchy: each scope sees only actions from
-    # its immediate child scope. Skipping paragraph and section must not silently feed
-    # sentence actions into the document prompt.
+def test_subset_pipeline_names_only_enabled_scopes() -> None:
     document = ReviewDocument(
         sections=[
             SectionNode(
@@ -259,33 +230,14 @@ def test_subset_pipeline_does_not_roll_actions_across_skipped_scopes() -> None:
         reviewer_role="generic reviewer",
         review_pipeline=[ReviewScope.SENTENCE, ReviewScope.DOCUMENT],
     )
-    llm = MockLLMClient(
-        responses=[
-            {
-                "actions": [
-                    {
-                        "id": "a-sentence",
-                        "scope": "sentence",
-                        "action_type": "comment",
-                        "node_id": "p1.s1",
-                        "comment": "Observed at sentence level.",
-                        "confidence": 0.9,
-                    }
-                ],
-                "summary": "Sentence checked.",
-            },
-            {"actions": [], "summary": "Document checked."},
-        ]
-    )
-
-    reviewer = TaktReviewer(profile=profile, llm=llm)
+    decision = silent_decision()
+    llm = _empty_llm()
+    reviewer = TaktReviewer(profile=profile, llm=llm, pack=silent_pack(), decision=decision)
     reviewer.review(document)
 
-    # Exactly two LLM calls: sentence then document (paragraph + section skipped).
-    assert len(llm.calls) == 2
-    document_prompt = llm.calls[1].content
-    assert "section_review_results" in document_prompt
-    assert "a-sentence" not in document_prompt
+    assert llm.calls == []
+    assert len(decision.calls) == 2
+    assert all(isinstance(call.state, str) for call in decision.calls)
 
 
 def test_sentence_review_adds_action(tmp_path: Path) -> None:
@@ -412,36 +364,29 @@ def test_policy_guard_blocks_corrected_when_protected_placeholder_changes(
     tmp_path: Path,
 ) -> None:
     input_path = _make_docx(tmp_path, "[OSOBA_1] podpisał umowę.")
-    llm = MockLLMClient(
-        responses=[
-            {
-                "actions": [
-                    {
-                        "id": "a1",
-                        "scope": "sentence",
-                        "action_type": "replace",
-                        "node_id": "p1.s1",
-                        "original_text": "[OSOBA_1]",
-                        "replacement_text": "Jan Kowalski",
-                        "category": "typo",
-                        "confidence": 1.0,
-                        "apply_to_corrected": True,
-                    }
-                ],
-                "summary": "Zdanie sprawdzone.",
-            },
-            {"actions": [], "summary": "Akapit sprawdzony."},
-            {"actions": [], "summary": "Sekcja sprawdzona."},
-            {"actions": [], "summary": "Dokument sprawdzony."},
-        ]
+    extra = ReviewAction.model_validate(
+        {
+            "id": "a1",
+            "scope": "sentence",
+            "action_type": "replace",
+            "node_id": "p1.s1",
+            "original_text": "[OSOBA_1]",
+            "replacement_text": "Jan Kowalski",
+            "category": "typo",
+            "confidence": 1.0,
+            "apply_to_corrected": True,
+        }
     )
 
     result = review_document(
         input_path=input_path,
         profile_path="examples/profiles/employment-contract.lawyer",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
+        extra_actions=[extra],
     )
 
     assert result.actions[0].status == ActionStatus.NEEDS_HUMAN_DECISION
@@ -451,28 +396,24 @@ def test_policy_guard_blocks_corrected_when_protected_placeholder_changes(
     assert "Jan Kowalski" not in corrected_text
 
 
-def test_context_provider_is_included_in_prompts(tmp_path: Path) -> None:
+def test_pack_review_does_not_use_review_context_as_the_game(tmp_path: Path) -> None:
     input_path = _make_docx(tmp_path, "Ala ma kota.")
-    llm = MockLLMClient(
-        responses=[
-            {"actions": [], "summary": "Zdanie sprawdzone."},
-            {"actions": [], "summary": "Akapit sprawdzony."},
-            {"actions": [], "summary": "Sekcja sprawdzona."},
-            {"actions": [], "summary": "Dokument sprawdzony."},
-        ]
-    )
+    decision = silent_decision()
 
     review_document(
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=decision,
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
         context_provider=_StaticContextProvider(),
     )
 
-    assert "external_review_context" in llm.calls[0].content
-    assert "Dike-style grounding" in llm.calls[0].content
+    dumped = " ".join(_dump_state(call.state) for call in decision.calls)
+    assert "Dike-style grounding" not in dumped
+    assert "external_review_context" not in dumped
 
 
 def test_tracked_revision_inputs_are_reported_as_warning(tmp_path: Path, monkeypatch) -> None:
@@ -499,54 +440,45 @@ def test_action_referencing_unknown_finding_id_is_reported_as_warning(tmp_path: 
     # finding_id no finding carries is a broken link and must surface as a warning; an action
     # whose finding_id resolves must not.
     input_path = _make_docx(tmp_path, "The cat sat.")
-    llm = MockLLMClient(
-        responses=[
+    extras = [
+        ReviewAction.model_validate(
             {
-                "findings": [
-                    {
-                        "finding_id": "finding-real",
-                        "node_id": "p1.s1",
-                        "title": "Observation",
-                        "description": "Worth reviewing.",
-                    }
-                ],
-                "actions": [
-                    {
-                        "id": "a-linked",
-                        "scope": "sentence",
-                        "action_type": "comment",
-                        "node_id": "p1.s1",
-                        "finding_id": "finding-real",
-                        "comment": "Responds to the finding.",
-                        "confidence": 0.9,
-                    },
-                    {
-                        "id": "a-dangling",
-                        "scope": "sentence",
-                        "action_type": "comment",
-                        "node_id": "p1.s1",
-                        "finding_id": "finding-ghost",
-                        "comment": "Points at a finding that does not exist.",
-                        "confidence": 0.9,
-                    },
-                ],
-                "summary": "Sentence checked.",
-            },
-            {"actions": [], "summary": "Paragraph checked."},
-            {"actions": [], "summary": "Section checked."},
-            {"actions": [], "summary": "Document checked."},
-        ]
-    )
-
+                "id": "a-linked",
+                "scope": "sentence",
+                "action_type": "comment",
+                "node_id": "p1.s1",
+                "finding_id": "finding-real",
+                "comment": "Responds to the finding.",
+                "confidence": 0.9,
+            }
+        ),
+        ReviewAction.model_validate(
+            {
+                "id": "a-dangling",
+                "scope": "sentence",
+                "action_type": "comment",
+                "node_id": "p1.s1",
+                "finding_id": "finding-ghost",
+                "comment": "Points at a finding that does not exist.",
+                "confidence": 0.9,
+            }
+        ),
+    ]
     result = review_document(
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
+        extra_actions=extras,
     )
 
-    assert result.warnings == ["Action a-dangling references unknown finding_id 'finding-ghost'."]
+    assert result.warnings == [
+        "Action a-linked references unknown finding_id 'finding-real'.",
+        "Action a-dangling references unknown finding_id 'finding-ghost'.",
+    ]
 
 
 def test_action_referencing_a_merged_away_finding_id_is_not_flagged() -> None:
@@ -572,66 +504,51 @@ def test_action_referencing_a_merged_away_finding_id_is_not_flagged() -> None:
     assert _unresolved_finding_id_warnings([survivor], [action]) == []
 
 
-def test_core_system_prompt_requests_finding_id_linkage(tmp_path: Path) -> None:
-    # The prompt must actually ask the model to emit finding_ids and link actions to them,
-    # otherwise the linkage the archetype relies on is never populated in real runs.
-    input_path = _make_docx(tmp_path, "The cat sat.")
-    llm = MockLLMClient(
-        responses=[
-            {"actions": [], "summary": "Sentence checked."},
-            {"actions": [], "summary": "Paragraph checked."},
-            {"actions": [], "summary": "Section checked."},
-            {"actions": [], "summary": "Document checked."},
-        ]
-    )
+def test_action_prompt_does_not_ask_the_writer_for_findings(tmp_path: Path) -> None:
+    from reviewkit.pack import SourceUnit, Verdict, VerdictKind
+    from reviewkit.profile import load_profile
+    from reviewkit.prompts import action_prompt
 
-    review_document(
-        input_path=input_path,
-        profile_path="examples/profiles/story.teacher",
-        llm=llm,
-        out_reviewed=tmp_path / "reviewed.docx",
-        out_corrected=tmp_path / "corrected.docx",
+    messages = action_prompt(
+        load_profile("examples/profiles/story.teacher"),
+        node_id="p1.s1",
+        text="The cat sat.",
+        verdict=Verdict(
+            node_id="p1.s1", kind=VerdictKind.CHANGE, function_id="claim", reason="fix"
+        ),
+        unit=SourceUnit(id="u", source_id="s", locator="§1", text="sat", force="binding"),
     )
-
-    system_prompt = llm.calls[0].messages[0]["content"]
-    assert llm.calls[0].messages[0]["role"] == "system"
-    assert "set that action's finding_id to the same value" in system_prompt
+    assert messages[0]["role"] == "system"
+    assert "Write the replacement this verdict asks for" in messages[0]["content"]
+    assert "finding_id" not in messages[0]["content"]
 
 
 def test_sentence_offset_edit_targets_the_correct_sentence(tmp_path: Path) -> None:
     input_path = _make_docx(tmp_path, "First sentence. Second sentence.")
-    llm = MockLLMClient(
-        responses=[
-            {"actions": [], "summary": "s1."},
-            {
-                "actions": [
-                    {
-                        "id": "a1",
-                        "scope": "sentence",
-                        "action_type": "replace",
-                        "node_id": "p1.s2",
-                        "original_text": "Second",
-                        "replacement_text": "Next",
-                        "category": "typo",
-                        "confidence": 1.0,
-                        "apply_hint": True,
-                        "locator": {"char_start": 0, "char_end": 6},
-                    }
-                ],
-                "summary": "s2.",
-            },
-            {"actions": [], "summary": "Akapit sprawdzony."},
-            {"actions": [], "summary": "Sekcja sprawdzona."},
-            {"actions": [], "summary": "Dokument sprawdzony."},
-        ]
+    extra = ReviewAction.model_validate(
+        {
+            "id": "a1",
+            "scope": "sentence",
+            "action_type": "replace",
+            "node_id": "p1.s2",
+            "original_text": "Second",
+            "replacement_text": "Next",
+            "category": "typo",
+            "confidence": 1.0,
+            "apply_hint": True,
+            "locator": {"char_start": 0, "char_end": 6},
+        }
     )
 
     result = review_document(
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
+        extra_actions=[extra],
     )
 
     corrected_text = _docx_text(result.corrected_docx)
@@ -642,37 +559,29 @@ def test_sentence_offset_edit_targets_the_correct_sentence(tmp_path: Path) -> No
 
 def test_sentence_string_edit_targets_the_matching_sentence(tmp_path: Path) -> None:
     input_path = _make_docx(tmp_path, "The cat sat. The cat ran.")
-    llm = MockLLMClient(
-        responses=[
-            {"actions": [], "summary": "s1."},
-            {
-                "actions": [
-                    {
-                        "id": "a1",
-                        "scope": "sentence",
-                        "action_type": "replace",
-                        "node_id": "p1.s2",
-                        "original_text": "cat",
-                        "replacement_text": "dog",
-                        "category": "typo",
-                        "confidence": 1.0,
-                        "apply_hint": True,
-                    }
-                ],
-                "summary": "s2.",
-            },
-            {"actions": [], "summary": "Akapit sprawdzony."},
-            {"actions": [], "summary": "Sekcja sprawdzona."},
-            {"actions": [], "summary": "Dokument sprawdzony."},
-        ]
+    extra = ReviewAction.model_validate(
+        {
+            "id": "a1",
+            "scope": "sentence",
+            "action_type": "replace",
+            "node_id": "p1.s2",
+            "original_text": "cat",
+            "replacement_text": "dog",
+            "category": "typo",
+            "confidence": 1.0,
+            "apply_hint": True,
+        }
     )
 
     result = review_document(
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
+        extra_actions=[extra],
     )
 
     corrected_text = _docx_text(result.corrected_docx)
@@ -680,15 +589,14 @@ def test_sentence_string_edit_targets_the_matching_sentence(tmp_path: Path) -> N
     assert corrected_text == "The cat sat. The dog ran."
 
 
-def test_llm_error_aborts_on_first_client_failure() -> None:
-    # A broken AI backend must fail closed instead of returning a partial review.
-    class _RaisingLLM:
+def test_plugin_error_aborts_on_first_decision_failure() -> None:
+    class _RaisingDecision:
         def __init__(self) -> None:
             self.calls = 0
 
-        def complete_json(self, messages: list[dict[str, str]], schema: type[Any]) -> Any:
+        def decide(self, state: object, questions: object) -> dict[str, bool]:
             self.calls += 1
-            raise RuntimeError("simulated LLM failure")
+            raise RuntimeError("simulated plugin failure")
 
     document = ReviewDocument(
         sections=[
@@ -709,99 +617,65 @@ def test_llm_error_aborts_on_first_client_failure() -> None:
         review_pipeline=[ReviewScope.PARAGRAPH],
     )
 
-    llm = _RaisingLLM()
-    reviewer = TaktReviewer(profile=profile, llm=llm)
+    decision = _RaisingDecision()
+    reviewer = TaktReviewer(
+        profile=profile, llm=_empty_llm(), pack=silent_pack(), decision=decision
+    )
 
-    with pytest.raises(RuntimeError, match="simulated LLM failure"):
+    with pytest.raises(ReviewBoundError, match="plugin_failure") as caught:
         reviewer.review(document)
 
-    # Fail-fast: it stopped at the first failing node, never visiting the second.
-    assert llm.calls == 1
+    assert caught.value.failure_class is ReviewFailureClass.UNSUPPORTED_SHAPE
+    assert decision.calls == 1
 
 
-def test_identical_finding_surfaced_at_two_levels_appears_once(tmp_path: Path) -> None:
-    input_path = _make_docx(tmp_path, "Ala ma kota.")
-    sentence_finding = {
-        "finding_id": "dup-1",
-        "node_id": "p1.s1",
-        "title": "Repeated observation",
-        "description": "The same issue seen at two levels.",
-        "dimension": "clarity",
-        "severity": "low",
-    }
-    # The paragraph level re-surfaces the same finding (same finding_id) at its own node.
-    paragraph_finding = {**sentence_finding, "node_id": "p1"}
-    llm = MockLLMClient(
-        responses=[
-            {"findings": [sentence_finding], "summary": "Zdanie sprawdzone."},
-            {"findings": [paragraph_finding], "summary": "Akapit sprawdzony."},
-            {"summary": "Sekcja sprawdzona."},
-            {"summary": "Dokument sprawdzony."},
-        ]
+def test_identical_finding_surfaced_at_two_levels_appears_once() -> None:
+    first = ReviewFinding(
+        finding_id="dup-1",
+        node_id="p1.s1",
+        title="Repeated observation",
+        description="The same issue seen at two levels.",
+        dimension="clarity",
+        severity="low",
     )
+    second = ReviewFinding(
+        finding_id="dup-1",
+        node_id="p1",
+        title="Repeated observation",
+        description="The same issue seen at two levels.",
+        dimension="clarity",
+        severity="low",
+    )
+    state = ReviewState()
+    state._add_findings([first])
+    state._add_findings([second])
+    assert [finding.finding_id for finding in state.findings] == ["dup-1"]
 
+
+def test_report_records_policy_and_render_lineage_on_actions(tmp_path: Path) -> None:
+    extra = ReviewAction.model_validate(
+        {
+            "id": "action-1",
+            "scope": "sentence",
+            "action_type": "comment",
+            "node_id": "p1.s1",
+            "comment": "Review wording.",
+        }
+    )
     result = review_document(
-        input_path=input_path,
+        input_path=_make_docx(tmp_path, "The cat sat."),
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
+        extra_actions=[extra],
     )
-
-    assert [finding.finding_id for finding in result.findings] == ["dup-1"]
-    assert [event.scope for event in result.findings[0].lineage] == [
-        ReviewScope.SENTENCE,
-        ReviewScope.PARAGRAPH,
-    ]
-    assert all(event.source_digest for event in result.findings[0].lineage)
-    assert all(event.profile_digest for event in result.findings[0].lineage)
-
-
-def test_report_explains_finding_through_policy_and_rendered_artifacts(tmp_path: Path) -> None:
-    input_path = _make_docx(tmp_path, "The cat sat.")
-    llm = MockLLMClient(
-        responses=[
-            {
-                "findings": [
-                    {
-                        "finding_id": "finding-1",
-                        "node_id": "p1.s1",
-                        "title": "Observation",
-                        "description": "The wording needs attention.",
-                        "evidence": [{"locator": "p1.s1", "excerpt": "The cat"}],
-                    }
-                ],
-                "actions": [
-                    {
-                        "id": "action-1",
-                        "finding_id": "finding-1",
-                        "scope": "sentence",
-                        "action_type": "comment",
-                        "node_id": "p1.s1",
-                        "comment": "Review wording.",
-                    }
-                ],
-            },
-            {"actions": []},
-            {"actions": []},
-            {"actions": []},
-        ]
+    action_events = [event.model_dump(mode="json") for event in result.actions[0].lineage]
+    assert any(
+        event["kind"] == "policy" and event["decision"] == "not_applied" for event in action_events
     )
-
-    result = review_document(
-        input_path=input_path,
-        profile_path="examples/profiles/story.teacher",
-        llm=llm,
-        out_reviewed=tmp_path / "reviewed.docx",
-        out_corrected=tmp_path / "corrected.docx",
-    )
-    explanation = result.explain_finding("finding-1")
-
-    finding_event = explanation["finding"]["lineage"][0]
-    assert finding_event["locator"]["node_id"] == "p1.s1"
-    assert finding_event["evidence_refs"]
-    action_events = explanation["actions"][0]["lineage"]
-    assert any(event["kind"] == "policy" and event["decision"] == "not_applied" for event in action_events)
     assert {event["artifact"] for event in action_events if event["kind"] == "render"} == {
         "corrected_docx",
         "reviewed_docx",
@@ -822,37 +696,30 @@ def test_review_document_threads_an_injected_action_policy(tmp_path: Path) -> No
         return "guard: no automatic writes in this run"
 
     policy = ActionPolicy.from_profile(profile, guards=[_block_all_writes])
-    llm = MockLLMClient(
-        responses=[
-            {
-                "actions": [
-                    {
-                        "id": "a1",
-                        "scope": "sentence",
-                        "action_type": "replace",
-                        "node_id": "p1.s1",
-                        "original_text": "bład",
-                        "replacement_text": "błąd",
-                        "category": "typo",
-                        "confidence": 1.0,
-                        "apply_hint": True,
-                    }
-                ],
-                "summary": "Zdanie sprawdzone.",
-            },
-            {"actions": [], "summary": "Akapit sprawdzony."},
-            {"actions": [], "summary": "Sekcja sprawdzona."},
-            {"actions": [], "summary": "Dokument sprawdzony."},
-        ]
+    extra = ReviewAction.model_validate(
+        {
+            "id": "a1",
+            "scope": "sentence",
+            "action_type": "replace",
+            "node_id": "p1.s1",
+            "original_text": "bład",
+            "replacement_text": "błąd",
+            "category": "typo",
+            "confidence": 1.0,
+            "apply_hint": True,
+        }
     )
 
     result = review_document(
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
         action_policy=policy,
+        extra_actions=[extra],
     )
 
     assert result.actions[0].status == ActionStatus.NEEDS_HUMAN_DECISION
@@ -870,40 +737,24 @@ def test_identical_runs_produce_byte_identical_json_reports(tmp_path: Path) -> N
     corrected_path = tmp_path / "corrected.docx"
 
     def _report(dest: Path) -> bytes:
-        llm = MockLLMClient(
-            responses=[
-                {
-                    "actions": [
-                        {
-                            "scope": "sentence",
-                            "action_type": "comment",
-                            "node_id": "p1.s1",
-                            "comment": "Dobre zdanie.",
-                            "confidence": 0.9,
-                        }
-                    ],
-                    "findings": [
-                        {
-                            "node_id": "p1.s1",
-                            "title": "Observation",
-                            "description": "A stable finding.",
-                            "dimension": "clarity",
-                            "severity": "low",
-                        }
-                    ],
-                    "summary": "Zdanie sprawdzone.",
-                },
-                {"actions": [], "summary": "Akapit sprawdzony."},
-                {"actions": [], "summary": "Sekcja sprawdzona."},
-                {"actions": [], "summary": "Dokument sprawdzony."},
-            ]
+        extra = ReviewAction.model_validate(
+            {
+                "scope": "sentence",
+                "action_type": "comment",
+                "node_id": "p1.s1",
+                "comment": "Dobre zdanie.",
+                "confidence": 0.9,
+            }
         )
         result = review_document(
             input_path=input_path,
             profile_path="examples/profiles/story.teacher",
-            llm=llm,
+            llm=_empty_llm(),
+            pack=silent_pack(),
+            decision=silent_decision(),
             out_reviewed=reviewed_path,
             out_corrected=corrected_path,
+            extra_actions=[extra],
         )
         return result.save_json(dest).read_bytes()
 
@@ -932,6 +783,8 @@ def test_extra_action_is_tracked_in_reviewed_and_applied_in_corrected(tmp_path: 
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
         llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
         extra_actions=[extra],
@@ -945,53 +798,43 @@ def test_extra_action_is_tracked_in_reviewed_and_applied_in_corrected(tmp_path: 
     assert _docx_text(result.corrected_docx) == "To jest błąd."
 
 
-def test_extra_action_overlapping_an_llm_action_escalates_both(tmp_path: Path) -> None:
-    # An extra action overlapping an LLM edit must demote per the existing overlap semantics:
-    # both actions in the cluster become CONFLICT and neither reaches the clean copy.
+def test_extra_action_overlapping_another_action_escalates_both(tmp_path: Path) -> None:
     input_path = _make_docx(tmp_path, "The cat sat.")
-    llm = MockLLMClient(
-        responses=[
-            {
-                "actions": [
-                    {
-                        "id": "a-llm",
-                        "scope": "sentence",
-                        "action_type": "replace",
-                        "node_id": "p1.s1",
-                        "original_text": "The cat",
-                        "replacement_text": "A feline",
-                        "category": "typo",
-                        "confidence": 1.0,
-                        "apply_hint": True,
-                    }
-                ],
-                "summary": "Sentence checked.",
-            },
-            {"actions": [], "summary": "Paragraph checked."},
-            {"actions": [], "summary": "Section checked."},
-            {"actions": [], "summary": "Document checked."},
-        ]
-    )
-    extra = ReviewAction(
-        id="a-extra",
-        scope=ReviewScope.PARAGRAPH,
-        action_type=ReviewActionType.REPLACE,
-        node_id="p1",
-        original_text="cat sat",
-        replacement_text="dog ran",
-        category="typo",
-        confidence=1.0,
-        apply_hint=True,
-        source_system="deterministic-checker",
-    )
+    extras = [
+        ReviewAction(
+            id="a-llm",
+            scope=ReviewScope.SENTENCE,
+            action_type=ReviewActionType.REPLACE,
+            node_id="p1.s1",
+            original_text="The cat",
+            replacement_text="A feline",
+            category="typo",
+            confidence=1.0,
+            apply_hint=True,
+        ),
+        ReviewAction(
+            id="a-extra",
+            scope=ReviewScope.PARAGRAPH,
+            action_type=ReviewActionType.REPLACE,
+            node_id="p1",
+            original_text="cat sat",
+            replacement_text="dog ran",
+            category="typo",
+            confidence=1.0,
+            apply_hint=True,
+            source_system="deterministic-checker",
+        ),
+    ]
 
     result = review_document(
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
-        extra_actions=[extra],
+        extra_actions=extras,
     )
 
     statuses = {action.id: action.status for action in result.actions}
@@ -1024,6 +867,8 @@ def test_extra_action_with_unmatched_original_text_becomes_conflict(tmp_path: Pa
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
         llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
         extra_actions=[extra],
@@ -1044,40 +889,23 @@ def test_extra_actions_none_or_empty_matches_omitting_the_parameter(tmp_path: Pa
     corrected_path = tmp_path / "corrected.docx"
 
     def _artifacts(suffix: str, **kwargs: Any) -> tuple[bytes, ...]:
-        llm = MockLLMClient(
-            responses=[
-                {
-                    "actions": [
-                        {
-                            "id": "a1",
-                            "scope": "sentence",
-                            "action_type": "replace",
-                            "node_id": "p1.s1",
-                            "original_text": "bład",
-                            "replacement_text": "błąd",
-                            "category": "typo",
-                            "confidence": 1.0,
-                            "apply_hint": True,
-                        }
-                    ],
-                    "summary": "Zdanie sprawdzone.",
-                },
-                {"actions": [], "summary": "Akapit sprawdzony."},
-                {"actions": [], "summary": "Sekcja sprawdzona."},
-                {"actions": [], "summary": "Dokument sprawdzony."},
-            ]
-        )
         result = review_document(
             input_path=input_path,
             profile_path="examples/profiles/story.teacher",
-            llm=llm,
+            llm=_empty_llm(),
+            pack=silent_pack(),
+            decision=silent_decision(),
             out_reviewed=reviewed_path,
             out_corrected=corrected_path,
             **kwargs,
         )
         report = result.save_json(tmp_path / f"report-{suffix}.json").read_bytes()
         with ZipFile(reviewed_path) as archive:
-            reviewed = (archive.read("word/document.xml"), archive.read("word/comments.xml"))
+            names = archive.namelist()
+            reviewed = (
+                archive.read("word/document.xml"),
+                archive.read("word/comments.xml") if "word/comments.xml" in names else b"",
+            )
         with ZipFile(corrected_path) as archive:
             corrected = archive.read("word/document.xml")
         return (report, *reviewed, corrected)
@@ -1087,15 +915,12 @@ def test_extra_actions_none_or_empty_matches_omitting_the_parameter(tmp_path: Pa
     assert _artifacts("empty", extra_actions=[]) == baseline
 
 
+def _dump_state(value: object) -> str:
+    return value if isinstance(value, str) else str(value)
+
+
 def _empty_llm() -> MockLLMClient:
-    return MockLLMClient(
-        responses=[
-            {"actions": [], "summary": "Zdanie sprawdzone."},
-            {"actions": [], "summary": "Akapit sprawdzony."},
-            {"actions": [], "summary": "Sekcja sprawdzona."},
-            {"actions": [], "summary": "Dokument sprawdzony."},
-        ]
-    )
+    return MockLLMClient()
 
 
 def _run_with_single_sentence_action(
@@ -1104,20 +929,16 @@ def _run_with_single_sentence_action(
     text: str,
 ) -> ReviewResult:
     input_path = _make_docx(tmp_path, text)
-    llm = MockLLMClient(
-        responses=[
-            {"actions": [action], "summary": "Zdanie sprawdzone."},
-            {"actions": [], "summary": "Akapit sprawdzony."},
-            {"actions": [], "summary": "Sekcja sprawdzona."},
-            {"actions": [], "summary": "Dokument sprawdzony."},
-        ]
-    )
+    extra = ReviewAction.model_validate(action)
     return review_document(
         input_path=input_path,
         profile_path="examples/profiles/story.teacher",
-        llm=llm,
+        llm=_empty_llm(),
+        pack=silent_pack(),
+        decision=silent_decision(),
         out_reviewed=tmp_path / "reviewed.docx",
         out_corrected=tmp_path / "corrected.docx",
+        extra_actions=[extra],
     )
 
 

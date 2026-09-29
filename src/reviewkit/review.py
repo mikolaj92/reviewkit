@@ -21,21 +21,19 @@ def review_tree(
     document: ReviewDocument,
     profile_path: str | Path | ReviewProfile,
     llm: LLMClient,
+    pack: Pack,
+    decision: DecisionClient,
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
-    pack: Pack | None = None,
-    decision: DecisionClient | None = None,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
 
-    ``pack`` is the game: ontology, source units, and rules. It is not the
-    profile, not instructions.md, and not external_review_context. ``None`` is
-    explicit legacy compat for the single fused pass (including reconciliation).
-    A pack review names, then judges, then optionally writes; it does not fuse
-    detect into actions and does not run the fused reconciliation pass. The host
-    injects ``decision`` (``DecisionClient.decide``) and ``llm``
-    (``LLMClient.complete_json``); ReviewKit does not ship a model runtime.
+    Hosts pass typed ``Pack`` and ``DecisionClient`` instances. JSON files load
+    through ``Pack.model_validate`` / ``Pack.model_validate_json`` only; this
+    call site does not accept dict dumps. A review names, then judges, then
+    optionally writes through ``LLMClient.complete_json``. There is no fused
+    ``pack=None`` path.
     """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
@@ -43,10 +41,10 @@ def review_tree(
     reviewer = TaktReviewer(
         profile=profile,
         llm=llm,
-        context_provider=context_provider,
-        action_policy=action_policy,
         pack=pack,
         decision=decision,
+        context_provider=context_provider,
+        action_policy=action_policy,
     )
     findings, actions, state = reviewer.review(document)
     if extra_actions:
@@ -71,22 +69,22 @@ def review_source(
     parser: DocumentParser,
     profile_path: str | Path | ReviewProfile,
     llm: LLMClient,
+    pack: Pack,
+    decision: DecisionClient,
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
-    pack: Pack | None = None,
-    decision: DecisionClient | None = None,
 ) -> ReviewResult:
     """Parse through an injected format adapter and review the resulting typed tree."""
     return review_tree(
         parser.parse(source),
         profile_path,
         llm,
+        pack,
+        decision,
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
-        pack=pack,
-        decision=decision,
     )
 
 

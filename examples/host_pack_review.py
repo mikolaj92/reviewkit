@@ -1,8 +1,9 @@
-"""Host integration sketch: load Pack, inject DecisionClient, run two scans.
+"""Host integration sketch: load Pack as a typed object, inject DecisionClient.
 
-This is what a host (Temida, or any app) does. ReviewKit does not build the
-Pack, does not ship a model runtime, and does not treat profile markdown as
-the review payload.
+This is what a host does. ReviewKit does not build the Pack, does not ship a
+model runtime, and does not treat profile markdown as the review payload.
+JSON files load through Pack.model_validate_json only; the review call site
+receives Pack, DecisionClient, and LLMClient instances.
 
 Run from the repo root:
 
@@ -49,7 +50,7 @@ def review_sample() -> tuple:
             {},
             {},
             {},
-            {"verdict": "keep"},
+    {"verdict": {"value": "change", "confidence": 0.95}},
             {"present": False},
         ]
     )

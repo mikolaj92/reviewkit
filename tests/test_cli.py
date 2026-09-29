@@ -15,8 +15,21 @@ from typer.testing import CliRunner
 
 from reviewkit.cli import _resolve_llm, app
 from reviewkit.llm import MockLLMClient
+from reviewkit.takt_types import TaktDecision
 
 runner = CliRunner()
+
+
+class _StableTakt:
+    def evaluate(self, **kwargs: object) -> TaktDecision:
+        nodes = kwargs.get("plant_nodes") or ()
+        node_id = nodes[0].id if nodes else "n"
+        return TaktDecision(outcome="stable", node_id=node_id)
+
+
+@pytest.fixture(autouse=True)
+def _stub_takt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("reviewkit.takt_reviewer.TaktClient", _StableTakt)
 
 
 def _make_docx(tmp_path: Path) -> Path:
@@ -25,6 +38,14 @@ def _make_docx(tmp_path: Path) -> Path:
     docx.add_paragraph("The quick brown fox.")
     docx.save(input_path)
     return input_path
+
+
+_PACK_FLAGS = [
+    "--pack",
+    "examples/packs/story.json",
+    "--decision",
+    "reviewkit.decision:MockDecisionClient",
+]
 
 
 def test_cli_writes_json_report_when_out_report_given(tmp_path: Path) -> None:
@@ -44,6 +65,7 @@ def test_cli_writes_json_report_when_out_report_given(tmp_path: Path) -> None:
             str(report_path),
             "--llm",
             "reviewkit.llm:MockLLMClient",
+            *_PACK_FLAGS,
         ],
     )
 
@@ -70,6 +92,7 @@ def test_cli_skips_json_report_by_default(tmp_path: Path) -> None:
             str(tmp_path / "corrected.docx"),
             "--llm",
             "reviewkit.llm:MockLLMClient",
+            *_PACK_FLAGS,
         ],
     )
 
@@ -81,12 +104,57 @@ def test_cli_rejects_missing_llm_configuration(tmp_path: Path) -> None:
     input_path = _make_docx(tmp_path)
     result = runner.invoke(
         app,
-        [str(input_path), "--profile", "examples/profiles/story.teacher"],
+        [
+            str(input_path),
+            "--profile",
+            "examples/profiles/story.teacher",
+            *_PACK_FLAGS,
+        ],
     )
 
     assert result.exit_code != 0
     plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
-    assert "--llm is required" in plain
+    assert "--llm" in plain
+
+
+def test_cli_rejects_missing_pack(tmp_path: Path) -> None:
+    input_path = _make_docx(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            str(input_path),
+            "--profile",
+            "examples/profiles/story.teacher",
+            "--decision",
+            "reviewkit.decision:MockDecisionClient",
+            "--llm",
+            "reviewkit.llm:MockLLMClient",
+        ],
+    )
+
+    assert result.exit_code != 0
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--pack" in plain
+
+
+def test_cli_rejects_missing_decision(tmp_path: Path) -> None:
+    input_path = _make_docx(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            str(input_path),
+            "--profile",
+            "examples/profiles/story.teacher",
+            "--pack",
+            "examples/packs/story.json",
+            "--llm",
+            "reviewkit.llm:MockLLMClient",
+        ],
+    )
+
+    assert result.exit_code != 0
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--decision" in plain
 
 
 def test_cli_accepts_injected_llm_factory(tmp_path: Path) -> None:
@@ -103,6 +171,7 @@ def test_cli_accepts_injected_llm_factory(tmp_path: Path) -> None:
             str(tmp_path / "corrected.docx"),
             "--llm",
             "reviewkit.llm:MockLLMClient",
+            *_PACK_FLAGS,
         ],
     )
 

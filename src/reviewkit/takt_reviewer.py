@@ -1,20 +1,6 @@
 """Takt v0.3.2-based hierarchical review orchestration for ReviewKit.
 
-Host (ReviewKit) owns:
-  - document plant construction
-  - detectors → RawSignal
-  - mapping decisions back to ReviewAction / findings
-
-Takt's Mojo cascade owns:
-  - fusion of raw signals
-  - homeostat → actuation / interlock / stable
-
-The official in-process binding is the only evaluation path; binding failures are
-propagated and are never downgraded to a local compatibility engine.
-
-``pack=None`` keeps the legacy fused pass: one ``complete_json`` per node.
-
-With a Pack the host injects ``DecisionClient`` and ``LLMClient``. Flow:
+A review always receives a Pack, a DecisionClient, and an LLMClient.
 
 1. Name every enabled node (tags only). No cascade, no effector, tags are not
    ``RawSignal``.
@@ -22,6 +8,8 @@ With a Pack the host injects ``DecisionClient`` and ``LLMClient``. Flow:
    unmatched nodes short-circuit before evaluate.
 3. Optional act through ``LLMClient.complete_json`` only for change / delete /
    insert at or above the confidence floor. ``missing`` is a finding, not a write.
+
+There is no ``pack=None`` fused ``complete_json`` of findings+actions.
 """
 
 from __future__ import annotations
@@ -29,9 +17,9 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import Any
 
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
 from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import EmptyReviewContextProvider, ReviewContextProvider
@@ -50,8 +38,8 @@ from reviewkit.decision import (
     is_noul_yes,
     naming_questions,
 )
-from reviewkit.detectors import BaseLLMDetector, _lower_actions_for_prompt, _response_to_signals
-from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
+from reviewkit.detectors import BaseLLMDetector, _response_to_signals
+from reviewkit.document import ReviewDocument
 from reviewkit.effectors import ReviewEffector
 from reviewkit.homeostat import build_layer_specs, scope_to_layer_index
 from reviewkit.llm import LLMClient, LLMClientError, LLMClientFailure
@@ -59,8 +47,6 @@ from reviewkit.models import (
     DocumentReviewResponse,
     FindingLineageEvent,
     ParagraphReviewResponse,
-    ReconciliationDisposition,
-    ReconciliationRequest,
     ReviewAction,
     ReviewActionType,
     ReviewBoundError,
@@ -93,11 +79,7 @@ from reviewkit.pack import (
 from reviewkit.plant import DocNode, ReviewDocumentPlant
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile
-from reviewkit.prompts import (
-    action_prompt,
-    reconciliation_review_prompt,
-)
-from reviewkit.reconciliation import reconcile_findings, select_reconciliation_targets
+from reviewkit.prompts import action_prompt
 from reviewkit.review_bounds import (
     bound_document_sections,
     build_document_source_context,
@@ -137,25 +119,20 @@ class TaktReviewer:
         self,
         profile: ReviewProfile,
         llm: LLMClient,
+        pack: Pack,
+        decision: DecisionClient,
         context_provider: ReviewContextProvider | None = None,
         action_policy: ActionPolicy | None = None,
-        pack: Pack | None = None,
-        decision: DecisionClient | None = None,
         *,
         takt_client: TaktClient | None = None,
     ) -> None:
         self.profile = profile
         self.llm = llm
+        self.pack = pack
+        self.decision = decision
         self.context_provider = context_provider or EmptyReviewContextProvider()
         self.action_policy = action_policy
-        self.pack: Pack | None = pack
-        self.decision: DecisionClient | None = decision
         self.state = ReviewState()
-        if self.pack is not None and self.decision is None:
-            raise ValueError(
-                "pack reviews name and judge through an injected DecisionClient; "
-                "omit pack to keep the single LLMClient pass"
-            )
         self.takt_client = takt_client or TaktClient()
         self.traces: list[PassTrace] = []
 
@@ -187,67 +164,24 @@ class TaktReviewer:
         )
         enabled = set(self.profile.review_pipeline)
 
-        if self.pack is not None:
-            self._name(plant)
+        self._name(plant)
 
-        accumulated_lower_actions: list[ReviewAction] = []
-        scanned_nodes: dict[str, DocNode] = {}
-        document_response: DocumentReviewResponse | None = None
         for node in plant.sequential_scan():
             scope = node.scope()
             if scope is None or scope not in enabled:
                 continue
 
-            scanned_nodes[node.id] = node
             detector = detectors[scope]
-            if self.pack is not None:
-                signals = detector.judge(node)
-                if not signals:
-                    # Covered, untagged, empty-rule, and all-keep nodes skip takt.
-                    continue
-            else:
-                detector.set_lower_actions(accumulated_lower_actions)
-                signals = detector.detect(node)
-            # pack=None: even empty signals still evaluate (stable / intrinsic value).
+            signals = detector.judge(node)
+            if not signals:
+                continue
             decision = self.takt_client.evaluate(
                 plant_nodes=[node.to_plant_node(value=0.0)],
                 layers=layers,
                 raw_signals=signals,
             )
-            if self.pack is not None:
-                detector.act_after_judge(node)
+            detector.act_after_judge(node)
             effector.apply_takt_decision(node.id, decision)
-            accumulated_lower_actions = effector.actions
-            if scope == ReviewScope.DOCUMENT and isinstance(
-                detector.last_response, DocumentReviewResponse
-            ):
-                document_response = detector.last_response
-
-        rereviewed: list[tuple[ReconciliationRequest, ReviewFinding]] = []
-        if (
-            self.pack is None
-            and self.profile.reconciliation_max_rounds
-            and document_response is not None
-        ):
-            targets = select_reconciliation_targets(
-                document_response.reconciliation_requests,
-                scanned_nodes,
-                max_nodes=self.profile.reconciliation_max_nodes,
-            )
-            for request, node in targets:
-                scope = node.scope()
-                if scope is None or scope not in detectors:
-                    continue
-                response = detectors[scope].reconcile(node, request, state.document_summary)
-                signals = detectors[scope].signals_for_response(response, node.id)
-                decision = self.takt_client.evaluate(
-                    plant_nodes=[node.to_plant_node(value=0.0)],
-                    layers=layers,
-                    raw_signals=signals,
-                )
-                effector.apply_takt_decision(node.id, decision)
-                for finding in response.findings:
-                    rereviewed.append((request, finding))
 
         prepared = prepare_actions(
             document, self.profile, effector.actions, policy=self.action_policy
@@ -256,22 +190,16 @@ class TaktReviewer:
 
         deduped_findings: list[ReviewFinding] = []
         seen: dict[str, bool] = {}
-        rereview_ids = {id(finding) for _, finding in rereviewed}
         for f in effector.findings:
-            if id(f) in rereview_ids:
-                continue
             key = f.finding_id or (f.title + "|" + f.node_id)
             if key not in seen:
                 seen[key] = True
                 deduped_findings.append(f)
-        deduped_findings = reconcile_findings(deduped_findings, rereviewed)
 
         return deduped_findings, final_actions, state
 
     def _name(self, plant: ReviewDocumentPlant) -> None:
         """First scan. Tags only: no cascade evaluation and no effector."""
-        assert self.pack is not None
-        assert self.decision is not None
         enabled = set(self.profile.review_pipeline)
         named: list[FunctionTag] = []
         for node in plant.sequential_scan():
@@ -349,8 +277,8 @@ class _LLMDetectorAdapter:
         document: ReviewDocument,
         effector: ReviewEffector,
         document_source_context: dict[str, Any] | None,
-        pack: Pack | None = None,
-        decision: DecisionClient | None = None,
+        pack: Pack,
+        decision: DecisionClient,
         traces: list[PassTrace] | None = None,
     ) -> None:
         self.pack = pack
@@ -367,20 +295,13 @@ class _LLMDetectorAdapter:
         self.scope = scope
         self.document = document
         self.effector = effector
-        self._lower_actions: list[ReviewAction] = []
         self.last_response: ReviewResponse | None = None
         self._pending_verdicts: list[Verdict] = []
         self._pending_units: dict[str, SourceUnit] = {}
         self._pending_scope: ReviewScope = scope
 
-    def set_lower_actions(self, actions: list[ReviewAction]) -> None:
-        self._lower_actions = list(actions)
-
     def judge(self, node: DocNode) -> list[RawSignal]:
-        """Second scan. Matched rules and the single unit each one cites.
-
-        Pack reviews do not go through the fused ``detect()`` LLM path.
-        """
+        """Second scan. Matched rules and the single unit each one cites."""
         inner_node = getattr(node, "inner", node)
         effective_scope = self.scope
         if isinstance(inner_node, ReviewDocument):
@@ -389,7 +310,6 @@ class _LLMDetectorAdapter:
 
     def _judge_with_pack(self, node: DocNode, scope: ReviewScope) -> list[RawSignal]:
         """Second scan. Findings and signals only; the effector does not write yet."""
-        assert self.pack is not None
         self._pending_verdicts = []
         self._pending_units = {}
         self._pending_scope = scope
@@ -461,8 +381,6 @@ class _LLMDetectorAdapter:
         units: dict[str, SourceUnit],
         function_ids: list[str],
     ) -> list[Verdict]:
-        assert self.decision is not None
-        assert self.pack is not None
         text = str(self.document.get_node_text(node_id) or "")
         covered = self.inner.state.covered()
         verdicts: list[Verdict] = []
@@ -503,15 +421,12 @@ class _LLMDetectorAdapter:
         covered: dict[str, list[str]],
         function_ids: list[str],
     ) -> tuple[DecisionAnswer, VerdictKind | None]:
-        assert self.decision is not None
-        assert self.pack is not None
-        dumped: dict[str, Any] | None = None if unit is None else unit.model_dump(mode="json")
         if rule.kind == "close" or rule.when == "function_absent":
-            state: DocumentDecisionState = {
-                "covered": covered.get(rule.function_id, []),
-                "candidate": rule.function_id,
-                "unit": dumped,
-            }
+            state = DocumentDecisionState(
+                covered=covered.get(rule.function_id, []),
+                candidate=rule.function_id,
+                unit=unit,
+            )
             questions: Mapping[str, Question] = document_present_question(
                 function_label(self.pack, rule.function_id)
             )
@@ -519,11 +434,11 @@ class _LLMDetectorAdapter:
             answer = _plugin_coerce(answers.get("present"), node_id)
             kind = VerdictKind.KEEP if is_noul_yes(answer) else VerdictKind.MISSING
             return answer, kind
-        fragment_state: FragmentDecisionState = {
-            "text": text,
-            "tags": function_ids,
-            "unit": dumped,
-        }
+        fragment_state = FragmentDecisionState(
+            text=text,
+            tags=function_ids,
+            unit=unit,
+        )
         answers = _plugin_decide(
             self.decision, fragment_state, fragment_verdict_question(), node_id=node_id
         )
@@ -621,106 +536,6 @@ class _LLMDetectorAdapter:
         node_text = str(self.document.get_node_text(node_id) or "")
         self._enrich_response_lineage(response, node_id=node_id, scope=scope, node_text=node_text)
         self.effector.register_response(node_id, scope, response)
-
-    def detect(self, node: DocNode) -> list[RawSignal]:
-        inner_node = getattr(node, "inner", node)
-        effective_scope = self.scope
-        if isinstance(inner_node, ReviewDocument):
-            effective_scope = ReviewScope.DOCUMENT
-
-        self.inner.lower_actions_for_prompt = _lower_actions_for_prompt(
-            self.scope, inner_node, self._lower_actions
-        )
-
-        original_complete = self.inner._complete
-        captured: dict[str, ReviewResponse | None] = {"resp": None}
-
-        def capturing_complete(
-            messages: list[dict[str, str]], schema: type[BaseModel]
-        ) -> BaseModel:
-            resp = original_complete(messages, schema)
-            captured["resp"] = resp if isinstance(resp, ReviewResponse) else None
-            return resp
-
-        self.inner._complete = capturing_complete  # type: ignore[method-assign]
-
-        try:
-            signals = self.inner.detect(node)
-        finally:
-            self.inner._complete = original_complete  # type: ignore[method-assign]
-            self.inner.lower_actions_for_prompt = []
-
-        resp = captured["resp"]
-        self.last_response = resp
-        if resp is not None:
-            node_id = getattr(node, "id", getattr(inner_node, "id", "?"))
-            node_text = str(
-                self.document.get_node_text(node_id) or getattr(inner_node, "text", "") or ""
-            )
-            self._enrich_response_lineage(
-                resp,
-                node_id=node_id,
-                scope=effective_scope,
-                node_text=node_text,
-            )
-            self.effector.register_response(node_id, effective_scope, resp)
-
-        return signals
-
-    def reconcile(
-        self, node: DocNode, request: ReconciliationRequest, document_summary: str | None
-    ) -> SentenceReviewResponse:
-        """Rereview one host-selected node; model output cannot redirect it."""
-        inner_node = getattr(node, "inner", node)
-        prompt = reconciliation_review_prompt(
-            self.inner.profile,
-            self.inner.state,
-            cast(SentenceNode | ParagraphNode | SectionNode, inner_node),
-            request,
-            document_summary,
-        )
-        response = cast(
-            SentenceReviewResponse, self.inner._complete(prompt, SentenceReviewResponse)
-        )
-        target_text = str(self.document.get_node_text(node.id) or "")
-        for finding in response.findings:
-            finding.node_id = node.id
-            if finding.dimension is None:
-                finding.dimension = request.expected_dimension
-            finding.metadata["reconciliation_request_id"] = request.request_id
-        for action in response.actions:
-            action.node_id = node.id
-            action.scope = self.scope
-            action.locator = ReviewLocator(
-                node_id=node.id,
-                char_start=0,
-                char_end=len(target_text),
-                original_text=target_text,
-                text_hash=ReviewLocator.hash_text(target_text),
-                node_hash=ReviewLocator.hash_text(target_text),
-            )
-        self._enrich_response_lineage(
-            response,
-            node_id=node.id,
-            scope=self.scope,
-            node_text=target_text,
-        )
-        for action in response.actions:
-            if action.finding_id and any(
-                finding.finding_id == action.finding_id
-                and finding.reconciliation_disposition != ReconciliationDisposition.CONFLICT
-                and finding.reconciles_finding_id
-                for finding in response.findings
-            ):
-                match = next(
-                    finding
-                    for finding in response.findings
-                    if finding.finding_id == action.finding_id
-                )
-                action.finding_id = match.reconciles_finding_id
-        self.effector.register_response(node.id, self.scope, response)
-        self.last_response = response
-        return response
 
     def _enrich_response_lineage(
         self,
@@ -824,9 +639,6 @@ class _LLMDetectorAdapter:
                         action_id=action.id,
                     ),
                 )
-
-    def signals_for_response(self, response: ReviewResponse, node_id: str) -> list[RawSignal]:
-        return _response_to_signals(response, node_id, "llm_reconciliation", self.scope)
 
 
 def _plugin_bound_error(exc: BaseException, node_id: str) -> ReviewBoundError:

@@ -33,11 +33,11 @@ def review_tree(
     document: ReviewDocument,
     profile_path: str | Path | ReviewProfile,
     llm: LLMClient,
+    pack: Pack,
+    decision: DecisionClient,
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
-    pack: Pack | None = None,
-    decision: DecisionClient | None = None,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
 
@@ -51,11 +51,11 @@ def review_tree(
         document,
         profile,
         llm,
+        pack,
+        decision,
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
-        pack=pack,
-        decision=decision,
     )
     return ReviewResult(
         document=document,
@@ -75,19 +75,22 @@ def review_document(
     input_path: str | Path,
     profile_path: str | Path | ReviewProfile,
     llm: LLMClient,
+    pack: Pack,
+    decision: DecisionClient,
     out_reviewed: str | Path = "reviewed.docx",
     out_corrected: str | Path = "corrected.docx",
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
-    pack: Pack | None = None,
-    decision: DecisionClient | None = None,
 ) -> ReviewResult:
     """Run the domain-neutral hierarchical review and render its artifacts.
 
     The engine topology is always :data:`REVIEW_ENGINE_SCOPES`. Product-specific
     criteria and grounding enter only through ``profile_path`` and
     ``context_provider``; this pipeline intentionally does not dispatch by domain.
+
+    Hosts pass typed ``Pack`` and ``DecisionClient`` objects. JSON files load
+    through ``Pack.model_validate`` / ``Pack.model_validate_json`` only.
 
     ``extra_actions`` are pre-built actions from OUTSIDE the LLM (deterministic
     callers). Contract: pass them RAW (unprepared) - the pipeline runs them through
@@ -103,10 +106,6 @@ def review_document(
     include them: reviewed.docx as tracked edits/comments, corrected.docx applying
     only the APPLIED ones. With ``extra_actions=None`` or ``[]`` the result is
     identical to omitting the parameter.
-
-    ``pack`` is ontology + rules + units, not the profile. Inject ``decision``
-    (:meth:`DecisionClient.decide`) together with ``llm``
-    (:meth:`LLMClient.complete_json`). ``pack=None`` is the single fused pass.
     """
     # Accept an already-built profile as well as a folder path: callers that construct or cache
     # a ReviewProfile in memory shouldn't be forced to round-trip it through disk.
@@ -118,11 +117,11 @@ def review_document(
         document,
         profile,
         llm,
+        pack,
+        decision,
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
-        pack=pack,
-        decision=decision,
     )
 
     reviewed_path: Path | None = None
@@ -157,20 +156,20 @@ def _review_tree(
     document: ReviewDocument,
     profile: ReviewProfile,
     llm: LLMClient,
+    pack: Pack,
+    decision: DecisionClient,
     *,
     context_provider: ReviewContextProvider | None,
     action_policy: ActionPolicy | None,
     extra_actions: list[ReviewAction] | None,
-    pack: Pack | None,
-    decision: DecisionClient | None,
 ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
     reviewer = TaktReviewer(
         profile=profile,
         llm=llm,
-        context_provider=context_provider,
-        action_policy=action_policy,
         pack=pack,
         decision=decision,
+        context_provider=context_provider,
+        action_policy=action_policy,
     )
     # Pack reviews name → judge → optional act inside TaktReviewer. extra_actions
     # stay a host-side append after that loop, never a fused detect→write.

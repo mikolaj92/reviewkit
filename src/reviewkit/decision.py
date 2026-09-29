@@ -10,9 +10,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol, TypedDict, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from reviewkit.pack import SourceUnit
 
 _STRICT = ConfigDict(extra="forbid", frozen=True)
 
@@ -47,20 +49,24 @@ class DecisionAnswer(BaseModel):
     reason: str = ""
 
 
-class FragmentDecisionState(TypedDict):
-    """Scan-2 fragment payload: the node text, its tags, and the cited unit dump."""
+class FragmentDecisionState(BaseModel):
+    """Scan-2 fragment payload: the node text, its tags, and the cited unit."""
+
+    model_config = _STRICT
 
     text: str
     tags: list[str]
-    unit: dict[str, Any] | None
+    unit: SourceUnit | None = None
 
 
-class DocumentDecisionState(TypedDict):
-    """Scan-2 document payload: coverage for one function and the cited unit dump."""
+class DocumentDecisionState(BaseModel):
+    """Scan-2 document payload: coverage for one function and the cited unit."""
+
+    model_config = _STRICT
 
     covered: list[str]
     candidate: str
-    unit: dict[str, Any] | None
+    unit: SourceUnit | None = None
 
 
 type DecisionState = str | FragmentDecisionState | DocumentDecisionState
@@ -78,20 +84,21 @@ class LabeledFunction(Protocol):
 class DecisionClient(Protocol):
     """Decision dependency supplied by the ReviewKit host.
 
-    Naming passes the fragment text (``str``). Judging passes
-    :class:`FragmentDecisionState` or :class:`DocumentDecisionState`.
+    Naming passes the fragment text (``str``). Judging passes typed
+    :class:`FragmentDecisionState` or :class:`DocumentDecisionState` objects,
+    including the cited :class:`~reviewkit.pack.SourceUnit` when a rule has one.
     """
 
     def decide(
         self,
-        state: str | Mapping[str, Any],
+        state: DecisionState,
         questions: Mapping[str, Question],
     ) -> DecisionAnswers: ...
 
 
 @dataclass(frozen=True)
 class DecisionCall:
-    state: str | Mapping[str, Any]
+    state: DecisionState
     questions: dict[str, Question]
 
 
@@ -107,7 +114,7 @@ class MockDecisionClient:
 
     def decide(
         self,
-        state: str | Mapping[str, Any],
+        state: DecisionState,
         questions: Mapping[str, Question],
     ) -> dict[str, DecisionAnswer]:
         recorded = {key: question for key, question in questions.items()}

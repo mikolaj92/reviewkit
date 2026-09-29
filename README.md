@@ -9,14 +9,15 @@ document + profile (how) + pack (what)
     → scan 1 name  → scan 2 judge  → optional act
 ```
 
-`pack=None` is explicit legacy compat for a single fused `complete_json` per
-node. The intended path always receives a Pack.
+Hosts import typed `Pack`, `DecisionClient`, and `LLMClient` objects and pass
+instances. JSON files load through `Pack.model_validate` /
+`Pack.model_validate_json` only. A review always receives a Pack.
 
 ## Roles
 
 | Who | Does | Does not |
 | --- | --- | --- |
-| Host (e.g. Temida) | Builds Pack, injects `DecisionClient` / `LLMClient`, computes gaps from `covered()` | Expect ReviewKit to know the domain |
+| Host | Builds Pack, injects `DecisionClient` / `LLMClient`, computes gaps from `covered()` | Expect ReviewKit to know the domain |
 | ReviewKit | Two scans, `covered()`, sockets `decide` / `complete_json`, deterministic edits | Import a model runtime; treat `instructions.md` as Pack |
 | Pack | Ontology + source units + rules | Behave like a profile |
 | Profile | Reviewer behavior (role, language, action policy, pipeline) | Carry acts, ontology, or source units |
@@ -34,9 +35,9 @@ Do not grow this library into a journal or a legal product. Composition is host 
 
 ## Host integration
 
-Load a Pack, inject a `DecisionClient`, run the two scans. Gaps are
-`ontology.function_ids() − covered()` on the host — not `missing_elements`,
-and not `ReviewFinding.dimension`.
+Load a Pack as a typed object, inject a `DecisionClient`, run the two scans.
+Gaps are `ontology.function_ids() − covered()` on the host — not
+`missing_elements`, and not `ReviewFinding.dimension`.
 
 ```python
 from pathlib import Path
@@ -80,9 +81,9 @@ A runnable copy of this sketch lives at
 [`examples/host_pack_review.py`](examples/host_pack_review.py). The longer
 contract is [`docs/host-integration.md`](docs/host-integration.md).
 
-A Pack review **requires** `decision=`. Core does not call a detector as a
-public host API (`detect()` is internal). Naming returns tags only
-(`NamingResponse`); those tags are not `RawSignal`s and are not
+A Pack review **requires** `pack=` and `decision=`. Core does not call a
+detector as a public host API (`detect()` is internal). Naming returns tags
+only (`NamingResponse`); those tags are not `RawSignal`s and are not
 `ReviewFinding.dimension`.
 
 ## Pack
@@ -121,13 +122,14 @@ Hosts implement these Protocols from `reviewkit`. There is no public `detect()`
 API; naming and judging go through `DecisionClient.decide`.
 
 ```python
-from reviewkit import DecisionClient, LLMClient
+from reviewkit import DecisionClient, FragmentDecisionState, LLMClient
 
 # DecisionClient.decide(state, questions) -> answers   (name + judge)
+# state is str | FragmentDecisionState | DocumentDecisionState
 # LLMClient.complete_json(messages, schema) -> action  (replacement text)
 ```
 
-Call site: `review_tree(..., pack=..., decision=..., llm=...)` or
+Call site: `review_tree(document, profile, llm, pack, decision)` or
 `review_document(...)`. Tests and examples use `MockDecisionClient` and
 `MockLLMClient` only. Model runtimes stay in the host; they are not imported
 from `src/reviewkit`.
@@ -188,18 +190,20 @@ uv sync
 uv run python examples/host_pack_review.py
 uv run reviewkit input.docx \
   --profile examples/profiles/story.teacher \
+  --pack examples/packs/story.json \
+  --decision my_package.clients:make_decision \
   --out-reviewed reviewed.docx \
   --out-corrected corrected.docx \
   --out-report review-report.json \
   --llm my_package.clients:make_client
 ```
 
-The CLI path is profile + `LLMClient` only (`pack=None` fused pass). Pack
-reviews go through the Python call site above.
+The CLI requires `--pack`, `--decision`, and `--llm`. Pack JSON is loaded with
+`Pack.model_validate_json`. There is no default model client.
 
-`--out-report PATH` writes the JSON report. `--llm module:factory` names a
-zero-argument callable that returns an `LLMClient`. The option is required:
-ReviewKit does not assume a provider.
+`--out-report PATH` writes the JSON report. `--llm module:factory` and
+`--decision module:factory` name zero-argument callables that return an
+`LLMClient` and a `DecisionClient`.
 
 ReviewKit 0.14+ uses the pinned **takt v0.3.2** in-process Mojo binding.
 Requires Python >= 3.13, macOS on Apple silicon, and Mojo `1.0.0`. `uv sync`
@@ -279,8 +283,8 @@ Domain logic belongs in the host Pack and plugins, not in the framework.
 - policy reasons, source-system tags, evidence refs and references on
   `ReviewAction`;
 - protected-pattern guards for corrected output safety;
-- `ReviewContextProvider` for grounding on the **legacy** fused pass
-  (`pack=None`). It is not a Pack;
+- `ReviewContextProvider` for host grounding on prompts that still accept it.
+  It is not a Pack;
 - an injectable `ActionPolicy` passed to
   `review_document(..., action_policy=...)`.
 

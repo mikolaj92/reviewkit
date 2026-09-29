@@ -1,35 +1,90 @@
 # Host integration: Pack + two scans
 
-ReviewKit 0.24 reviews through a **Pack** and two host-injected sockets. The
-host (Temida, or any app) owns domain data and model plugins. This library
-does not review domain content itself.
+ReviewKit 0.24.1 reviews through a **Pack** and two host-injected sockets. The
+host owns domain data and model plugins. This library does not review domain
+content itself.
+
+Hosts pass **Python objects**. Import `Pack`, `DecisionClient`, `LLMClient`,
+and the rules/units models, then pass typed instances. Do not hand-decode JSON
+dicts into the call site. A Pack file may be loaded with
+`Pack.model_validate` / `Pack.model_validate_json` only.
 
 ## Call site
 
 ```text
-Pack load  →  inject DecisionClient  →  two scans (name, then judge)
-                                         → optional LLMClient act
+Pack (typed object)  →  inject DecisionClient  →  two scans (name, then judge)
+                                                 → optional LLMClient act
 ```
 
 ```python
-from reviewkit import Pack, TaktReviewer, load_profile, review_document, review_tree
+from reviewkit import (
+    DecisionClient,
+    DocumentDecisionState,
+    FragmentDecisionState,
+    Function,
+    LLMClient,
+    Ontology,
+    Pack,
+    Rule,
+    SourceUnit,
+    TaktReviewer,
+    load_profile,
+    review_document,
+    review_tree,
+)
 
-pack = Pack.model_validate_json(pack_json)
+pack = Pack(
+    ontology=Ontology(functions=[Function(id="lead", label="Lead", attach_to=["sentence"])]),
+    units={
+        "u1": SourceUnit(
+            id="u1",
+            source_id="host",
+            locator="§1",
+            text="Lead source.",
+            force="binding",
+        )
+    },
+    rules=[
+        Rule(
+            id="defect-lead",
+            kind="defect",
+            function_id="lead",
+            scope="fragment",
+            when="function_present",
+            source_unit_id="u1",
+        )
+    ],
+)
+# File form only:
+# pack = Pack.model_validate_json(pack_json)
 profile = load_profile(profile_dir)  # behavior only
 
-# Artifacts:
-review_document(..., profile_path=profile, llm=llm, pack=pack, decision=decision)
-review_tree(document, profile, llm, pack=pack, decision=decision)
+review_document(input_path, profile, llm, pack, decision)
+review_tree(document, profile, llm, pack, decision)
 
-# Tag map / gaps (host sitko):
 findings, actions, state = TaktReviewer(
     profile=profile, llm=llm, pack=pack, decision=decision,
 ).review(document)
 gaps = pack.ontology.function_ids() - set(state.covered())
 ```
 
-A Pack review raises if `decision` is omitted. `llm` is still required: scan 3
-writes replacement text through `LLMClient.complete_json`.
+`pack` and `decision` are required. `llm` writes replacement text through
+`LLMClient.complete_json`.
+
+A `DecisionClient.decide` plugin receives `str` (name) or a
+`FragmentDecisionState` / `DocumentDecisionState` (judge), including the cited
+`SourceUnit` when a rule has one:
+
+```python
+def decide(self, state, questions):
+    if isinstance(state, FragmentDecisionState):
+        unit = state.unit  # SourceUnit | None
+        text = state.text
+    elif isinstance(state, DocumentDecisionState):
+        unit = state.unit
+        covered = state.covered
+    ...
+```
 
 Runnable sketch: [`examples/host_pack_review.py`](../examples/host_pack_review.py).
 Example Packs:
@@ -102,8 +157,8 @@ to a person (`requires_human_decision`, no replacement text).
 gaps = pack.ontology.function_ids() - set(state.covered())
 ```
 
-`ReviewState.missing_elements` is leftover from the fused pass. It is not the
-legal/domain gap API.
+`missing_elements` is not a ReviewKit field. Gaps are computed on the host
+from `covered()`.
 
 ## What not to do
 
@@ -112,16 +167,9 @@ legal/domain gap API.
 - Treat `missing_elements` as ontology gaps.
 - Fold Pack into `instructions.md`, `external_review_context`, or
   `profile.toml`.
-- Expect one fused `complete_json` of findings+actions per sentence when a
-  Pack is present.
+- Expect a fused `complete_json` of findings+actions per sentence.
+- Hand-decode Pack JSON into dicts and pass those dicts as the review payload.
 - Import a model runtime, weight name, or server URL from `src/reviewkit`.
   Plugins are injected at the call site; tests use mocks only.
 - Run `CloseRule` / “missing function X” at sentence scope. Absence is judged
   once, on the document, from `covered()`.
-
-## Legacy: `pack=None`
-
-Omitting `pack` keeps the pre-0.24 single fused `complete_json` per node into
-`*ReviewResponse`. Profile markdown and `ReviewContextProvider` still feed
-that path. The CLI (`reviewkit input.docx --profile ... --llm ...`) is this
-fused path. New hosts should pass `pack` and `decision`.
