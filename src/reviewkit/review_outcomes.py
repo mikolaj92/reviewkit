@@ -189,6 +189,9 @@ def _rendered_revisions(source: str | Path) -> list[tuple[str, str, str | None]]
             entry.locator,
         )
         for entry in document.revision_ledger.entries
+        # Boundary receipts prove source coverage, but are not textual edits
+        # that must match a reviewer's writing action.
+        if not entry.paragraph_mark
     ]
 
 

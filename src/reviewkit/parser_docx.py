@@ -57,9 +57,22 @@ def load_docx(path: str | Path) -> ReviewDocument:
     except (OSError, DocumentError, ValueError):
         comments = []
     effective_texts, revision_ledger = _project_revision_input(projection.spans)
+    projected_marks = getattr(projection, "paragraph_mark_revisions", None)
+    paragraph_marks = tuple(
+        _source_revision(
+            span,
+            _reviewkit_locator(span.container_id),
+            SourceRevisionKind.INSERTED if span.role == "insertion" else SourceRevisionKind.DELETED,
+        ).model_copy(update={"paragraph_mark": True})
+        for span in projected_marks or ()
+    )
+    revision_ledger = revision_ledger.model_copy(
+        update={"entries": revision_ledger.entries + paragraph_marks}
+    )
     tracked_revisions = has_tracked_revisions(source_path)
     if (
         projection.coverage is ReviewCoverage.INCOMPLETE
+        or (projected_marks is None and tracked_revisions)
         or _comment_ids_are_ambiguous(comments)
         or not _comment_markers_are_complete(source_path, comments)
         or not _comment_thread_ids_are_complete(source_path)
