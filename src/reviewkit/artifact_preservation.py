@@ -2,7 +2,13 @@
 
 from pathlib import Path
 
-from docxtor import DocxInventory, PackageRelationship, inventory_docx
+from docxtor import (
+    AcceptRevisionsError,
+    DocxInventory,
+    PackageRelationship,
+    accept_all_revisions_bytes,
+    inventory_docx,
+)
 
 
 class ReviewArtifactPreservationError(ValueError):
@@ -140,7 +146,19 @@ def assert_docx_structure_preserved(
             + ", ".join(sorted(_format_relationship(item) for item in unexpected_relationships))
         )
     tracked = {"tbl", "sectPr", "hyperlink", "drawing", "numPr", "pStyle"}
-    source_counts = _structure_counts(source, tracked)
+    expected_structure = source
+    if phase == "corrected":
+        # Accepting an explicitly deleted paragraph mark legitimately removes
+        # its paragraph style. Compare structure with Docxtor's mechanical
+        # projection, while package/relationship checks still use the source.
+        try:
+            projected = accept_all_revisions_bytes(Path(source_docx).read_bytes())
+            expected_structure = inventory_docx(projected.output_bytes)
+        except (OSError, AcceptRevisionsError, ValueError) as exc:
+            raise ReviewArtifactPreservationError(
+                f"could not project source revision structure: {exc}"
+            ) from exc
+    source_counts = _structure_counts(expected_structure, tracked)
     transformed_counts = _structure_counts(transformed, tracked)
     lost = {
         name: (source_counts[name], transformed_counts[name])

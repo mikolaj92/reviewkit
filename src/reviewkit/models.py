@@ -60,6 +60,7 @@ class SourceRevision(BaseModel):
     revision_id: str | None = None
     author: str | None = None
     date: str | None = None
+    paragraph_mark: bool = False
 
 
 class RevisionLedger(BaseModel):
