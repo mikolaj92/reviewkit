@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from reviewkit.courses import Course
 from reviewkit.models import ReviewFinding
 from reviewkit.pack import FunctionTag
 
@@ -20,6 +21,11 @@ class ReviewState(BaseModel):
     human_decisions: list[str] = Field(default_factory=list)
     document_summary: str | None = None
     tags: list[FunctionTag] = Field(default_factory=list)
+    courses: list[Course] = Field(default_factory=list)
+    # Hashes of each visit's input comments+labels, aligned with ``courses``.
+    # Not copied onto the row.
+    input_digests: list[str] = Field(default_factory=list)
+    other_digests: list[str] = Field(default_factory=list)
 
     def covered(self) -> dict[str, list[str]]:
         """Function id to the node ids named with it. The host computes gaps from this."""

@@ -155,5 +155,7 @@ def test_split_sections_preserve_order_and_keep_review_deterministic() -> None:
     findings, actions, _state = reviewer.review(document)
     assert findings == []
     assert actions == []
-    assert len(decision.calls) == 2
+    texts = [call.state for call in decision.calls if isinstance(call.state, str)]
+    assert texts[:2] == ["aaaa", "bbbb"]
+    assert texts[-1] == "aaaa\n\nbbbb"
     assert all(isinstance(call.state, str) for call in decision.calls)

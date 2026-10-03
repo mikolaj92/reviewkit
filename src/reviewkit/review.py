@@ -14,7 +14,6 @@ from reviewkit.models import (
     ReviewAction,
     ReviewFinding,
     ReviewResult,
-    ReviewScope,
     ReviewStats,
 )
 from reviewkit.pack import Pack
@@ -34,8 +33,6 @@ def review_tree(
     extra_actions: list[ReviewAction] | None = None,
     *,
     prior: ReviewPrior = None,
-    level: ReviewScope | str | None = None,
-    passes: int = 1,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
 
@@ -45,12 +42,8 @@ def review_tree(
     optionally writes through ``LLMClient.complete_json``. There is no fused
     ``pack=None`` path.
 
-    ``level`` selects one unit size (sentence, paragraph, section, or
-    document). Call that same level again with ``prior`` to continue, or a
-    different ``level`` when moving on. ``prior`` is a previous result; the
-    later call returns those discoveries plus anything new. ``passes`` is an
-    optional convenience loop over the same level. Default (no ``prior``, no
-    ``level``, ``passes=1``) is today's single walk.
+    Review is recursive per fragment. ``prior`` continues from a previous
+    result. There is no ``level`` or ``passes``.
     """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
@@ -63,7 +56,7 @@ def review_tree(
         context_provider=context_provider,
         action_policy=action_policy,
     )
-    findings, actions, state = reviewer.review(document, prior=prior, level=level, passes=passes)
+    findings, actions, state = reviewer.review(document, prior=prior)
     if extra_actions:
         prepared = prepare_actions(document, profile, extra_actions, policy=action_policy)
         actions = demote_cross_scope_overlaps(document, actions + prepared)
@@ -94,8 +87,6 @@ def review_source(
     extra_actions: list[ReviewAction] | None = None,
     *,
     prior: ReviewPrior = None,
-    level: ReviewScope | str | None = None,
-    passes: int = 1,
 ) -> ReviewResult:
     """Parse through an injected format adapter and review the resulting typed tree."""
     return review_tree(
@@ -108,8 +99,6 @@ def review_source(
         action_policy=action_policy,
         extra_actions=extra_actions,
         prior=prior,
-        level=level,
-        passes=passes,
     )
 
 

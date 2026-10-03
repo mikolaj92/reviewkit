@@ -68,13 +68,13 @@ def test_host_entry_points_require_pack_and_decision() -> None:
         assert params["decision"].default is inspect.Parameter.empty
         assert "Pack" in str(params["pack"].annotation)
         assert "DecisionClient" in str(params["decision"].annotation)
-        assert params["passes"].default == 1
+        assert "passes" not in params
+        assert "level" not in params
         assert params["prior"].default is None
-        assert params["level"].default is None
     review_params = inspect.signature(reviewkit.TaktReviewer.review).parameters
-    assert review_params["passes"].default == 1
+    assert "passes" not in review_params
+    assert "level" not in review_params
     assert review_params["prior"].default is None
-    assert review_params["level"].default is None
 
 
 def test_plugin_sockets_are_protocols_with_typed_methods() -> None:

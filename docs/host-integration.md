@@ -164,18 +164,17 @@ Verdicts are `keep` / `change` / `delete` / `insert` / `missing`. Findings
 created from verdicts use the verdict kind as title and the function id as
 description. **Do not** store a function id in `ReviewFinding.dimension`.
 
-Pass 1 judges each unit on its own text. `FragmentDecisionState.comments` and
-`DocumentDecisionState.comments` are empty; fragment `tags` are the unit's own
-labels. Coverage of Pack functions still flows upward through `covered()`.
+Pass 1 judges each unit on its own text until a previous visit has produced
+comments or labels. `FragmentDecisionState.comments` and
+`DocumentDecisionState.comments` start empty; fragment `tags` are the unit's
+own labels plus contained labels already produced. Coverage of Pack functions
+still flows upward through `covered()`.
 
-Repeat is per level. Pick a unit size with `level` on `review_tree`,
-`review_source`, `review_document`, and `TaktReviewer.review`. That call
-names and judges only those units. Call the same level again with a previous
-result as `prior` to continue with comments and labels already produced, or
-pass a different `level` when moving on. A later level sees discoveries from
-the smaller units it contains. Each call returns the discoveries it used plus
-anything new. `passes` is only a convenience loop over the same level.
-Default (no `prior`, no `level`) is today's single walk.
+Review is recursive per fragment. A later visit, including one in the same
+run, takes a previous result as `prior` on `review_tree`, `review_source`,
+`review_document`, and `TaktReviewer.review`. `ReviewState.courses` records
+each visit (`node_id`, `grain`, `move`). There is no `level` or `passes`.
+An empty queue ends the run. Document grain is on every run.
 
 ## Scan 3 — act (optional)
 

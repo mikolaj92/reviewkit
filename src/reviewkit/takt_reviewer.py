@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import deque
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -23,6 +24,7 @@ from pydantic import ValidationError
 
 from reviewkit.actions import demote_cross_scope_overlaps, prepare_actions
 from reviewkit.context import EmptyReviewContextProvider, ReviewContextProvider
+from reviewkit.courses import Course, CourseMove, decide_move, input_digest
 from reviewkit.decision import (
     DecisionAnswer,
     DecisionAnswers,
@@ -146,38 +148,19 @@ class TaktReviewer:
         document: ReviewDocument,
         *,
         prior: ReviewPrior = None,
-        level: ReviewScope | str | None = None,
-        passes: int = 1,
     ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
-        """Name, then judge. With no ``prior`` and no ``level`` this is today's walk.
+        """Name, then judge, recursively per fragment.
 
-        ``level`` selects one unit size. That call names and judges only those
-        units. Call the same level again with ``prior`` to continue, or a
-        different ``level`` when the caller is ready to move. ``prior`` is a
-        previous return value (or a ``ReviewResult``). ``passes`` is only a
-        convenience loop over the same level (or today's full walk when
-        ``level`` is omitted).
+        ``prior`` is a previous return value (or a ``ReviewResult``). That call
+        continues with comments and labels already produced. There is no
+        ``level`` or ``passes``; an empty queue ends the run. Document grain is
+        on every run.
         """
-        if passes < 1:
-            raise ValueError("passes must be >= 1")
-        scope = _coerce_level(level)
-        _require_level(self.profile.review_pipeline, scope)
-        result = self._review_once(document, prior=prior, level=scope)
-        for _ in range(passes - 1):
-            result = self._review_once(document, prior=result, level=scope)
-        return result
-
-    def _review_once(
-        self,
-        document: ReviewDocument,
-        *,
-        prior: ReviewPrior,
-        level: ReviewScope | None,
-    ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
         prior_findings, prior_actions, prior_state = _unpack_prior(prior)
         source_document = document
         document = bound_document_sections(document, self.profile.section_char_budget)
-        enabled = _enabled_scopes(self.profile.review_pipeline, level)
+        enabled = set(self.profile.review_pipeline)
+        enabled.add(ReviewScope.DOCUMENT)
         document_source_context = None
         if ReviewScope.DOCUMENT in enabled:
             document_source_context = build_document_source_context(
@@ -204,17 +187,77 @@ class TaktReviewer:
             document_source_context=document_source_context,
         )
 
-        self._name(plant, enabled)
-        feedback = prior is not None
-        self._judge_pass(
-            plant,
-            detectors,
-            layers,
-            enabled,
-            effector,
-            labels_by_node=_labels_by_node(state) if feedback else None,
-            comments_by_node=_comments_by_node(prior_actions) if feedback else None,
-        )
+        queue: deque[str] = deque()
+        for node in plant.sequential_scan():
+            scope = node.scope()
+            if scope is not None and scope in enabled:
+                queue.append(node.id)
+        reopened: set[str] = set()
+
+        while queue:
+            node_id = queue.popleft()
+            current = plant.get_node(node_id)
+            if current is None:
+                continue
+            node = current
+            grain = node.scope()
+            if grain is None or grain not in enabled:
+                continue
+            named_again = node_id in reopened
+            if _last_move(state, node_id, grain) is CourseMove.SETTLE and not named_again:
+                continue
+            reopened.discard(node_id)
+
+            live_actions = list(prior_actions) + list(effector.actions)
+            comments_by_node = _comments_by_node(live_actions)
+            tags_before = set(state.functions_for(node_id))
+            comments_before = set(comments_by_node.get(node_id, ()))
+            last_other = _last_other_digest(state, node_id, grain)
+            actions_before = len(effector.actions)
+
+            self._name_node(node)
+            labels_by_node = _labels_by_node(state)
+            comments_by_node = _comments_by_node(live_actions)
+            function_ids, comments = _pass_input(node, labels_by_node, comments_by_node)
+            other_comments, other_labels = _other_input(node, labels_by_node, comments_by_node)
+            digest = input_digest(comments, function_ids if function_ids is not None else ())
+            other_digest = input_digest(other_comments, other_labels)
+            if digest in _recorded_digests(state, node_id, grain) and not named_again:
+                _append_course(state, node_id, grain, CourseMove.SETTLE, digest, other_digest)
+                continue
+
+            self._judge_node(
+                node,
+                detectors,
+                layers,
+                enabled,
+                effector,
+                function_ids=function_ids,
+                comments=comments,
+            )
+
+            live_actions = list(prior_actions) + list(effector.actions)
+            comments_after = set(_comments_by_node(live_actions).get(node_id, ()))
+            tags_after = set(state.functions_for(node_id))
+            produced = bool(tags_after - tags_before or comments_after - comments_before)
+            other_node_new = last_other is None or other_digest != last_other
+            if not other_comments and not other_labels:
+                other_node_new = False
+            move = decide_move(produced=produced, other_node_new=other_node_new, grain=grain)
+            _append_course(state, node_id, grain, move, digest, other_digest)
+
+            if move is CourseMove.REPEAT:
+                queue.append(node_id)
+
+            new_actions = effector.actions[actions_before:]
+            named = _named_node_ids(new_actions, state, grain, origin_id=node_id, produced=produced)
+            for named_id in named:
+                if named_id == node_id:
+                    continue
+                reopened.add(named_id)
+                target = plant.get_node(named_id)
+                if target is not None and target.scope() in enabled:
+                    queue.append(named_id)
 
         prepared_new = prepare_actions(
             document, self.profile, effector.actions, policy=self.action_policy
@@ -232,65 +275,62 @@ class TaktReviewer:
 
         return deduped_findings, final_actions, state
 
-    def _judge_pass(
+    def _judge_node(
         self,
-        plant: ReviewDocumentPlant,
+        node: DocNode,
         detectors: dict[ReviewScope, _LLMDetectorAdapter],
         layers: list[LayerSpec],
         enabled: set[ReviewScope],
         effector: ReviewEffector,
         *,
-        labels_by_node: dict[str, list[str]] | None = None,
-        comments_by_node: dict[str, list[str]] | None = None,
+        function_ids: list[str] | None,
+        comments: Sequence[str],
     ) -> None:
-        for node in plant.sequential_scan():
-            scope = node.scope()
-            if scope is None or scope not in enabled:
-                continue
-            function_ids, comments = _pass_input(node, labels_by_node, comments_by_node)
-            detector = detectors[scope]
-            signals = detector.judge(node, function_ids=function_ids, comments=comments)
-            if not signals:
-                continue
-            decision = self.takt_client.evaluate(
-                plant_nodes=[node.to_plant_node(value=0.0)],
-                layers=layers,
-                raw_signals=signals,
-            )
-            detector.act_after_judge(node)
-            effector.apply_takt_decision(node.id, decision)
+        scope = node.scope()
+        if scope is None or scope not in enabled:
+            return
+        detector = detectors[scope]
+        signals = detector.judge(node, function_ids=function_ids, comments=comments)
+        if not signals:
+            return
+        decision = self.takt_client.evaluate(
+            plant_nodes=[node.to_plant_node(value=0.0)],
+            layers=layers,
+            raw_signals=signals,
+        )
+        detector.act_after_judge(node)
+        effector.apply_takt_decision(node.id, decision)
 
-    def _name(self, plant: ReviewDocumentPlant, enabled: set[ReviewScope]) -> None:
-        """First scan. Tags only: no cascade evaluation and no effector."""
+    def _name_node(self, node: DocNode) -> None:
+        """Tags only: no cascade evaluation and no effector."""
+        scope = node.scope()
+        if scope is None:
+            return
+        inner = getattr(node, "inner", node)
+        text = str(getattr(inner, "text", "") or "")
+        if not text.strip():
+            return
+        functions = naming_functions(self.pack, scope)
+        if not functions:
+            return
+        questions = naming_questions(functions)
+        answers = _plugin_decide(self.decision, text, questions, node_id=node.id)
+        tagged = [
+            function_id
+            for function_id, raw in answers.items()
+            if function_id in questions and is_noul_yes(_plugin_coerce(raw, node.id))
+        ]
+        response = NamingResponse(
+            tags=[FunctionTag(node_id=node.id, function_ids=tagged)] if tagged else []
+        )
+        self.traces.append(check_naming(self.pack, response))
+        tag = next(
+            (item for item in accepted_tags(self.pack, response) if item.node_id == node.id),
+            None,
+        )
         named: list[FunctionTag] = []
-        for node in plant.sequential_scan():
-            scope = node.scope()
-            if scope is None or scope not in enabled:
-                continue
-            inner = getattr(node, "inner", node)
-            text = str(getattr(inner, "text", "") or "")
-            if not text.strip():
-                continue
-            functions = naming_functions(self.pack, scope)
-            if not functions:
-                continue
-            questions = naming_questions(functions)
-            answers = _plugin_decide(self.decision, text, questions, node_id=node.id)
-            tagged = [
-                function_id
-                for function_id, raw in answers.items()
-                if function_id in questions and is_noul_yes(_plugin_coerce(raw, node.id))
-            ]
-            response = NamingResponse(
-                tags=[FunctionTag(node_id=node.id, function_ids=tagged)] if tagged else []
-            )
-            self.traces.append(check_naming(self.pack, response))
-            tag = next(
-                (item for item in accepted_tags(self.pack, response) if item.node_id == node.id),
-                None,
-            )
-            if tag is not None and tag.function_ids:
-                named.append(tag)
+        if tag is not None and tag.function_ids:
+            named.append(tag)
         self.state.tags = _merge_tags(self.state.tags, named)
 
     def _build_detectors(
@@ -303,7 +343,11 @@ class TaktReviewer:
         document_source_context: dict[str, Any] | None = None,
     ) -> dict[ReviewScope, _LLMDetectorAdapter]:
         detectors: dict[ReviewScope, _LLMDetectorAdapter] = {}
-        for scope in self.profile.review_pipeline:
+        order = list(self.profile.review_pipeline)
+        for scope in enabled:
+            if scope not in order:
+                order.append(scope)
+        for scope in order:
             if scope not in enabled:
                 continue
             det = _LLMDetectorAdapter(
@@ -790,21 +834,84 @@ def _stable_evidence_ref(finding_id: str, index: int, evidence: object) -> str:
     return f"evidence-{digest}"
 
 
-def _coerce_level(level: ReviewScope | str | None) -> ReviewScope | None:
-    if level is None:
-        return None
-    return ReviewScope(level)
+def _last_move(state: ReviewState, node_id: str, grain: ReviewScope) -> CourseMove | None:
+    for course in reversed(state.courses):
+        if course.node_id == node_id and course.grain == grain:
+            return course.move
+    return None
 
 
-def _require_level(pipeline: Sequence[ReviewScope], level: ReviewScope | None) -> None:
-    if level is not None and level not in pipeline:
-        raise ValueError(f"level {level.value!r} is not in review_pipeline")
+def _recorded_digests(state: ReviewState, node_id: str, grain: ReviewScope) -> list[str]:
+    found: list[str] = []
+    for course, digest in zip(state.courses, state.input_digests, strict=False):
+        if course.node_id == node_id and course.grain == grain:
+            found.append(digest)
+    return found
 
 
-def _enabled_scopes(pipeline: Sequence[ReviewScope], level: ReviewScope | None) -> set[ReviewScope]:
-    if level is None:
-        return set(pipeline)
-    return {level}
+def _last_other_digest(state: ReviewState, node_id: str, grain: ReviewScope) -> str | None:
+    last: str | None = None
+    for course, digest in zip(state.courses, state.other_digests, strict=False):
+        if course.node_id == node_id and course.grain == grain:
+            last = digest
+    return last
+
+
+def _append_course(
+    state: ReviewState,
+    node_id: str,
+    grain: ReviewScope,
+    move: CourseMove,
+    digest: str,
+    other_digest: str,
+) -> None:
+    state.courses.append(Course(node_id=node_id, grain=grain, move=move))
+    state.input_digests.append(digest)
+    state.other_digests.append(other_digest)
+
+
+def _other_input(
+    node: DocNode,
+    labels_by_node: dict[str, list[str]],
+    comments_by_node: dict[str, list[str]],
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    labels: list[str] = []
+    comments: list[str] = []
+    seen_labels: set[str] = set()
+    seen_comments: set[str] = set()
+    for node_id in node.descendant_ids():
+        for label in labels_by_node.get(node_id, ()):
+            if label not in seen_labels:
+                seen_labels.add(label)
+                labels.append(label)
+        for comment in comments_by_node.get(node_id, ()):
+            if comment not in seen_comments:
+                seen_comments.add(comment)
+                comments.append(comment)
+    return tuple(labels), tuple(comments)
+
+
+def _named_node_ids(
+    new_actions: Sequence[ReviewAction],
+    state: ReviewState,
+    grain: ReviewScope,
+    *,
+    origin_id: str,
+    produced: bool,
+) -> list[str]:
+    named: list[str] = []
+    seen: set[str] = set()
+    for action in new_actions:
+        if action.node_id and action.node_id not in seen:
+            seen.add(action.node_id)
+            named.append(action.node_id)
+    if grain is ReviewScope.DOCUMENT and (new_actions or produced):
+        for node_ids in state.covered().values():
+            for node_id in node_ids:
+                if node_id and node_id not in seen:
+                    seen.add(node_id)
+                    named.append(node_id)
+    return [node_id for node_id in named if node_id != origin_id]
 
 
 def _unpack_prior(

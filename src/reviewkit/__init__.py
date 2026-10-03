@@ -53,6 +53,7 @@ from reviewkit.context import (
     ReviewContext,
     ReviewContextProvider,
 )
+from reviewkit.courses import Course, CourseMove
 from reviewkit.decision import (
     ChoiceQuestion,
     DecisionAnswer,
@@ -178,6 +179,8 @@ __all__ = [
     "ChangeProvenance",
     "ChoiceQuestion",
     "ComparisonProvenance",
+    "Course",
+    "CourseMove",
     "DecisionAnswer",
     "DecisionCall",
     "DecisionClient",

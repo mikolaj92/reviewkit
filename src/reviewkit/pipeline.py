@@ -14,7 +14,6 @@ from reviewkit.models import (
     ReviewAction,
     ReviewFinding,
     ReviewResult,
-    ReviewScope,
     ReviewStats,
 )
 from reviewkit.pack import Pack
@@ -41,8 +40,6 @@ def review_tree(
     extra_actions: list[ReviewAction] | None = None,
     *,
     prior: ReviewPrior = None,
-    level: ReviewScope | str | None = None,
-    passes: int = 1,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
 
@@ -62,8 +59,6 @@ def review_tree(
         action_policy=action_policy,
         extra_actions=extra_actions,
         prior=prior,
-        level=level,
-        passes=passes,
     )
     return ReviewResult(
         document=document,
@@ -93,8 +88,6 @@ def review_document(
     extra_actions: list[ReviewAction] | None = None,
     *,
     prior: ReviewPrior = None,
-    level: ReviewScope | str | None = None,
-    passes: int = 1,
 ) -> ReviewResult:
     """Run the domain-neutral hierarchical review and render its artifacts.
 
@@ -136,8 +129,6 @@ def review_document(
         action_policy=action_policy,
         extra_actions=extra_actions,
         prior=prior,
-        level=level,
-        passes=passes,
     )
 
     reviewed_path: Path | None = None
@@ -180,8 +171,6 @@ def _review_tree(
     action_policy: ActionPolicy | None,
     extra_actions: list[ReviewAction] | None,
     prior: ReviewPrior = None,
-    level: ReviewScope | str | None = None,
-    passes: int = 1,
 ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
     reviewer = TaktReviewer(
         profile=profile,
@@ -193,7 +182,7 @@ def _review_tree(
     )
     # Pack reviews name → judge → optional act inside TaktReviewer. extra_actions
     # stay a host-side append after that loop, never a fused detect→write.
-    findings, actions, state = reviewer.review(document, prior=prior, level=level, passes=passes)
+    findings, actions, state = reviewer.review(document, prior=prior)
     if extra_actions:
         prepared_extra = prepare_actions(document, profile, extra_actions, policy=action_policy)
         actions = demote_cross_scope_overlaps(document, actions + prepared_extra)
