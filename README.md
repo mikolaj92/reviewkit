@@ -165,6 +165,12 @@ still `sentence → paragraph → section → document` (powered by the generic
 reduction via splot, vertical waves) is provided by `takt`. ReviewKit supplies
 the document plant, Pack/plugin orchestration, and deterministic effectors.
 
+Callers may set `passes` (default `1`) on `review_tree`, `review_source`,
+`review_document`, and `TaktReviewer.review`. Pass 1 is the walk above: each
+unit is judged on its own text, without comment text from a smaller unit.
+Further passes re-judge with comments and labels already produced on the unit
+and on the smaller units it contains. Earlier discoveries stay in the result.
+
 ## Plugin sockets
 
 Hosts implement these Protocols from `reviewkit`. There is no public `detect()`

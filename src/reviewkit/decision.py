@@ -50,23 +50,33 @@ class DecisionAnswer(BaseModel):
 
 
 class FragmentDecisionState(BaseModel):
-    """Scan-2 fragment payload: the node text, its tags, and the cited unit."""
+    """Scan-2 fragment payload: the node text, its tags, and the cited unit.
+
+    ``comments`` is empty on pass 1. Later passes include comment text already
+    produced on this node and on the smaller units it contains.
+    """
 
     model_config = _STRICT
 
     text: str
     tags: list[str]
     unit: SourceUnit | None = None
+    comments: list[str] = Field(default_factory=list)
 
 
 class DocumentDecisionState(BaseModel):
-    """Scan-2 document payload: coverage for one function and the cited unit."""
+    """Scan-2 document payload: coverage for one function and the cited unit.
+
+    ``comments`` is empty on pass 1. Later passes include comment text already
+    produced on this node and on the smaller units it contains.
+    """
 
     model_config = _STRICT
 
     covered: list[str]
     candidate: str
     unit: SourceUnit | None = None
+    comments: list[str] = Field(default_factory=list)
 
 
 type DecisionState = str | FragmentDecisionState | DocumentDecisionState
@@ -87,6 +97,8 @@ class DecisionClient(Protocol):
     Naming passes the fragment text (``str``). Judging passes typed
     :class:`FragmentDecisionState` or :class:`DocumentDecisionState` objects,
     including the cited :class:`~reviewkit.pack.SourceUnit` when a rule has one.
+    Later review passes may populate ``comments`` and union contained labels
+    into fragment ``tags``; pass 1 leaves ``comments`` empty.
     """
 
     def decide(

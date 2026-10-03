@@ -164,6 +164,15 @@ Verdicts are `keep` / `change` / `delete` / `insert` / `missing`. Findings
 created from verdicts use the verdict kind as title and the function id as
 description. **Do not** store a function id in `ReviewFinding.dimension`.
 
+Pass 1 judges each unit on its own text. `FragmentDecisionState.comments` and
+`DocumentDecisionState.comments` are empty; fragment `tags` are the unit's own
+labels. Coverage of Pack functions still flows upward through `covered()`.
+
+Callers may set `passes` (default `1`) on `review_tree`, `review_source`,
+`review_document`, and `TaktReviewer.review`. Each further pass re-judges with
+comments and labels already produced on the unit and on the smaller units it
+contains. Earlier comments and labels stay in the result.
+
 ## Scan 3 — act (optional)
 
 `LLMClient.complete_json` runs only for `change` / `delete` / `insert` whose

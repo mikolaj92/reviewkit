@@ -26,6 +26,8 @@ def review_tree(
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
+    *,
+    passes: int = 1,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
 
@@ -34,6 +36,10 @@ def review_tree(
     call site does not accept dict dumps. A review names, then judges, then
     optionally writes through ``LLMClient.complete_json``. There is no fused
     ``pack=None`` path.
+
+    ``passes`` defaults to 1 (today's walk: each unit is judged on its own
+    text). Further passes re-judge with comments and labels already produced;
+    earlier discoveries stay in the result.
     """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
@@ -46,7 +52,7 @@ def review_tree(
         context_provider=context_provider,
         action_policy=action_policy,
     )
-    findings, actions, state = reviewer.review(document)
+    findings, actions, state = reviewer.review(document, passes=passes)
     if extra_actions:
         prepared = prepare_actions(document, profile, extra_actions, policy=action_policy)
         actions = demote_cross_scope_overlaps(document, actions + prepared)
@@ -74,6 +80,8 @@ def review_source(
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
+    *,
+    passes: int = 1,
 ) -> ReviewResult:
     """Parse through an injected format adapter and review the resulting typed tree."""
     return review_tree(
@@ -85,6 +93,7 @@ def review_source(
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
+        passes=passes,
     )
 
 

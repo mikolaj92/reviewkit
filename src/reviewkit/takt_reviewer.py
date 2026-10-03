@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from pydantic import ValidationError
@@ -86,7 +86,7 @@ from reviewkit.review_bounds import (
 )
 from reviewkit.state import ReviewState
 from reviewkit.takt_client import TaktClient
-from reviewkit.takt_types import RawSignal
+from reviewkit.takt_types import LayerSpec, RawSignal
 
 _ACTION_TYPE = {
     VerdictKind.CHANGE: ReviewActionType.REPLACE_TEXT,
@@ -137,8 +137,15 @@ class TaktReviewer:
         self.traces: list[PassTrace] = []
 
     def review(
-        self, document: ReviewDocument
+        self, document: ReviewDocument, *, passes: int = 1
     ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
+        """Name, then judge. ``passes=1`` is today's walk.
+
+        Further passes re-judge with comments and labels already produced on the
+        unit and on the smaller units it contains. Earlier discoveries stay.
+        """
+        if passes < 1:
+            raise ValueError("passes must be >= 1")
         source_document = document
         document = bound_document_sections(document, self.profile.section_char_budget)
         document_source_context = None
@@ -165,23 +172,17 @@ class TaktReviewer:
         enabled = set(self.profile.review_pipeline)
 
         self._name(plant)
-
-        for node in plant.sequential_scan():
-            scope = node.scope()
-            if scope is None or scope not in enabled:
-                continue
-
-            detector = detectors[scope]
-            signals = detector.judge(node)
-            if not signals:
-                continue
-            decision = self.takt_client.evaluate(
-                plant_nodes=[node.to_plant_node(value=0.0)],
-                layers=layers,
-                raw_signals=signals,
+        self._judge_pass(plant, detectors, layers, enabled, effector)
+        for _ in range(passes - 1):
+            self._judge_pass(
+                plant,
+                detectors,
+                layers,
+                enabled,
+                effector,
+                labels_by_node=_labels_by_node(state),
+                comments_by_node=_comments_by_node(effector.actions),
             )
-            detector.act_after_judge(node)
-            effector.apply_takt_decision(node.id, decision)
 
         prepared = prepare_actions(
             document, self.profile, effector.actions, policy=self.action_policy
@@ -197,6 +198,34 @@ class TaktReviewer:
                 deduped_findings.append(f)
 
         return deduped_findings, final_actions, state
+
+    def _judge_pass(
+        self,
+        plant: ReviewDocumentPlant,
+        detectors: dict[ReviewScope, _LLMDetectorAdapter],
+        layers: list[LayerSpec],
+        enabled: set[ReviewScope],
+        effector: ReviewEffector,
+        *,
+        labels_by_node: dict[str, list[str]] | None = None,
+        comments_by_node: dict[str, list[str]] | None = None,
+    ) -> None:
+        for node in plant.sequential_scan():
+            scope = node.scope()
+            if scope is None or scope not in enabled:
+                continue
+            function_ids, comments = _pass_input(node, labels_by_node, comments_by_node)
+            detector = detectors[scope]
+            signals = detector.judge(node, function_ids=function_ids, comments=comments)
+            if not signals:
+                continue
+            decision = self.takt_client.evaluate(
+                plant_nodes=[node.to_plant_node(value=0.0)],
+                layers=layers,
+                raw_signals=signals,
+            )
+            detector.act_after_judge(node)
+            effector.apply_takt_decision(node.id, decision)
 
     def _name(self, plant: ReviewDocumentPlant) -> None:
         """First scan. Tags only: no cascade evaluation and no effector."""
@@ -300,24 +329,43 @@ class _LLMDetectorAdapter:
         self._pending_units: dict[str, SourceUnit] = {}
         self._pending_scope: ReviewScope = scope
 
-    def judge(self, node: DocNode) -> list[RawSignal]:
+    def judge(
+        self,
+        node: DocNode,
+        *,
+        function_ids: list[str] | None = None,
+        comments: Sequence[str] = (),
+    ) -> list[RawSignal]:
         """Second scan. Matched rules and the single unit each one cites."""
         inner_node = getattr(node, "inner", node)
         effective_scope = self.scope
         if isinstance(inner_node, ReviewDocument):
             effective_scope = ReviewScope.DOCUMENT
-        return self._judge_with_pack(node, effective_scope)
+        return self._judge_with_pack(
+            node, effective_scope, function_ids=function_ids, comments=comments
+        )
 
-    def _judge_with_pack(self, node: DocNode, scope: ReviewScope) -> list[RawSignal]:
+    def _judge_with_pack(
+        self,
+        node: DocNode,
+        scope: ReviewScope,
+        *,
+        function_ids: list[str] | None = None,
+        comments: Sequence[str] = (),
+    ) -> list[RawSignal]:
         """Second scan. Findings and signals only; the effector does not write yet."""
         self._pending_verdicts = []
         self._pending_units = {}
         self._pending_scope = scope
         self.last_response = None
         node_id = getattr(node, "id", "?")
-        function_ids = self.inner.state.functions_for(node_id)
+        tagged = (
+            list(function_ids)
+            if function_ids is not None
+            else self.inner.state.functions_for(node_id)
+        )
         covered = self.inner.state.covered()
-        rules = judge_rules(self.pack, scope, function_ids, covered)
+        rules = judge_rules(self.pack, scope, tagged, covered)
         self.traces.append(
             PassTrace(
                 checks=(
@@ -343,7 +391,7 @@ class _LLMDetectorAdapter:
             for rule in rules
             if (unit := cited_unit(self.pack, rule.source_unit_id)) is not None
         }
-        verdicts = self._verdicts(node_id, scope, rules, units, function_ids)
+        verdicts = self._verdicts(node_id, scope, rules, units, tagged, comments)
         if not verdicts:
             return []
         response = _RESPONSE_SCHEMA[scope](
@@ -380,6 +428,7 @@ class _LLMDetectorAdapter:
         rules: list[Rule],
         units: dict[str, SourceUnit],
         function_ids: list[str],
+        comments: Sequence[str] = (),
     ) -> list[Verdict]:
         text = str(self.document.get_node_text(node_id) or "")
         covered = self.inner.state.covered()
@@ -393,6 +442,7 @@ class _LLMDetectorAdapter:
                 text=text,
                 covered=covered,
                 function_ids=function_ids,
+                comments=comments,
             )
             if kind is None or kind is VerdictKind.KEEP:
                 continue
@@ -420,12 +470,14 @@ class _LLMDetectorAdapter:
         text: str,
         covered: dict[str, list[str]],
         function_ids: list[str],
+        comments: Sequence[str] = (),
     ) -> tuple[DecisionAnswer, VerdictKind | None]:
         if rule.kind == "close" or rule.when == "function_absent":
             state = DocumentDecisionState(
                 covered=covered.get(rule.function_id, []),
                 candidate=rule.function_id,
                 unit=unit,
+                comments=list(comments),
             )
             questions: Mapping[str, Question] = document_present_question(
                 function_label(self.pack, rule.function_id)
@@ -438,6 +490,7 @@ class _LLMDetectorAdapter:
             text=text,
             tags=function_ids,
             unit=unit,
+            comments=list(comments),
         )
         answers = _plugin_decide(
             self.decision, fragment_state, fragment_verdict_question(), node_id=node_id
@@ -701,6 +754,53 @@ def _stable_evidence_ref(finding_id: str, index: int, evidence: object) -> str:
         json.dumps([finding_id, index, payload], ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()[:16]
     return f"evidence-{digest}"
+
+
+def _comment_text(action: ReviewAction) -> str:
+    return (action.comment or action.reason or "").strip()
+
+
+def _labels_by_node(state: ReviewState) -> dict[str, list[str]]:
+    found: dict[str, list[str]] = {}
+    for tag in state.tags:
+        found[tag.node_id] = list(tag.function_ids)
+    return found
+
+
+def _comments_by_node(actions: Sequence[ReviewAction]) -> dict[str, list[str]]:
+    found: dict[str, list[str]] = {}
+    for action in actions:
+        text = _comment_text(action)
+        if not text:
+            continue
+        bucket = found.setdefault(action.node_id, [])
+        if text not in bucket:
+            bucket.append(text)
+    return found
+
+
+def _pass_input(
+    node: DocNode,
+    labels_by_node: dict[str, list[str]] | None,
+    comments_by_node: dict[str, list[str]] | None,
+) -> tuple[list[str] | None, tuple[str, ...]]:
+    """Pass 1 keeps own tags and no comments. Later passes union contained discoveries."""
+    if labels_by_node is None or comments_by_node is None:
+        return None, ()
+    labels: list[str] = []
+    seen_labels: set[str] = set()
+    comments: list[str] = []
+    seen_comments: set[str] = set()
+    for node_id in [node.id, *node.descendant_ids()]:
+        for label in labels_by_node.get(node_id, ()):
+            if label not in seen_labels:
+                seen_labels.add(label)
+                labels.append(label)
+        for comment in comments_by_node.get(node_id, ()):
+            if comment not in seen_comments:
+                seen_comments.add(comment)
+                comments.append(comment)
+    return labels, tuple(comments)
 
 
 __all__ = ["TaktReviewer"]

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+Optional extra review passes: `passes=1` (default) is today's walk. `passes=n`
+re-judges after pass 1 with comments and labels already produced; earlier
+discoveries stay in the result. Switch is on `review_tree` / `review_source` /
+`review_document` / `TaktReviewer.review`.
+
 Docs now match the 0.24.1 Pack surface: `review_tree` / `review_source` /
 `review_document` / `TaktReviewer` / CLI, plus `LLMClient.capabilities` and
 `LLMRequestOptions`. Removed insertion-engine claims the package no longer

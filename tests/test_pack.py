@@ -270,8 +270,8 @@ def test_a_pack_names_before_it_judges() -> None:
         and "missing_elements" not in _dump(call.state)
         for call in decision.calls
     )
-    assert set(FragmentDecisionState.model_fields) == {"text", "tags", "unit"}
-    assert set(DocumentDecisionState.model_fields) == {"covered", "candidate", "unit"}
+    assert set(FragmentDecisionState.model_fields) == {"text", "tags", "unit", "comments"}
+    assert set(DocumentDecisionState.model_fields) == {"covered", "candidate", "unit", "comments"}
 
 
 def test_judge_on_a_fragment_never_asks_a_close_rule() -> None:
