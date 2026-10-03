@@ -164,6 +164,18 @@ Verdicts are `keep` / `change` / `delete` / `insert` / `missing`. Findings
 created from verdicts use the verdict kind as title and the function id as
 description. **Do not** store a function id in `ReviewFinding.dimension`.
 
+Pass 1 judges each unit on its own text until a previous visit has produced
+comments or labels. `FragmentDecisionState.comments` and
+`DocumentDecisionState.comments` start empty; fragment `tags` are the unit's
+own labels plus contained labels already produced. Coverage of Pack functions
+still flows upward through `covered()`.
+
+Review is recursive per fragment. A later visit, including one in the same
+run, takes a previous result as `prior` on `review_tree`, `review_source`,
+`review_document`, and `TaktReviewer.review`. `ReviewState.courses` records
+each visit (`node_id`, `grain`, `move`). There is no `level` or `passes`.
+An empty queue ends the run. Document grain is on every run.
+
 ## Scan 3 — act (optional)
 
 `LLMClient.complete_json` runs only for `change` / `delete` / `insert` whose

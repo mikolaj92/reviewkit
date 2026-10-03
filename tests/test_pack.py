@@ -270,8 +270,8 @@ def test_a_pack_names_before_it_judges() -> None:
         and "missing_elements" not in _dump(call.state)
         for call in decision.calls
     )
-    assert set(FragmentDecisionState.model_fields) == {"text", "tags", "unit"}
-    assert set(DocumentDecisionState.model_fields) == {"covered", "candidate", "unit"}
+    assert set(FragmentDecisionState.model_fields) == {"text", "tags", "unit", "comments"}
+    assert set(DocumentDecisionState.model_fields) == {"covered", "candidate", "unit", "comments"}
 
 
 def test_judge_on_a_fragment_never_asks_a_close_rule() -> None:
@@ -664,7 +664,7 @@ def test_pack_review_calls_llm_only_to_act() -> None:
 def test_review_tree_forwards_pack_and_decision_sockets(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_review(self, document):
+    def fake_review(self, document, **kwargs):
         captured["pack"] = self.pack
         captured["decision"] = self.decision
         return [], [], ReviewState()

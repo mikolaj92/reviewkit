@@ -54,6 +54,14 @@ class DocNode:
     def has_children(self) -> bool:
         return bool(self._children)
 
+    def descendant_ids(self) -> list[str]:
+        """Contained node ids, children before their descendants."""
+        ids: list[str] = []
+        for child in self._children:
+            ids.append(child.id)
+            ids.extend(child.descendant_ids())
+        return ids
+
     def scope(self) -> ReviewScope | None:
         if isinstance(self.inner, SentenceNode):
             return ReviewScope.SENTENCE

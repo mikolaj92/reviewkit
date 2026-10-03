@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+Optional extra review is recursive per fragment. ``prior`` continues from a
+previous result. There is no `level` or `passes`. `ReviewState.courses`
+records each visit as a frozen row (`node_id`, `grain`, `move`: settle /
+repeat / further). Default with nothing extra is the same review, not a
+non-recursive mode. Switch is on `review_tree` / `review_source` /
+`review_document` / `TaktReviewer.review`.
+
 Docs now match the 0.24.1 Pack surface: `review_tree` / `review_source` /
 `review_document` / `TaktReviewer` / CLI, plus `LLMClient.capabilities` and
 `LLMRequestOptions`. Removed insertion-engine claims the package no longer

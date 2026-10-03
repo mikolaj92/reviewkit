@@ -22,7 +22,7 @@ from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile, load_profile
 from reviewkit.renderer_docx import render_corrected_docx, render_reviewed_docx
 from reviewkit.state import ReviewState
-from reviewkit.takt_reviewer import TaktReviewer
+from reviewkit.takt_reviewer import ReviewPrior, TaktReviewer
 
 # Public topology contract shared by every product. Products select what to review
 # through ReviewProfile and a Pack; they do not add domain-specific pipeline stages.
@@ -38,6 +38,8 @@ def review_tree(
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
+    *,
+    prior: ReviewPrior = None,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
 
@@ -56,6 +58,7 @@ def review_tree(
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
+        prior=prior,
     )
     return ReviewResult(
         document=document,
@@ -68,6 +71,7 @@ def review_tree(
             + _unresolved_finding_id_warnings(findings, actions)
             + state.warnings
         ),
+        state=state,
     )
 
 
@@ -82,6 +86,8 @@ def review_document(
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
+    *,
+    prior: ReviewPrior = None,
 ) -> ReviewResult:
     """Run the domain-neutral hierarchical review and render its artifacts.
 
@@ -122,6 +128,7 @@ def review_document(
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
+        prior=prior,
     )
 
     reviewed_path: Path | None = None
@@ -149,6 +156,7 @@ def review_document(
             + state.warnings
         ),
         artifacts=artifacts,
+        state=state,
     )
 
 
@@ -162,6 +170,7 @@ def _review_tree(
     context_provider: ReviewContextProvider | None,
     action_policy: ActionPolicy | None,
     extra_actions: list[ReviewAction] | None,
+    prior: ReviewPrior = None,
 ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
     reviewer = TaktReviewer(
         profile=profile,
@@ -173,7 +182,7 @@ def _review_tree(
     )
     # Pack reviews name → judge → optional act inside TaktReviewer. extra_actions
     # stay a host-side append after that loop, never a fused detect→write.
-    findings, actions, state = reviewer.review(document)
+    findings, actions, state = reviewer.review(document, prior=prior)
     if extra_actions:
         prepared_extra = prepare_actions(document, profile, extra_actions, policy=action_policy)
         actions = demote_cross_scope_overlaps(document, actions + prepared_extra)

@@ -98,7 +98,7 @@ def test_profiles_and_grounding_use_one_public_review_topology(
         def __init__(self, **kwargs: Any):
             calls.append(kwargs)
 
-        def review(self, document: Any) -> tuple[list[Any], list[Any], Any]:
+        def review(self, document: Any, **kwargs: Any) -> tuple[list[Any], list[Any], Any]:
             findings = [
                 SimpleNamespace(
                     finding_id=f"{case.name}-{scope}",

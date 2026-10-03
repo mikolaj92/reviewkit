@@ -50,23 +50,33 @@ class DecisionAnswer(BaseModel):
 
 
 class FragmentDecisionState(BaseModel):
-    """Scan-2 fragment payload: the node text, its tags, and the cited unit."""
+    """Scan-2 fragment payload: the node text, its tags, and the cited unit.
+
+    ``comments`` is empty until a previous visit produced comment text on this
+    node or on the smaller units it contains.
+    """
 
     model_config = _STRICT
 
     text: str
     tags: list[str]
     unit: SourceUnit | None = None
+    comments: list[str] = Field(default_factory=list)
 
 
 class DocumentDecisionState(BaseModel):
-    """Scan-2 document payload: coverage for one function and the cited unit."""
+    """Scan-2 document payload: coverage for one function and the cited unit.
+
+    ``comments`` is empty until a previous visit produced comment text on this
+    node or on the smaller units it contains.
+    """
 
     model_config = _STRICT
 
     covered: list[str]
     candidate: str
     unit: SourceUnit | None = None
+    comments: list[str] = Field(default_factory=list)
 
 
 type DecisionState = str | FragmentDecisionState | DocumentDecisionState
@@ -87,6 +97,9 @@ class DecisionClient(Protocol):
     Naming passes the fragment text (``str``). Judging passes typed
     :class:`FragmentDecisionState` or :class:`DocumentDecisionState` objects,
     including the cited :class:`~reviewkit.pack.SourceUnit` when a rule has one.
+    A later visit at the same or a larger grain may populate ``comments``
+    and union contained labels into fragment ``tags``; the first visit of a
+    unit with no previous discoveries leaves ``comments`` empty.
     """
 
     def decide(
@@ -119,7 +132,17 @@ class MockDecisionClient:
     ) -> dict[str, DecisionAnswer]:
         recorded = {key: question for key, question in questions.items()}
         self.calls.append(DecisionCall(state=state, questions=recorded))
-        scripted = self._answers.pop(0) if self._answers else {}
+        scripted: DecisionAnswers = {}
+        if self._answers:
+            match = next(
+                (
+                    index
+                    for index, candidate in enumerate(self._answers)
+                    if any(key in candidate for key in recorded)
+                ),
+                0,
+            )
+            scripted = self._answers.pop(match)
         result: dict[str, DecisionAnswer] = {}
         for key, question in recorded.items():
             if key in scripted:

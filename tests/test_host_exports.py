@@ -68,6 +68,13 @@ def test_host_entry_points_require_pack_and_decision() -> None:
         assert params["decision"].default is inspect.Parameter.empty
         assert "Pack" in str(params["pack"].annotation)
         assert "DecisionClient" in str(params["decision"].annotation)
+        assert "passes" not in params
+        assert "level" not in params
+        assert params["prior"].default is None
+    review_params = inspect.signature(reviewkit.TaktReviewer.review).parameters
+    assert "passes" not in review_params
+    assert "level" not in review_params
+    assert review_params["prior"].default is None
 
 
 def test_plugin_sockets_are_protocols_with_typed_methods() -> None:
@@ -83,10 +90,12 @@ def test_plugin_sockets_are_protocols_with_typed_methods() -> None:
 def test_decision_states_are_typed_models_not_dicts() -> None:
     fragment = FragmentDecisionState(text="x", tags=["lead"], unit=None)
     document = DocumentDecisionState(covered=[], candidate="lead", unit=None)
-    assert set(FragmentDecisionState.model_fields) == {"text", "tags", "unit"}
-    assert set(DocumentDecisionState.model_fields) == {"covered", "candidate", "unit"}
+    assert set(FragmentDecisionState.model_fields) == {"text", "tags", "unit", "comments"}
+    assert set(DocumentDecisionState.model_fields) == {"covered", "candidate", "unit", "comments"}
     assert fragment.tags == ["lead"]
+    assert fragment.comments == []
     assert document.candidate == "lead"
+    assert document.comments == []
     assert isinstance(fragment, reviewkit.FragmentDecisionState)
     state: DecisionState = fragment
     assert state.text == "x"

@@ -10,11 +10,16 @@ from reviewkit.context import ReviewContextProvider
 from reviewkit.decision import DecisionClient
 from reviewkit.document import DocumentParser, ReviewDocument
 from reviewkit.llm import LLMClient
-from reviewkit.models import ReviewAction, ReviewFinding, ReviewResult, ReviewStats
+from reviewkit.models import (
+    ReviewAction,
+    ReviewFinding,
+    ReviewResult,
+    ReviewStats,
+)
 from reviewkit.pack import Pack
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile, load_profile
-from reviewkit.takt_reviewer import TaktReviewer
+from reviewkit.takt_reviewer import ReviewPrior, TaktReviewer
 
 
 def review_tree(
@@ -26,6 +31,8 @@ def review_tree(
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
+    *,
+    prior: ReviewPrior = None,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
 
@@ -34,6 +41,9 @@ def review_tree(
     call site does not accept dict dumps. A review names, then judges, then
     optionally writes through ``LLMClient.complete_json``. There is no fused
     ``pack=None`` path.
+
+    Review is recursive per fragment. ``prior`` continues from a previous
+    result. There is no ``level`` or ``passes``.
     """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
@@ -46,7 +56,7 @@ def review_tree(
         context_provider=context_provider,
         action_policy=action_policy,
     )
-    findings, actions, state = reviewer.review(document)
+    findings, actions, state = reviewer.review(document, prior=prior)
     if extra_actions:
         prepared = prepare_actions(document, profile, extra_actions, policy=action_policy)
         actions = demote_cross_scope_overlaps(document, actions + prepared)
@@ -61,6 +71,7 @@ def review_tree(
             + unresolved_finding_id_warnings(findings, actions)
             + state.warnings
         ),
+        state=state,
     )
 
 
@@ -74,6 +85,8 @@ def review_source(
     context_provider: ReviewContextProvider | None = None,
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
+    *,
+    prior: ReviewPrior = None,
 ) -> ReviewResult:
     """Parse through an injected format adapter and review the resulting typed tree."""
     return review_tree(
@@ -85,6 +98,7 @@ def review_source(
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
+        prior=prior,
     )
 
 

@@ -15,6 +15,7 @@ from pydantic.json_schema import DEFAULT_REF_TEMPLATE, GenerateJsonSchema, JsonS
 
 if TYPE_CHECKING:
     from reviewkit.document import ReviewDocument
+    from reviewkit.state import ReviewState
 
 
 class ReviewScope(StrEnum):
@@ -427,6 +428,9 @@ class ReviewResult(BaseModel):
     warnings: list[str] = Field(default_factory=list)
     metrics: dict[str, Any] = Field(default_factory=dict)
     artifacts: dict[str, str] = Field(default_factory=dict)
+    # Labels and other walk state for a later ``prior=`` invocation. Excluded from
+    # ``to_report_dict`` so existing JSON reports stay unchanged.
+    state: ReviewState | None = None
 
     @property
     def applied_actions(self) -> list[ReviewAction]:
@@ -472,7 +476,7 @@ class ReviewResult(BaseModel):
         }
 
     def to_report_dict(self) -> dict[str, Any]:
-        payload = self.model_dump(mode="json", by_alias=True, exclude={"document"})
+        payload = self.model_dump(mode="json", by_alias=True, exclude={"document", "state"})
         payload["applied_actions"] = [
             action.model_dump(mode="json", by_alias=True) for action in self.applied_actions
         ]

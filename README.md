@@ -165,6 +165,13 @@ still `sentence → paragraph → section → document` (powered by the generic
 reduction via splot, vertical waves) is provided by `takt`. ReviewKit supplies
 the document plant, Pack/plugin orchestration, and deterministic effectors.
 
+Callers may pass a previous result as ``prior`` on `review_tree`,
+`review_source`, `review_document`, and `TaktReviewer.review`. Review is
+recursive per fragment: one unit can be judged many times, another can
+settle once. ``ReviewState.courses`` records each visit. There is no
+``level`` or ``passes``. A call with nothing extra is the same review, not a
+non-recursive mode.
+
 ## Plugin sockets
 
 Hosts implement these Protocols from `reviewkit`. There is no public `detect()`
