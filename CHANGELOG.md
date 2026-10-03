@@ -2,10 +2,13 @@
 
 ## Unreleased
 
-Optional extra review passes: `passes=1` (default) is today's walk. `passes=n`
-re-judges after pass 1 with comments and labels already produced; earlier
-discoveries stay in the result. Switch is on `review_tree` / `review_source` /
-`review_document` / `TaktReviewer.review`.
+Optional extra review is per level: pick a unit size (`level`), run it, and
+call that same level again with a previous result as `prior`, or move to
+another level when the caller says so. Each call returns the discoveries it
+used plus anything new. `passes` is an optional convenience loop over the
+same level. Default (no `prior`, no `level`) is today's single walk. Switch
+is on `review_tree` / `review_source` / `review_document` /
+`TaktReviewer.review`.
 
 Docs now match the 0.24.1 Pack surface: `review_tree` / `review_source` /
 `review_document` / `TaktReviewer` / CLI, plus `LLMClient.capabilities` and

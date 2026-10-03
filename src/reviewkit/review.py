@@ -10,11 +10,17 @@ from reviewkit.context import ReviewContextProvider
 from reviewkit.decision import DecisionClient
 from reviewkit.document import DocumentParser, ReviewDocument
 from reviewkit.llm import LLMClient
-from reviewkit.models import ReviewAction, ReviewFinding, ReviewResult, ReviewStats
+from reviewkit.models import (
+    ReviewAction,
+    ReviewFinding,
+    ReviewResult,
+    ReviewScope,
+    ReviewStats,
+)
 from reviewkit.pack import Pack
 from reviewkit.policy import ActionPolicy
 from reviewkit.profile import ReviewProfile, load_profile
-from reviewkit.takt_reviewer import TaktReviewer
+from reviewkit.takt_reviewer import ReviewPrior, TaktReviewer
 
 
 def review_tree(
@@ -27,6 +33,8 @@ def review_tree(
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
     *,
+    prior: ReviewPrior = None,
+    level: ReviewScope | str | None = None,
     passes: int = 1,
 ) -> ReviewResult:
     """Review an already parsed tree without reading or rendering any file format.
@@ -37,9 +45,12 @@ def review_tree(
     optionally writes through ``LLMClient.complete_json``. There is no fused
     ``pack=None`` path.
 
-    ``passes`` defaults to 1 (today's walk: each unit is judged on its own
-    text). Further passes re-judge with comments and labels already produced;
-    earlier discoveries stay in the result.
+    ``level`` selects one unit size (sentence, paragraph, section, or
+    document). Call that same level again with ``prior`` to continue, or a
+    different ``level`` when moving on. ``prior`` is a previous result; the
+    later call returns those discoveries plus anything new. ``passes`` is an
+    optional convenience loop over the same level. Default (no ``prior``, no
+    ``level``, ``passes=1``) is today's single walk.
     """
     profile = (
         profile_path if isinstance(profile_path, ReviewProfile) else load_profile(profile_path)
@@ -52,7 +63,7 @@ def review_tree(
         context_provider=context_provider,
         action_policy=action_policy,
     )
-    findings, actions, state = reviewer.review(document, passes=passes)
+    findings, actions, state = reviewer.review(document, prior=prior, level=level, passes=passes)
     if extra_actions:
         prepared = prepare_actions(document, profile, extra_actions, policy=action_policy)
         actions = demote_cross_scope_overlaps(document, actions + prepared)
@@ -67,6 +78,7 @@ def review_tree(
             + unresolved_finding_id_warnings(findings, actions)
             + state.warnings
         ),
+        state=state,
     )
 
 
@@ -81,6 +93,8 @@ def review_source(
     action_policy: ActionPolicy | None = None,
     extra_actions: list[ReviewAction] | None = None,
     *,
+    prior: ReviewPrior = None,
+    level: ReviewScope | str | None = None,
     passes: int = 1,
 ) -> ReviewResult:
     """Parse through an injected format adapter and review the resulting typed tree."""
@@ -93,6 +107,8 @@ def review_source(
         context_provider=context_provider,
         action_policy=action_policy,
         extra_actions=extra_actions,
+        prior=prior,
+        level=level,
         passes=passes,
     )
 

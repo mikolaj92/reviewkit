@@ -165,11 +165,16 @@ still `sentence → paragraph → section → document` (powered by the generic
 reduction via splot, vertical waves) is provided by `takt`. ReviewKit supplies
 the document plant, Pack/plugin orchestration, and deterministic effectors.
 
-Callers may set `passes` (default `1`) on `review_tree`, `review_source`,
-`review_document`, and `TaktReviewer.review`. Pass 1 is the walk above: each
-unit is judged on its own text, without comment text from a smaller unit.
-Further passes re-judge with comments and labels already produced on the unit
-and on the smaller units it contains. Earlier discoveries stay in the result.
+Callers pick a unit size with ``level`` on `review_tree`,
+`review_source`, `review_document`, and `TaktReviewer.review`. That call
+names and judges only those units. The same level can be invoked again with
+a previous result as ``prior``; comments and labels already produced are
+fed back, and the call returns those discoveries plus anything new. Move to
+paragraph, section, or document when the caller is ready — the engine does
+not climb the tree inside one extra call. ``passes`` is an optional
+convenience loop over the same level. Default (no ``prior``, no ``level``)
+is today's single walk: each unit is judged on its own text, without
+comment text from a smaller unit.
 
 ## Plugin sockets
 

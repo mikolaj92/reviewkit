@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from reviewkit.comments import DocxComment
 from reviewkit.models import ReviewResult, RevisionCoverageState, RevisionLedger
+from reviewkit.state import ReviewState
 
 
 class DocumentParser(Protocol):
@@ -114,4 +115,6 @@ class ReviewDocument(BaseModel):
         return {sentence.id for sentence in paragraph.sentences}
 
 
-ReviewResult.model_rebuild(_types_namespace={"ReviewDocument": ReviewDocument})
+ReviewResult.model_rebuild(
+    _types_namespace={"ReviewDocument": ReviewDocument, "ReviewState": ReviewState}
+)

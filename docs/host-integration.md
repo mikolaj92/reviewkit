@@ -168,10 +168,14 @@ Pass 1 judges each unit on its own text. `FragmentDecisionState.comments` and
 `DocumentDecisionState.comments` are empty; fragment `tags` are the unit's own
 labels. Coverage of Pack functions still flows upward through `covered()`.
 
-Callers may set `passes` (default `1`) on `review_tree`, `review_source`,
-`review_document`, and `TaktReviewer.review`. Each further pass re-judges with
-comments and labels already produced on the unit and on the smaller units it
-contains. Earlier comments and labels stay in the result.
+Repeat is per level. Pick a unit size with `level` on `review_tree`,
+`review_source`, `review_document`, and `TaktReviewer.review`. That call
+names and judges only those units. Call the same level again with a previous
+result as `prior` to continue with comments and labels already produced, or
+pass a different `level` when moving on. A later level sees discoveries from
+the smaller units it contains. Each call returns the discoveries it used plus
+anything new. `passes` is only a convenience loop over the same level.
+Default (no `prior`, no `level`) is today's single walk.
 
 ## Scan 3 — act (optional)
 

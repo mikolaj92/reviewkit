@@ -664,7 +664,7 @@ def test_pack_review_calls_llm_only_to_act() -> None:
 def test_review_tree_forwards_pack_and_decision_sockets(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
-    def fake_review(self, document):
+    def fake_review(self, document, **kwargs):
         captured["pack"] = self.pack
         captured["decision"] = self.decision
         return [], [], ReviewState()

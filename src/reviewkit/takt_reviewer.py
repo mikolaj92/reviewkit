@@ -54,6 +54,7 @@ from reviewkit.models import (
     ReviewFinding,
     ReviewLocator,
     ReviewResponse,
+    ReviewResult,
     ReviewScope,
     SectionReviewResponse,
     SentenceReviewResponse,
@@ -87,6 +88,10 @@ from reviewkit.review_bounds import (
 from reviewkit.state import ReviewState
 from reviewkit.takt_client import TaktClient
 from reviewkit.takt_types import LayerSpec, RawSignal
+
+type ReviewPrior = (
+    ReviewResult | tuple[Sequence[ReviewFinding], Sequence[ReviewAction], ReviewState] | None
+)
 
 _ACTION_TYPE = {
     VerdictKind.CHANGE: ReviewActionType.REPLACE_TEXT,
@@ -137,27 +142,55 @@ class TaktReviewer:
         self.traces: list[PassTrace] = []
 
     def review(
-        self, document: ReviewDocument, *, passes: int = 1
+        self,
+        document: ReviewDocument,
+        *,
+        prior: ReviewPrior = None,
+        level: ReviewScope | str | None = None,
+        passes: int = 1,
     ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
-        """Name, then judge. ``passes=1`` is today's walk.
+        """Name, then judge. With no ``prior`` and no ``level`` this is today's walk.
 
-        Further passes re-judge with comments and labels already produced on the
-        unit and on the smaller units it contains. Earlier discoveries stay.
+        ``level`` selects one unit size. That call names and judges only those
+        units. Call the same level again with ``prior`` to continue, or a
+        different ``level`` when the caller is ready to move. ``prior`` is a
+        previous return value (or a ``ReviewResult``). ``passes`` is only a
+        convenience loop over the same level (or today's full walk when
+        ``level`` is omitted).
         """
         if passes < 1:
             raise ValueError("passes must be >= 1")
+        scope = _coerce_level(level)
+        _require_level(self.profile.review_pipeline, scope)
+        result = self._review_once(document, prior=prior, level=scope)
+        for _ in range(passes - 1):
+            result = self._review_once(document, prior=result, level=scope)
+        return result
+
+    def _review_once(
+        self,
+        document: ReviewDocument,
+        *,
+        prior: ReviewPrior,
+        level: ReviewScope | None,
+    ) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState]:
+        prior_findings, prior_actions, prior_state = _unpack_prior(prior)
         source_document = document
         document = bound_document_sections(document, self.profile.section_char_budget)
+        enabled = _enabled_scopes(self.profile.review_pipeline, level)
         document_source_context = None
-        if ReviewScope.DOCUMENT in self.profile.review_pipeline:
+        if ReviewScope.DOCUMENT in enabled:
             document_source_context = build_document_source_context(
                 source_document,
                 self.profile.document_source_char_budget,
             )
-        state = ReviewState()
+        state = prior_state.model_copy(deep=True) if prior_state is not None else ReviewState()
+        if prior_findings and not state.findings:
+            state.findings = [finding.model_copy(deep=True) for finding in prior_findings]
         self.state = state
         self.traces = []
         effector = ReviewEffector(state)
+        effector.findings = list(state.findings)
 
         layers = build_layer_specs(self.profile)
         layer_by_scope = scope_to_layer_index(self.profile)
@@ -167,27 +200,27 @@ class TaktReviewer:
             document,
             state,
             effector,
+            enabled,
             document_source_context=document_source_context,
         )
-        enabled = set(self.profile.review_pipeline)
 
-        self._name(plant)
-        self._judge_pass(plant, detectors, layers, enabled, effector)
-        for _ in range(passes - 1):
-            self._judge_pass(
-                plant,
-                detectors,
-                layers,
-                enabled,
-                effector,
-                labels_by_node=_labels_by_node(state),
-                comments_by_node=_comments_by_node(effector.actions),
-            )
+        self._name(plant, enabled)
+        feedback = prior is not None
+        self._judge_pass(
+            plant,
+            detectors,
+            layers,
+            enabled,
+            effector,
+            labels_by_node=_labels_by_node(state) if feedback else None,
+            comments_by_node=_comments_by_node(prior_actions) if feedback else None,
+        )
 
-        prepared = prepare_actions(
+        prepared_new = prepare_actions(
             document, self.profile, effector.actions, policy=self.action_policy
         )
-        final_actions = demote_cross_scope_overlaps(document, prepared)
+        combined = list(prior_actions) + prepared_new
+        final_actions = demote_cross_scope_overlaps(document, combined)
 
         deduped_findings: list[ReviewFinding] = []
         seen: dict[str, bool] = {}
@@ -227,9 +260,8 @@ class TaktReviewer:
             detector.act_after_judge(node)
             effector.apply_takt_decision(node.id, decision)
 
-    def _name(self, plant: ReviewDocumentPlant) -> None:
+    def _name(self, plant: ReviewDocumentPlant, enabled: set[ReviewScope]) -> None:
         """First scan. Tags only: no cascade evaluation and no effector."""
-        enabled = set(self.profile.review_pipeline)
         named: list[FunctionTag] = []
         for node in plant.sequential_scan():
             scope = node.scope()
@@ -259,19 +291,21 @@ class TaktReviewer:
             )
             if tag is not None and tag.function_ids:
                 named.append(tag)
-        self.state.tags.extend(named)
+        self.state.tags = _merge_tags(self.state.tags, named)
 
     def _build_detectors(
         self,
         document: ReviewDocument,
         state: ReviewState,
         effector: ReviewEffector,
+        enabled: set[ReviewScope],
         *,
         document_source_context: dict[str, Any] | None = None,
     ) -> dict[ReviewScope, _LLMDetectorAdapter]:
-        pipeline = self.profile.review_pipeline
         detectors: dict[ReviewScope, _LLMDetectorAdapter] = {}
-        for scope in pipeline:
+        for scope in self.profile.review_pipeline:
+            if scope not in enabled:
+                continue
             det = _LLMDetectorAdapter(
                 profile=self.profile,
                 llm=self.llm,
@@ -756,6 +790,53 @@ def _stable_evidence_ref(finding_id: str, index: int, evidence: object) -> str:
     return f"evidence-{digest}"
 
 
+def _coerce_level(level: ReviewScope | str | None) -> ReviewScope | None:
+    if level is None:
+        return None
+    return ReviewScope(level)
+
+
+def _require_level(pipeline: Sequence[ReviewScope], level: ReviewScope | None) -> None:
+    if level is not None and level not in pipeline:
+        raise ValueError(f"level {level.value!r} is not in review_pipeline")
+
+
+def _enabled_scopes(pipeline: Sequence[ReviewScope], level: ReviewScope | None) -> set[ReviewScope]:
+    if level is None:
+        return set(pipeline)
+    return {level}
+
+
+def _unpack_prior(
+    prior: ReviewPrior,
+) -> tuple[list[ReviewFinding], list[ReviewAction], ReviewState | None]:
+    if prior is None:
+        return [], [], None
+    if isinstance(prior, ReviewResult):
+        return list(prior.findings), list(prior.actions), prior.state
+    findings, actions, state = prior
+    return list(findings), list(actions), state
+
+
+def _merge_tags(
+    existing: Sequence[FunctionTag], incoming: Sequence[FunctionTag]
+) -> list[FunctionTag]:
+    function_ids: dict[str, list[str]] = {}
+    order: list[str] = []
+    for tag in (*existing, *incoming):
+        if tag.node_id not in function_ids:
+            order.append(tag.node_id)
+            function_ids[tag.node_id] = []
+        for function_id in tag.function_ids:
+            if function_id not in function_ids[tag.node_id]:
+                function_ids[tag.node_id].append(function_id)
+    return [
+        FunctionTag(node_id=node_id, function_ids=function_ids[node_id])
+        for node_id in order
+        if function_ids[node_id]
+    ]
+
+
 def _comment_text(action: ReviewAction) -> str:
     return (action.comment or action.reason or "").strip()
 
@@ -784,7 +865,7 @@ def _pass_input(
     labels_by_node: dict[str, list[str]] | None,
     comments_by_node: dict[str, list[str]] | None,
 ) -> tuple[list[str] | None, tuple[str, ...]]:
-    """Pass 1 keeps own tags and no comments. Later passes union contained discoveries."""
+    """Own and contained comments/labels from a previous invocation."""
     if labels_by_node is None or comments_by_node is None:
         return None, ()
     labels: list[str] = []
@@ -803,4 +884,4 @@ def _pass_input(
     return labels, tuple(comments)
 
 
-__all__ = ["TaktReviewer"]
+__all__ = ["ReviewPrior", "TaktReviewer"]
