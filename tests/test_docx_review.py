@@ -75,9 +75,7 @@ class SameFileReviewer:
     def _akapit(self, unit: Jednostka) -> ReviewDecision:
         if unit.visit == 1 and unit.node_id == "p1":
             comment = next(item for item in read_comments(unit.path) if item.text == _NOTE_ONE)
-            return ReviewDecision(
-                Ruch.GO, (UpdateComment(comment.id, _NOTE_ONE_UPDATED),)
-            )
+            return ReviewDecision(Ruch.GO, (UpdateComment(comment.id, _NOTE_ONE_UPDATED),))
         return ReviewDecision(Ruch.GO)
 
     def _rozdzial(self, unit: Jednostka) -> ReviewDecision:

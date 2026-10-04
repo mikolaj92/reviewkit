@@ -143,7 +143,6 @@ from reviewkit.pack import (
 from reviewkit.parser_docx import DocxDocumentParser, DocxFootnote, load_docx, read_footnotes
 from reviewkit.parser_text import TextDocumentParser, parse_text
 from reviewkit.pipeline import review_document
-from reviewkit.poziom import WALK_ORDER, Poziom
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.portable_trail import (
     PortableReviewTrailError,
@@ -153,6 +152,7 @@ from reviewkit.portable_trail import (
     strip_portable_review_trail,
     write_portable_review_trail,
 )
+from reviewkit.poziom import WALK_ORDER, Poziom
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 from reviewkit.renderer_docx import RenderIntegrityError
 from reviewkit.review import review_source, review_tree
@@ -228,10 +228,10 @@ __all__ = [
     "Ontology",
     "Pack",
     "PassTrace",
-    "Poziom",
     "PolicyGuard",
     "PortableReviewTrailError",
     "PortableReviewTrailProfile",
+    "Poziom",
     "ProcessCheck",
     "ProvenanceDiagnostic",
     "ProvenanceStatus",

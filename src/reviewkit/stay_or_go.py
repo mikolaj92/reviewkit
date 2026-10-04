@@ -8,9 +8,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from enum import StrEnum
-from typing import TypeVar
-
-T = TypeVar("T")
 
 
 class Ruch(StrEnum):
@@ -22,7 +19,7 @@ class StayOrGoError(RuntimeError):
     """The stay-or-go loop refused to continue."""
 
 
-def stay_or_go(
+def stay_or_go[T](
     consider: Callable[[int], T],
     *,
     is_go: Callable[[T], bool],

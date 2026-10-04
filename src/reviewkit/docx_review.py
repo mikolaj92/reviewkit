@@ -33,7 +33,7 @@ from reviewkit.models import (
     ReviewStats,
 )
 from reviewkit.parser_docx import load_docx
-from reviewkit.poziom import Poziom, WALK_ORDER, scope_for
+from reviewkit.poziom import WALK_ORDER, Poziom, scope_for
 from reviewkit.stay_or_go import Ruch, StayOrGoError, stay_or_go
 
 
@@ -197,6 +197,8 @@ def _apply(
             )
         )
         return
+    if not isinstance(effect, ChangeText):
+        raise DocxReviewError(f"unsupported side effect {type(effect).__name__}")
     locator, start, end, expected = _locate_text(unit, effect.original)
     live.change_text(locator, start, end, effect.replacement)
     actions.append(
@@ -254,7 +256,9 @@ def _kind(effect: SideEffect) -> str:
         return "update_comment"
     if isinstance(effect, DeleteComment):
         return "delete_comment"
-    return "change_text"
+    if isinstance(effect, ChangeText):
+        return "change_text"
+    raise DocxReviewError(f"unsupported side effect {type(effect).__name__}")
 
 
 def _action(

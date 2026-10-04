@@ -10,14 +10,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from docxtor import (
-    CommentAuthor,
     CommentMutationError,
-    CommentRange,
     DocxDocument,
+    PhysicalReviewComment,
+    PhysicalReviewer,
+    PhysicalReviewPlan,
+    PhysicalReviewRenderError,
     SegmentReplacement,
-    add_comment,
     publish_docx,
     remove_comments,
+    render_physical_review,
 )
 
 from reviewkit.comments import DocxComment, comments_from_document
@@ -48,20 +50,34 @@ class LiveDocx:
         expected_text: str | None = None,
     ) -> str:
         before = self.path.read_bytes()
+        before_ids = {item.comment_id for item in DocxDocument.open_bytes(before).comments}
         try:
-            result = add_comment(
+            render_physical_review(
                 before,
-                CommentRange(locator, start_offset, end_offset, expected_text),
-                text,
-                CommentAuthor(self.author, self.initials),
+                self.path,
+                PhysicalReviewPlan(
+                    comments=(
+                        PhysicalReviewComment(
+                            locator,
+                            text,
+                            start_offset,
+                            end_offset,
+                            expected_text,
+                        ),
+                    )
+                ),
+                reviewer=PhysicalReviewer(self.author, self.initials),
             )
-        except (CommentMutationError, ValueError) as exc:
+        except PhysicalReviewRenderError as exc:
             raise DocxReviewError(str(exc)) from exc
-        created = result.receipt.created_ids
+        created = [
+            item.comment_id
+            for item in DocxDocument.open(self.path).comments
+            if item.comment_id not in before_ids
+        ]
         if not created:
             raise DocxReviewError("comment add was not confirmed")
-        publish_docx(result.data, self.path, source=before)
-        return created[0]
+        return created[-1]
 
     def update_comment(self, comment_id: str, text: str) -> None:
         if not text:
