@@ -9,7 +9,7 @@ from enum import StrEnum
 from reviewkit.comments import DocxComment, comments_for_locator
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.levels import AKAPIT, CALOSC, ROZDZIAL, ZDANIE
-from reviewkit.live_docx import LiveDocx, LiveDocxError
+from reviewkit.live_docx import LiveDocx
 
 
 class StayOrGo(StrEnum):
@@ -95,23 +95,34 @@ def walk_live_docx(live: LiveDocx, decide: DecideFn) -> tuple[WalkVisit, ...]:
 
 
 def _walk_zdania(live: LiveDocx, decide: DecideFn, visits: list[WalkVisit]) -> None:
-    for unit in list_units(live.load(), ZDANIE):
-        _stay_loop(live, decide, unit, visits)
+    _walk_level(live, decide, visits, ZDANIE)
 
 
 def _walk_akapity(live: LiveDocx, decide: DecideFn, visits: list[WalkVisit]) -> None:
-    for unit in list_units(live.load(), AKAPIT):
-        _stay_loop(live, decide, unit, visits)
+    _walk_level(live, decide, visits, AKAPIT)
 
 
 def _walk_rozdzialy(live: LiveDocx, decide: DecideFn, visits: list[WalkVisit]) -> None:
-    for unit in list_units(live.load(), ROZDZIAL):
-        _stay_loop(live, decide, unit, visits)
+    _walk_level(live, decide, visits, ROZDZIAL)
 
 
 def _walk_calosc(live: LiveDocx, decide: DecideFn, visits: list[WalkVisit]) -> None:
-    units = list_units(live.load(), CALOSC)
-    _stay_loop(live, decide, units[0], visits)
+    _walk_level(live, decide, visits, CALOSC)
+
+
+def _walk_level(
+    live: LiveDocx,
+    decide: DecideFn,
+    visits: list[WalkVisit],
+    level: str,
+) -> None:
+    after: ReviewUnit | None = None
+    while True:
+        units = list_units(live.load(), level)
+        index = 0 if after is None else _index_after(units, after)
+        if index >= len(units):
+            return
+        after = _stay_loop(live, decide, units[index], visits)
 
 
 def _stay_loop(
@@ -119,10 +130,15 @@ def _stay_loop(
     decide: DecideFn,
     seed: ReviewUnit,
     visits: list[WalkVisit],
-) -> None:
+) -> ReviewUnit:
+    current = seed
     stay_index = 0
     while True:
-        unit = _refresh(live, seed).at_stay(stay_index)
+        units = list_units(live.load(), current.level)
+        unit = _same_unit(units, current)
+        if unit is None:
+            return current
+        unit = unit.at_stay(stay_index)
         visits.append(
             WalkVisit(
                 level=unit.level,
@@ -133,18 +149,74 @@ def _stay_loop(
         )
         decision = decide(unit, live)
         if decision is StayOrGo.GO:
-            return
+            return _refreshed_or_current(live, unit)
         if decision is not StayOrGo.STAY:
             raise TypeError(f"decide must return StayOrGo, got {decision!r}")
+        current = _refreshed_or_current(live, unit)
         stay_index += 1
 
 
-def _refresh(live: LiveDocx, seed: ReviewUnit) -> ReviewUnit:
-    document = live.load()
-    for unit in list_units(document, seed.level):
-        if unit.node_id == seed.node_id:
-            return unit
-    raise LiveDocxError(f"unit {seed.node_id!r} at {seed.level} is gone from {live.path}")
+def _refreshed_or_current(live: LiveDocx, unit: ReviewUnit) -> ReviewUnit:
+    return _same_unit(list_units(live.load(), unit.level), unit) or unit
+
+
+def _same_unit(units: Sequence[ReviewUnit], seed: ReviewUnit) -> ReviewUnit | None:
+    if seed.level == CALOSC:
+        return units[0] if units else None
+    by_text = [unit for unit in units if _same_container(unit, seed) and unit.text == seed.text]
+    if len(by_text) == 1:
+        return by_text[0]
+    by_anchor = [
+        unit
+        for unit in units
+        if _same_container(unit, seed) and unit.char_start == seed.char_start
+    ]
+    if len(by_anchor) == 1:
+        return by_anchor[0]
+    by_container = [unit for unit in units if _same_container(unit, seed)]
+    if len(by_container) == 1:
+        return by_container[0]
+    return None
+
+
+def _same_container(unit: ReviewUnit, seed: ReviewUnit) -> bool:
+    if seed.level == ROZDZIAL:
+        if seed.locator is not None and unit.locator == seed.locator:
+            return True
+        if seed.paragraph_locators and unit.paragraph_locators:
+            return bool(set(seed.paragraph_locators) & set(unit.paragraph_locators))
+        return False
+    if seed.paragraph_locator is not None:
+        return unit.paragraph_locator == seed.paragraph_locator
+    if seed.locator is not None:
+        return unit.locator == seed.locator
+    return unit.node_id == seed.node_id
+
+
+def _index_after(units: Sequence[ReviewUnit], finished: ReviewUnit) -> int:
+    matched = _same_unit(units, finished)
+    if matched is not None:
+        return units.index(matched) + 1
+    for index, unit in enumerate(units):
+        if not _unit_before(unit, finished):
+            return index
+    return len(units)
+
+
+def _unit_before(unit: ReviewUnit, ref: ReviewUnit) -> bool:
+    return _order_key(unit) < _order_key(ref)
+
+
+def _order_key(unit: ReviewUnit) -> tuple[tuple[str | int, ...], int]:
+    locator = unit.paragraph_locator or unit.locator
+    start = unit.char_start if unit.char_start is not None else -1
+    return (_locator_key(locator), start)
+
+
+def _locator_key(locator: str | None) -> tuple[str | int, ...]:
+    if locator is None:
+        return ()
+    return tuple(int(part) if part.isdigit() else part for part in locator.split(":"))
 
 
 def _body_paragraphs(document: ReviewDocument) -> tuple[ParagraphNode, ...]:

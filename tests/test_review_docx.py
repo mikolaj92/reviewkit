@@ -26,6 +26,10 @@ _THIRD = "Third sentence lives here."
 _THIRD_EDITED = "Third sentence was edited."
 _FOURTH = "Fourth sentence to drop."
 _INSERTED = " Extra sentence."
+_ALPHA = "Alpha sentence."
+_BRAVO = "Bravo sentence."
+_CHARLIE = "Charlie sentence."
+_DELTA = "Delta sentence."
 _NOTE_ONE = "first note on the opening sentence"
 _NOTE_TWO = "second note on the same sentence"
 _NOTE_UPDATED = "updated note on the opening sentence"
@@ -44,6 +48,26 @@ def _sample_docx(path: Path) -> Path:
 def _document_xml(path: Path) -> bytes:
     with ZipFile(path) as archive:
         return archive.read("word/document.xml")
+
+
+def _three_sentence_docx(path: Path) -> Path:
+    document = DocxDocument()
+    document.add_heading("Rozdział 1", level=1)
+    document.add_paragraph(f"{_ALPHA} {_BRAVO} {_CHARLIE}")
+    document.save(path)
+    return path
+
+
+def _delete_unit_text(docx: LiveDocx, unit: ReviewUnit) -> None:
+    assert unit.paragraph_locator is not None
+    assert unit.char_start is not None
+    assert unit.char_end is not None
+    docx.delete_text(
+        locator=unit.paragraph_locator,
+        start=unit.char_start,
+        end=unit.char_end,
+        expected_text=unit.text,
+    )
 
 
 class ScriptedReviewer:
@@ -216,6 +240,81 @@ def test_review_walks_one_docx_in_place(tmp_path: Path) -> None:
     xml = _document_xml(path)
     assert b"w:ins" in xml
     assert b"w:del" in xml
+
+
+def test_delete_middle_sentence_then_dalej_continues_walk(tmp_path: Path) -> None:
+    path = _three_sentence_docx(tmp_path / "delete-dalej.docx")
+
+    def decide(unit: ReviewUnit, docx: LiveDocx) -> StayOrGo:
+        if unit.level == ZDANIE and unit.text == _BRAVO:
+            _delete_unit_text(docx, unit)
+        return StayOrGo.GO
+
+    result = review_docx(path, decide)
+
+    zdanie = [visit for visit in result.visits if visit.level == ZDANIE]
+    assert [visit.text for visit in zdanie] == [_ALPHA, _BRAVO, _CHARLIE]
+    levels = [visit.level for visit in result.visits]
+    assert AKAPIT in levels
+    assert ROZDZIAL in levels
+    assert CALOSC in levels
+    assert levels.index(ZDANIE) < levels.index(AKAPIT) < levels.index(ROZDZIAL) < levels.index(CALOSC)
+
+
+def test_delete_then_zostan_does_not_continue_on_next_sentence(tmp_path: Path) -> None:
+    path = _three_sentence_docx(tmp_path / "delete-zostan.docx")
+
+    def decide(unit: ReviewUnit, docx: LiveDocx) -> StayOrGo:
+        if unit.level == ZDANIE and unit.text == _BRAVO and unit.stay_index == 0:
+            _delete_unit_text(docx, unit)
+            return StayOrGo.STAY
+        if unit.level == ZDANIE and unit.stay_index > 0:
+            raise AssertionError(f"stay continued onto {unit.text!r}")
+        return StayOrGo.GO
+
+    result = review_docx(path, decide)
+
+    zdanie = [visit for visit in result.visits if visit.level == ZDANIE]
+    assert [(visit.text, visit.stay_index) for visit in zdanie] == [
+        (_ALPHA, 0),
+        (_BRAVO, 0),
+        (_CHARLIE, 0),
+    ]
+    levels = [visit.level for visit in result.visits]
+    assert AKAPIT in levels
+    assert ROZDZIAL in levels
+    assert CALOSC in levels
+
+
+def test_new_sentence_created_during_zdanie_is_visited(tmp_path: Path) -> None:
+    path = _three_sentence_docx(tmp_path / "insert-zdanie.docx")
+    inserted = False
+
+    def decide(unit: ReviewUnit, docx: LiveDocx) -> StayOrGo:
+        nonlocal inserted
+        if unit.level == ZDANIE and unit.text == _ALPHA and not inserted:
+            assert unit.paragraph_locator is not None
+            paragraph = next(
+                node
+                for node in docx.load().iter_paragraphs()
+                if node.locator == unit.paragraph_locator
+            )
+            docx.insert_text(
+                locator=unit.paragraph_locator,
+                offset=len(paragraph.text),
+                text=f" {_DELTA}",
+            )
+            inserted = True
+        return StayOrGo.GO
+
+    result = review_docx(path, decide)
+
+    zdanie = [visit.text for visit in result.visits if visit.level == ZDANIE]
+    assert zdanie == [_ALPHA, _BRAVO, _CHARLIE, _DELTA]
+    levels = [visit.level for visit in result.visits]
+    assert AKAPIT in levels
+    assert ROZDZIAL in levels
+    assert CALOSC in levels
 
 
 def test_readme_describes_only_the_stay_or_go_walk() -> None:
