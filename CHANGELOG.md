@@ -9,9 +9,10 @@ after the last całość leaves the same file.
 
 Side effects go through one open Docxtor handle on that same file: add /
 update / delete a comment, or tracked insert / delete / replace of text.
-There is no two-scan name-then-judge, no `review_tree`, no
-`review_document` that writes a separate `reviewed.docx`, no takt cascade
-as a review, and no Pack pipeline as a second review.
+The handle is Docxtor 0.15.0. There is no two-scan name-then-judge, no
+`review_tree`, no `review_document` that writes a separate
+`reviewed.docx`, no takt cascade as a review, and no Pack pipeline as a
+second review.
 
 ## 0.24.1
 
