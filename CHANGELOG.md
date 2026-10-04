@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+One DOCX is now a first-class review: `review_one_docx` walks **that same
+file**. Stay-or-go at **zdanie**, then **akapit**, then **rozdział**, then
+**całość** *n* times. A side effect on the file under review may add a
+comment, update a comment, delete a comment, or change the text. Many
+comments can sit on one sentence. This is not nested post-order of an
+abstract tree that writes `reviewed.docx` only after both scans.
+
 Docs now match the 0.24.1 Pack surface: `review_tree` / `review_source` /
 `review_document` / `TaktReviewer` / CLI, plus `LLMClient.capabilities` and
 `LLMRequestOptions`. Removed insertion-engine claims the package no longer

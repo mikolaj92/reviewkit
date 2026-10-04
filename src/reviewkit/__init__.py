@@ -1,16 +1,14 @@
 """Public API for ReviewKit.
 
-0.24 is a domain-generic review process: Pack + two scans + plugin sockets.
-The same engine reviews any Pack; core does not encode a statute or product
-domain.
+The first job of this library is to review one DOCX by walking that same file.
+Hosts also import typed Pack objects and plugin sockets for tree reviews:
 
-Hosts import typed objects from this package and pass instances:
-
+* one-DOCX walk: ``review_one_docx``, ``Poziom``, ``DocxReviewer``
 * schemas: ``Pack``, ``Ontology``, ``Function``, ``SourceUnit``, ``Rule``
 * plugin sockets: ``DecisionClient.decide``, ``LLMClient.complete_json``
 * decision payloads: ``FragmentDecisionState``, ``DocumentDecisionState``
 * fakes: ``MockDecisionClient``, ``MockLLMClient``
-* entry points: ``review_tree``, ``review_source``, ``review_document``
+* tree entry points: ``review_tree``, ``review_source``, ``review_document``
 * naming/judge types: ``FunctionTag``, ``NamingResponse``, ``Verdict``,
   ``VerdictKind``, ``ActionText``, ``ReviewState`` (``covered()``)
 
@@ -66,6 +64,17 @@ from reviewkit.decision import (
     Question,
 )
 from reviewkit.document import DocumentParser, ReviewDocument
+from reviewkit.docx_live import DocxReviewError
+from reviewkit.docx_review import review_one_docx
+from reviewkit.docx_reviewer import (
+    AddComment,
+    ChangeText,
+    DeleteComment,
+    DocxReviewer,
+    ReviewDecision,
+    UpdateComment,
+)
+from reviewkit.docx_units import Jednostka
 from reviewkit.finality import (
     ReviewFinalityAssessment,
     ReviewFinalityStatus,
@@ -134,6 +143,7 @@ from reviewkit.pack import (
 from reviewkit.parser_docx import DocxDocumentParser, DocxFootnote, load_docx, read_footnotes
 from reviewkit.parser_text import TextDocumentParser, parse_text
 from reviewkit.pipeline import review_document
+from reviewkit.poziom import WALK_ORDER, Poziom
 from reviewkit.policy import ActionPolicy, PolicyGuard
 from reviewkit.portable_trail import (
     PortableReviewTrailError,
@@ -165,29 +175,36 @@ from reviewkit.revisions import (
     apply_reviewed_markup,
 )
 from reviewkit.state import ReviewState
+from reviewkit.stay_or_go import Ruch
 from reviewkit.takt_reviewer import TaktReviewer
 
 __all__ = [
     "ANCHOR_LAST",
     "SUGGESTION_MARKER_PREFIX",
+    "WALK_ORDER",
     "AcceptRevisionsError",
     "ActionPolicy",
     "ActionPolicyConfig",
     "ActionStatus",
     "ActionText",
+    "AddComment",
     "ChangeProvenance",
+    "ChangeText",
     "ChoiceQuestion",
     "ComparisonProvenance",
     "DecisionAnswer",
     "DecisionCall",
     "DecisionClient",
     "DecisionState",
+    "DeleteComment",
     "DocumentDecisionState",
     "DocumentParser",
     "DocumentTransitionEvidence",
     "DocxComment",
     "DocxDocumentParser",
     "DocxFootnote",
+    "DocxReviewError",
+    "DocxReviewer",
     "EmptyReviewContextProvider",
     "EvidenceRef",
     "FindingLineageEvent",
@@ -197,6 +214,7 @@ __all__ = [
     "IncorporatedCommentOutcome",
     "InsertionAction",
     "InsertionKind",
+    "Jednostka",
     "LLMCapabilities",
     "LLMClient",
     "LLMClientError",
@@ -210,6 +228,7 @@ __all__ = [
     "Ontology",
     "Pack",
     "PassTrace",
+    "Poziom",
     "PolicyGuard",
     "PortableReviewTrailError",
     "PortableReviewTrailProfile",
@@ -231,6 +250,7 @@ __all__ = [
     "ReviewChangeMetrics",
     "ReviewContext",
     "ReviewContextProvider",
+    "ReviewDecision",
     "ReviewDimension",
     "ReviewDocument",
     "ReviewFailureClass",
@@ -249,6 +269,7 @@ __all__ = [
     "RevisionCoverageError",
     "RevisionCoverageState",
     "RevisionLedger",
+    "Ruch",
     "Rule",
     "SourceRevision",
     "SourceRevisionKind",
@@ -256,6 +277,7 @@ __all__ = [
     "StructuredOutputMode",
     "TaktReviewer",
     "TextDocumentParser",
+    "UpdateComment",
     "Verdict",
     "VerdictKind",
     "accept_all_revisions",
@@ -290,6 +312,7 @@ __all__ = [
     "remark_disposition",
     "remark_weight",
     "review_document",
+    "review_one_docx",
     "review_remarks",
     "review_source",
     "review_tree",

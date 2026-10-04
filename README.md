@@ -1,19 +1,80 @@
 # ReviewKit
 
-ReviewKit is a domain-agnostic document-review **engine**. 0.24 is a refined
-generic review **process** (Pack + two scans + `DecisionClient` /
-`LLMClient` sockets). The same engine reviews a privacy notice or a newspaper article; only Pack content changes. A host builds a **Pack** and
-injects plugins; ReviewKit does not review domain content itself, does not
-encode a statute, and does not ship a model runtime.
+ReviewKit reviews **one DOCX**. That file is the review: the walk reads it,
+and every comment add, comment update, comment delete, or text change lands on
+**that same file** during the walk. It does not review an abstract copy and
+write a different file only at the end.
+
+The walk is stay-or-go at each of four levels, in this order:
+
+1. **zdanie** — sentence by sentence. On a sentence, decide: go to the next
+   sentence, or stay and iterate this same sentence again. A side effect on
+   that same file may add a comment, update a comment, delete a comment, or
+   change the text. Many comments can sit on one sentence because a later
+   pass adds another while earlier ones stay.
+2. **akapit** — after every sentence is done, the same stay-or-go loop over
+   paragraphs.
+3. **rozdział** — then the same loop over chapters (a section cut of the
+   document).
+4. **całość** — then the whole document, and the whole document may be walked
+   *n* times.
+
+```mermaid
+flowchart TD
+    file["one DOCX"]
+    file --> Z[zdanie]
+    Z --> ZD{"stay or go?"}
+    ZD -->|"stay: comment or text on same file"| Z
+    ZD -->|"go: next zdanie"| Z
+    Z -->|"every zdanie done"| A[akapit]
+    A --> AD{"stay or go?"}
+    AD -->|stay| A
+    AD -->|"go: next akapit"| A
+    A -->|"every akapit done"| R[rozdział]
+    R --> RD{"stay or go?"}
+    RD -->|stay| R
+    RD -->|"go: next rozdział"| R
+    R -->|"every rozdział done"| C[całość]
+    C --> CD{"stay or go?"}
+    CD -->|stay| C
+    CD -->|go| CN{"całość again?"}
+    CN -->|"n times"| C
+    CN -->|done| file
+```
+
+```python
+from pathlib import Path
+
+from reviewkit import (
+    AddComment,
+    ChangeText,
+    DeleteComment,
+    Poziom,
+    ReviewDecision,
+    Ruch,
+    UpdateComment,
+    review_one_docx,
+)
+
+result = review_one_docx(Path("input.docx"), reviewer, document_passes=2)
+# result.reviewed_docx is that same path. Side effects already landed there.
+```
+
+ReviewKit is also a domain-agnostic document-review **engine** for hosts that
+inject a Pack. 0.24 is a refined generic review **process** (Pack + two scans
++ `DecisionClient` / `LLMClient` sockets). The same engine reviews a privacy notice or a newspaper article; only Pack content changes. A host builds a
+**Pack** and injects plugins; ReviewKit does not review domain content itself,
+does not encode a statute, and does not ship a model runtime.
 
 ```text
-document + profile (how) + pack (what)
+    document + profile (how) + pack (what)
     → scan 1 name  → scan 2 judge  → optional act
 ```
 
 Hosts import typed `Pack`, `DecisionClient`, and `LLMClient` objects and pass
 instances. JSON files load through `Pack.model_validate` /
-`Pack.model_validate_json` only. A review always receives a Pack.
+`Pack.model_validate_json` only. A Pack tree review always receives a Pack.
+The one-DOCX walk above is the first review: one file, stay-or-go, same path.
 
 ## Roles
 
