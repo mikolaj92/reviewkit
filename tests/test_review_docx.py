@@ -159,10 +159,22 @@ def test_readme_describes_the_same_file_stay_or_go_walk() -> None:
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
     assert "```mermaid" in readme
     assert readme.count("```mermaid") == 1
+    mermaid = readme.split("```mermaid", 1)[1].split("```", 1)[0]
     for name in ("zdanie", "akapit", "rozdział", "całość"):
-        assert name in readme
-    assert "stay or go" in readme
-    assert "same file" in readme or "same DOCX" in readme or "that same file" in readme
-    assert "grain" not in readme.split("## The walk")[1].split("##")[0]
-    assert "percent" not in readme.split("## The walk")[1].split("##")[0]
-    assert "sides" not in readme.split("## The walk")[1].split("##")[0]
+        assert name in mermaid
+    assert "zdanie 1" in mermaid
+    assert "zdanie 2" in mermaid
+    assert "akapit 1" in mermaid
+    assert "akapit 2" in mermaid
+    assert "rozdział 1" in mermaid
+    assert "rozdział 2" in mermaid
+    assert "stay or go" in mermaid
+    assert mermaid.count("stay or go") >= 4
+    assert "zNext --> zLoop" not in mermaid
+    assert "comment or text on this DOCX" in mermaid
+    assert "walk całość again, n times" in mermaid
+    assert "same DOCX" in mermaid
+    walk = readme.split("## The walk")[1].split("##")[0]
+    assert "grain" not in walk
+    assert "percent" not in walk
+    assert "sides" not in walk

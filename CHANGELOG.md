@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+README mermaid: each zdanie / akapit / rozdział has its own stay-or-go box;
+stay loops back to that unit on the same DOCX; go moves to the next unit;
+całość stay walks the whole document again n times.
+
 `review_docx` walks **one DOCX in place**. That walk is the review: zdanie,
 then akapit, then rozdział, then całość *n* times, each with a stay-or-go
 loop. Side effects (add / update / delete a comment, change text) land on

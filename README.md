@@ -22,31 +22,47 @@ Order, always:
 
 ```mermaid
 flowchart TD
-  start["one DOCX"] --> zdanie
-  zdanie["1. zdanie"] --> zLoop{"stay or go?"}
-  zLoop -->|stay| zSame["same sentence again"]
-  zSame --> zLoop
-  zLoop -->|go| zNext["next sentence"]
-  zNext --> zLoop
-  zLoop -->|all zdanie done| akapit
-  akapit["2. akapit"] --> aLoop{"stay or go?"}
-  aLoop -->|stay| aSame["same paragraph again"]
-  aSame --> aLoop
-  aLoop -->|go| aNext["next paragraph"]
-  aNext --> aLoop
-  aLoop -->|all akapit done| rozdzial
-  rozdzial["3. rozdział"] --> rLoop{"stay or go?"}
-  rLoop -->|stay| rSame["same chapter again"]
-  rSame --> rLoop
-  rLoop -->|go| rNext["next chapter"]
-  rNext --> rLoop
-  rLoop -->|all rozdział done| calosc
-  calosc["4. całość n times"] --> cLoop{"stay or go?"}
-  cLoop -->|stay| cSame["same document again"]
-  cSame --> cLoop
-  cLoop -->|go, remaining n| calosc
-  cLoop -->|go, n done| done["same file"]
-  start -.-> done
+  start["one DOCX"] --> z1["zdanie 1"]
+
+  z1 --> z1q{"stay or go?"}
+  z1q -->|stay: comment or text on this DOCX| z1
+  z1q -->|go| z2["zdanie 2"]
+
+  z2 --> z2q{"stay or go?"}
+  z2q -->|stay: comment or text on this DOCX| z2
+  z2q -->|go| zMore["zdanie …"]
+
+  zMore --> zMoreq{"stay or go?"}
+  zMoreq -->|stay: comment or text on this DOCX| zMore
+  zMoreq -->|go: every zdanie done| a1["akapit 1"]
+
+  a1 --> a1q{"stay or go?"}
+  a1q -->|stay: comment or text on this DOCX| a1
+  a1q -->|go| a2["akapit 2"]
+
+  a2 --> a2q{"stay or go?"}
+  a2q -->|stay: comment or text on this DOCX| a2
+  a2q -->|go| aMore["akapit …"]
+
+  aMore --> aMoreq{"stay or go?"}
+  aMoreq -->|stay: comment or text on this DOCX| aMore
+  aMoreq -->|go: every akapit done| r1["rozdział 1"]
+
+  r1 --> r1q{"stay or go?"}
+  r1q -->|stay: comment or text on this DOCX| r1
+  r1q -->|go| r2["rozdział 2"]
+
+  r2 --> r2q{"stay or go?"}
+  r2q -->|stay: comment or text on this DOCX| r2
+  r2q -->|go| rMore["rozdział …"]
+
+  rMore --> rMoreq{"stay or go?"}
+  rMoreq -->|stay: comment or text on this DOCX| rMore
+  rMoreq -->|go: every rozdział done| c["całość"]
+
+  c --> cq{"stay or go?"}
+  cq -->|stay: walk całość again, n times| c
+  cq -->|go: done, same DOCX| done["same DOCX"]
 ```
 
 ```python
