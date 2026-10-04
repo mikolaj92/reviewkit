@@ -1,13 +1,79 @@
 # ReviewKit
 
-ReviewKit is a domain-agnostic document-review **engine**. 0.24 is a refined
-generic review **process** (Pack + two scans + `DecisionClient` /
-`LLMClient` sockets). The same engine reviews a privacy notice or a newspaper article; only Pack content changes. A host builds a **Pack** and
+ReviewKit reviews **one DOCX**. That walk is the review. It opens the file
+and stays on it: it does not review an abstract copy and write a different
+file only at the end. A side effect on that same file may add a comment,
+update a comment, delete a comment, or change the text. Many comments can
+sit on one sentence because a later pass adds another while earlier ones
+stay.
+
+## The walk
+
+Order, always:
+
+1. **zdanie** — each sentence. On a sentence, stay (iterate this same
+   sentence again) or go (the next sentence).
+2. **akapit** — after every sentence is done, the same stay-or-go loop over
+   each paragraph.
+3. **rozdział** — then the same loop over each chapter (a section cut of
+   the document).
+4. **całość** — then the whole document, walked *n* times, with the same
+   stay-or-go loop on each walk.
+
+```mermaid
+flowchart TD
+  start["one DOCX"] --> zdanie
+  zdanie["1. zdanie"] --> zLoop{"stay or go?"}
+  zLoop -->|stay| zSame["same sentence again"]
+  zSame --> zLoop
+  zLoop -->|go| zNext["next sentence"]
+  zNext --> zLoop
+  zLoop -->|all zdanie done| akapit
+  akapit["2. akapit"] --> aLoop{"stay or go?"}
+  aLoop -->|stay| aSame["same paragraph again"]
+  aSame --> aLoop
+  aLoop -->|go| aNext["next paragraph"]
+  aNext --> aLoop
+  aLoop -->|all akapit done| rozdzial
+  rozdzial["3. rozdział"] --> rLoop{"stay or go?"}
+  rLoop -->|stay| rSame["same chapter again"]
+  rSame --> rLoop
+  rLoop -->|go| rNext["next chapter"]
+  rNext --> rLoop
+  rLoop -->|all rozdział done| calosc
+  calosc["4. całość n times"] --> cLoop{"stay or go?"}
+  cLoop -->|stay| cSame["same document again"]
+  cSame --> cLoop
+  cLoop -->|go, remaining n| calosc
+  cLoop -->|go, n done| done["same file"]
+  start -.-> done
+```
+
+```python
+from reviewkit import (
+    AKAPIT,
+    CALOSC,
+    ROZDZIAL,
+    StayOrGo,
+    ZDANIE,
+    review_docx,
+)
+
+result = review_docx(path, reviewer, calosc_times=n)
+# reviewer.decide(unit, docx) -> StayOrGo.STAY or StayOrGo.GO
+# unit.level is zdanie, akapit, rozdział, or całość
+# docx.add_comment / update_comment / delete_comment / change_text write path
+```
+
+ReviewKit is also a domain-agnostic document-review **engine**. 0.24 is a
+refined generic review **process** (Pack + two scans + `DecisionClient` /
+`LLMClient` sockets) that a host may use to decide stay-or-go and side
+effects. The same engine reviews a privacy notice or a newspaper article; only Pack content changes. A host builds a **Pack** and
 injects plugins; ReviewKit does not review domain content itself, does not
 encode a statute, and does not ship a model runtime.
 
 ```text
-document + profile (how) + pack (what)
+    document + profile (how) + pack (what)
     → scan 1 name  → scan 2 judge  → optional act
 ```
 

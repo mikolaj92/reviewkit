@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+`review_docx` walks **one DOCX in place**. That walk is the review: zdanie,
+then akapit, then rozdział, then całość *n* times, each with a stay-or-go
+loop. Side effects (add / update / delete a comment, change text) land on
+that same file during the walk. This is not nested post-order of an
+abstract tree with a new `reviewed.docx` only after both Pack scans.
+
 Docs now match the 0.24.1 Pack surface: `review_tree` / `review_source` /
 `review_document` / `TaktReviewer` / CLI, plus `LLMClient.capabilities` and
 `LLMRequestOptions`. Removed insertion-engine claims the package no longer

@@ -10,6 +10,7 @@ Hosts import typed objects from this package and pass instances:
 * plugin sockets: ``DecisionClient.decide``, ``LLMClient.complete_json``
 * decision payloads: ``FragmentDecisionState``, ``DocumentDecisionState``
 * fakes: ``MockDecisionClient``, ``MockLLMClient``
+* one-DOCX walk: ``review_docx`` (zdanie, akapit, rozdział, całość)
 * entry points: ``review_tree``, ``review_source``, ``review_document``
 * naming/judge types: ``FunctionTag``, ``NamingResponse``, ``Verdict``,
   ``VerdictKind``, ``ActionText``, ``ReviewState`` (``covered()``)
@@ -78,6 +79,8 @@ from reviewkit.insertions import (
     contains_suggestion_marker,
     format_suggestion_text,
 )
+from reviewkit.levels import AKAPIT, CALOSC, LEVEL_ORDER, ROZDZIAL, ZDANIE
+from reviewkit.live_docx import LiveDocx, LiveDocxError
 from reviewkit.llm import (
     LLMCapabilities,
     LLMClient,
@@ -146,6 +149,7 @@ from reviewkit.portable_trail import (
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 from reviewkit.renderer_docx import RenderIntegrityError
 from reviewkit.review import review_source, review_tree
+from reviewkit.review_docx import DocxReview, DocxReviewer, review_docx
 from reviewkit.review_outcomes import (
     IncorporatedCommentOutcome,
     RenderedActionAssessment,
@@ -166,10 +170,23 @@ from reviewkit.revisions import (
 )
 from reviewkit.state import ReviewState
 from reviewkit.takt_reviewer import TaktReviewer
+from reviewkit.walk import (
+    ReviewUnit,
+    StayOrGo,
+    WalkLimitError,
+    WalkVisit,
+    list_units,
+    walk_live_docx,
+)
 
 __all__ = [
+    "AKAPIT",
     "ANCHOR_LAST",
+    "CALOSC",
+    "LEVEL_ORDER",
+    "ROZDZIAL",
     "SUGGESTION_MARKER_PREFIX",
+    "ZDANIE",
     "AcceptRevisionsError",
     "ActionPolicy",
     "ActionPolicyConfig",
@@ -188,6 +205,8 @@ __all__ = [
     "DocxComment",
     "DocxDocumentParser",
     "DocxFootnote",
+    "DocxReview",
+    "DocxReviewer",
     "EmptyReviewContextProvider",
     "EvidenceRef",
     "FindingLineageEvent",
@@ -202,6 +221,8 @@ __all__ = [
     "LLMClientError",
     "LLMClientFailure",
     "LLMRequestOptions",
+    "LiveDocx",
+    "LiveDocxError",
     "MarkupReport",
     "MockDecisionClient",
     "MockLLMClient",
@@ -246,6 +267,7 @@ __all__ = [
     "ReviewScope",
     "ReviewState",
     "ReviewStats",
+    "ReviewUnit",
     "RevisionCoverageError",
     "RevisionCoverageState",
     "RevisionLedger",
@@ -253,11 +275,14 @@ __all__ = [
     "SourceRevision",
     "SourceRevisionKind",
     "SourceUnit",
+    "StayOrGo",
     "StructuredOutputMode",
     "TaktReviewer",
     "TextDocumentParser",
     "Verdict",
     "VerdictKind",
+    "WalkLimitError",
+    "WalkVisit",
     "accept_all_revisions",
     "append_portable_review_trail",
     "apply_reviewed_markup",
@@ -278,6 +303,7 @@ __all__ = [
     "incorporated_comment_outcomes",
     "inspect_markup",
     "is_supported_anchor",
+    "list_units",
     "load_docx",
     "load_profile",
     "measure_review_changes",
@@ -290,6 +316,7 @@ __all__ = [
     "remark_disposition",
     "remark_weight",
     "review_document",
+    "review_docx",
     "review_remarks",
     "review_source",
     "review_tree",
@@ -297,5 +324,6 @@ __all__ = [
     "set_metadata_marker",
     "strip_metadata_marker",
     "strip_portable_review_trail",
+    "walk_live_docx",
     "write_portable_review_trail",
 ]
