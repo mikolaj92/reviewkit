@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+A DOCX review is a stay-or-go walk of **that same file**: every **zdanie**,
+then every **akapit**, then every **rozdział**, then **całość** n times.
+Side effects (add / update / delete a comment, or change text) land on the
+file during the walk. `review_docx` is the entry point. Nested post-order
+name-then-judge on a tree, with comments rendered onto a new `reviewed.docx`
+only after both scans, is not that review.
+
 Docs now match the 0.24.1 Pack surface: `review_tree` / `review_source` /
 `review_document` / `TaktReviewer` / CLI, plus `LLMClient.capabilities` and
 `LLMRequestOptions`. Removed insertion-engine claims the package no longer

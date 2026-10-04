@@ -1,16 +1,20 @@
 """Public API for ReviewKit.
 
-0.24 is a domain-generic review process: Pack + two scans + plugin sockets.
+A DOCX review walks that same file: zdanie, then akapit, then rozdział, then
+całość n times. Pack + plugin sockets remain the host game for tree reviews.
 The same engine reviews any Pack; core does not encode a statute or product
 domain.
 
 Hosts import typed objects from this package and pass instances:
 
+* DOCX walk: ``review_docx``, ``DocxReviewer``, ``Poziom`` (zdanie / akapit /
+  rozdział / całość), ``StayOrGo``
 * schemas: ``Pack``, ``Ontology``, ``Function``, ``SourceUnit``, ``Rule``
 * plugin sockets: ``DecisionClient.decide``, ``LLMClient.complete_json``
 * decision payloads: ``FragmentDecisionState``, ``DocumentDecisionState``
-* fakes: ``MockDecisionClient``, ``MockLLMClient``
-* entry points: ``review_tree``, ``review_source``, ``review_document``
+* fakes: ``MockDocxReviewer``, ``MockDecisionClient``, ``MockLLMClient``
+* entry points: ``review_docx``, ``review_tree``, ``review_source``,
+  ``review_document``
 * naming/judge types: ``FunctionTag``, ``NamingResponse``, ``Verdict``,
   ``VerdictKind``, ``ActionText``, ``ReviewState`` (``covered()``)
 
@@ -38,7 +42,12 @@ from reviewkit.comment_remarks import (
     remark_weight,
     review_remarks,
 )
-from reviewkit.comments import DocxComment, comments_for_locator, read_comments
+from reviewkit.comments import (
+    DocxComment,
+    comments_for_locator,
+    comments_overlapping_span,
+    read_comments,
+)
 from reviewkit.comparison import attribute_docx_changes
 from reviewkit.comparison_models import (
     ChangeProvenance,
@@ -66,6 +75,7 @@ from reviewkit.decision import (
     Question,
 )
 from reviewkit.document import DocumentParser, ReviewDocument
+from reviewkit.docx_review import review_docx
 from reviewkit.finality import (
     ReviewFinalityAssessment,
     ReviewFinalityStatus,
@@ -143,6 +153,7 @@ from reviewkit.portable_trail import (
     strip_portable_review_trail,
     write_portable_review_trail,
 )
+from reviewkit.poziom import Poziom
 from reviewkit.profile import ActionPolicyConfig, ReviewProfile, load_profile
 from reviewkit.renderer_docx import RenderIntegrityError
 from reviewkit.review import review_source, review_tree
@@ -165,7 +176,17 @@ from reviewkit.revisions import (
     apply_reviewed_markup,
 )
 from reviewkit.state import ReviewState
+from reviewkit.stay import StayOrGo
 from reviewkit.takt_reviewer import TaktReviewer
+from reviewkit.visit import (
+    DocxReviewer,
+    Effect,
+    EffectKind,
+    MockDocxReviewer,
+    Unit,
+    Visit,
+    VisitDecision,
+)
 
 __all__ = [
     "ANCHOR_LAST",
@@ -188,6 +209,9 @@ __all__ = [
     "DocxComment",
     "DocxDocumentParser",
     "DocxFootnote",
+    "DocxReviewer",
+    "Effect",
+    "EffectKind",
     "EmptyReviewContextProvider",
     "EvidenceRef",
     "FindingLineageEvent",
@@ -204,6 +228,7 @@ __all__ = [
     "LLMRequestOptions",
     "MarkupReport",
     "MockDecisionClient",
+    "MockDocxReviewer",
     "MockLLMClient",
     "NamingResponse",
     "NoulQuestion",
@@ -213,6 +238,7 @@ __all__ = [
     "PolicyGuard",
     "PortableReviewTrailError",
     "PortableReviewTrailProfile",
+    "Poziom",
     "ProcessCheck",
     "ProvenanceDiagnostic",
     "ProvenanceStatus",
@@ -253,11 +279,15 @@ __all__ = [
     "SourceRevision",
     "SourceRevisionKind",
     "SourceUnit",
+    "StayOrGo",
     "StructuredOutputMode",
     "TaktReviewer",
     "TextDocumentParser",
+    "Unit",
     "Verdict",
     "VerdictKind",
+    "Visit",
+    "VisitDecision",
     "accept_all_revisions",
     "append_portable_review_trail",
     "apply_reviewed_markup",
@@ -268,6 +298,7 @@ __all__ = [
     "attribute_docx_changes",
     "canonical_action_dump",
     "comments_for_locator",
+    "comments_overlapping_span",
     "compare_review_remarks",
     "contains_suggestion_marker",
     "format_suggestion_text",
@@ -290,6 +321,7 @@ __all__ = [
     "remark_disposition",
     "remark_weight",
     "review_document",
+    "review_docx",
     "review_remarks",
     "review_source",
     "review_tree",

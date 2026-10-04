@@ -50,6 +50,30 @@ def comments_for_locator(comments: list[DocxComment], locator: str | None) -> li
     return [] if not locator else [comment for comment in comments if comment.locator == locator]
 
 
+def comments_overlapping_span(
+    comments: list[DocxComment],
+    locator: str | None,
+    start: int | None,
+    end: int | None,
+) -> list[DocxComment]:
+    """Comments on ``locator`` whose range meets ``[start, end)``.
+
+    A comment without offsets covers the whole paragraph and therefore sits on
+    every span in that paragraph.
+    """
+    located = comments_for_locator(comments, locator)
+    if start is None or end is None:
+        return located
+    overlapping: list[DocxComment] = []
+    for comment in located:
+        if comment.start_offset is None or comment.end_offset is None:
+            overlapping.append(comment)
+            continue
+        if comment.start_offset < end and start < comment.end_offset:
+            overlapping.append(comment)
+    return overlapping
+
+
 def _project_comment(
     comment: AddressableComment,
     paragraph_text: str = "",
@@ -89,9 +113,7 @@ def _marker_range(
     return _offsets_in_paragraph(paragraph, comment.comment_id)
 
 
-def _offsets_in_paragraph(
-    paragraph: object, comment_id: str
-) -> tuple[int | None, int | None]:
+def _offsets_in_paragraph(paragraph: object, comment_id: str) -> tuple[int | None, int | None]:
     element = getattr(paragraph, "_p", None)
     if element is None or not hasattr(element, "iter"):
         return (None, None)

@@ -1,26 +1,126 @@
 # ReviewKit
 
-ReviewKit is a domain-agnostic document-review **engine**. 0.24 is a refined
-generic review **process** (Pack + two scans + `DecisionClient` /
-`LLMClient` sockets). The same engine reviews a privacy notice or a newspaper article; only Pack content changes. A host builds a **Pack** and
-injects plugins; ReviewKit does not review domain content itself, does not
-encode a statute, and does not ship a model runtime.
+ReviewKit reviews **one DOCX**. The review walks that same file. It does not
+review an abstract copy and write a different file at the end.
 
-```text
-document + profile (how) + pack (what)
-    → scan 1 name  → scan 2 judge  → optional act
+A side effect on that same file may be adding a comment, updating a comment,
+deleting a comment, or changing the text. Many comments can sit on one
+**zdanie** because later iterations add another comment while earlier ones stay.
+
+Order:
+
+1. **zdanie** by **zdanie**. On a zdanie, a decision: go to the next zdanie, or
+   stay and iterate this same zdanie again.
+2. After every zdanie is done, the same stay-or-go loop over every **akapit**
+   (paragraph and paragraph-unit are the same thing).
+3. Then the same loop over every **rozdział** (a section cut of the document).
+4. Then **całość** (the whole document), and całość may be walked n times
+   (once, or as many times as the decision says to stay).
+
+That walk is the review.
+
+```mermaid
+flowchart TD
+  start["one DOCX"] --> zdania["every zdanie"]
+  subgraph zdanieBox["zdanie"]
+    zVisit["visit this zdanie"]
+    zEffect["side effect on the same file"]
+    zDecide{"stay or go?"}
+    zVisit --> zEffect --> zDecide
+    zDecide -->|stay| zVisit
+    zDecide -->|go| zNext["next zdanie"]
+    zNext --> zVisit
+  end
+  zdania --> zdanieBox
+  zdanieBox --> akapity["every akapit"]
+  subgraph akapitBox["akapit"]
+    aVisit["visit this akapit"]
+    aEffect["side effect on the same file"]
+    aDecide{"stay or go?"}
+    aVisit --> aEffect --> aDecide
+    aDecide -->|stay| aVisit
+    aDecide -->|go| aNext["next akapit"]
+    aNext --> aVisit
+  end
+  akapity --> akapitBox
+  akapitBox --> rozdzialy["every rozdział"]
+  subgraph rozdzialBox["rozdział"]
+    rVisit["visit this rozdział"]
+    rEffect["side effect on the same file"]
+    rDecide{"stay or go?"}
+    rVisit --> rEffect --> rDecide
+    rDecide -->|stay| rVisit
+    rDecide -->|go| rNext["next rozdział"]
+    rNext --> rVisit
+  end
+  rozdzialy --> rozdzialBox
+  rozdzialBox --> calosc["całość n times"]
+  subgraph caloscBox["całość"]
+    cVisit["visit całość"]
+    cEffect["side effect on the same file"]
+    cDecide{"stay or go?"}
+    cVisit --> cEffect --> cDecide
+    cDecide -->|stay| cVisit
+    cDecide -->|go| done["the same DOCX"]
+  end
+  calosc --> caloscBox
 ```
 
-Hosts import typed `Pack`, `DecisionClient`, and `LLMClient` objects and pass
-instances. JSON files load through `Pack.model_validate` /
-`Pack.model_validate_json` only. A review always receives a Pack.
+Call `review_docx(path, reviewer)`. The reviewer sees one unit, may mutate that
+same file, then returns stay or go. `Poziom` is zdanie, akapit, rozdział,
+całość. Do not rename them grain, percent, or sides.
+
+```python
+from pathlib import Path
+
+from reviewkit import (
+    Effect,
+    EffectKind,
+    MockDocxReviewer,
+    StayOrGo,
+    VisitDecision,
+    review_docx,
+)
+
+reviewer = MockDocxReviewer(
+    decisions=[
+        VisitDecision(
+            stay_or_go=StayOrGo.STAY,
+            effects=(Effect(kind=EffectKind.ADD_COMMENT, comment="first"),),
+        ),
+        VisitDecision(
+            stay_or_go=StayOrGo.GO,
+            effects=(Effect(kind=EffectKind.ADD_COMMENT, comment="second"),),
+        ),
+    ]
+)
+result = review_docx(Path("input.docx"), reviewer)
+# result.reviewed_docx is input.docx — the file the walk mutated.
+```
+
+ReviewKit is also a domain-agnostic document-review **engine** for in-memory
+trees. A host builds a **Pack** and injects plugins; ReviewKit does not review
+domain content itself, does not encode a statute, and does not ship a model
+runtime. The same engine reviews a privacy notice or a newspaper article; only
+Pack content changes.
+
+```text
+    one DOCX → zdanie stay-or-go → akapit stay-or-go → rozdział stay-or-go
+             → całość n times
+    tree + pack (what) + profile (how)
+    → name → judge → optional act
+```
+
+Hosts import typed `Pack`, `DecisionClient`, `LLMClient`, and `DocxReviewer`
+objects and pass instances. JSON files load through `Pack.model_validate` /
+`Pack.model_validate_json` only. A Pack tree review always receives a Pack.
 
 ## Roles
 
 | Who | Does | Does not |
 | --- | --- | --- |
-| Host | Builds Pack, injects `DecisionClient` / `LLMClient`, computes gaps from `covered()` | Expect ReviewKit to know the domain |
-| ReviewKit | Two scans, `covered()`, sockets `decide` / `complete_json`, deterministic edits | Import a model runtime; treat `instructions.md` as Pack |
+| Host | Walks a DOCX through `DocxReviewer`, or builds Pack, injects `DecisionClient` / `LLMClient`, computes gaps from `covered()` | Expect ReviewKit to know the domain |
+| ReviewKit | Same-file DOCX walk; tree name/judge/`covered()`; sockets `decide` / `complete_json`; deterministic edits | Import a model runtime; treat `instructions.md` as Pack |
 | Pack | Ontology + source units + rules | Behave like a profile |
 | Profile | Reviewer behavior (role, language, action policy, pipeline) | Carry acts, ontology, or source units |
 
@@ -39,9 +139,10 @@ Do not grow this library into a journal or a legal product. Composition is host 
 
 ## Host integration
 
-Construct a Pack as a typed object, inject a `DecisionClient`, run the two scans.
-Gaps are `ontology.function_ids() − covered()` on the host — not
-`missing_elements`, and not `ReviewFinding.dimension`.
+Construct a Pack as a typed object, inject a `DecisionClient`, run name then
+judge on a tree. Gaps are `ontology.function_ids() − covered()` on the host —
+not `missing_elements`, and not `ReviewFinding.dimension`. A DOCX file is
+reviewed with `review_docx` on that same path.
 
 ```python
 from pathlib import Path
@@ -49,6 +150,7 @@ from pathlib import Path
 from reviewkit import (
     Function,
     MockDecisionClient,
+    MockDocxReviewer,
     MockLLMClient,
     Ontology,
     Pack,
@@ -59,6 +161,7 @@ from reviewkit import (
     load_profile,
     parse_text,
     review_document,
+    review_docx,
     review_source,
     review_tree,
 )
@@ -106,7 +209,10 @@ result = review_source(
     decision,
 )
 
-# DOCX artifacts (reviewed / corrected / JSON report):
+# One DOCX. The walk mutates that same file:
+result = review_docx("input.docx", MockDocxReviewer())
+
+# Pack tree plus DOCX artifacts (reviewed / corrected / JSON report):
 result = review_document(
     input_path="input.docx",
     profile_path=profile,
@@ -148,7 +254,9 @@ legal domain, not `profile.toml`, not `instructions.md`, and not
 - Validators: `function_id` belongs to the ontology; `source_unit_id` belongs
   to `units`. Close is document-scope; label and defect are fragment-scope.
 
-## Two-scan review
+## Pack tree review
+
+A tree already in memory still names, then judges:
 
 1. **Name** every sentence, paragraph, section, and document through
    `DecisionClient.decide` (one noul per function). Tags only — no findings,
@@ -158,6 +266,10 @@ legal domain, not `profile.toml`, not `instructions.md`, and not
    `ReviewState.covered()` has no nodes for that function.
 3. **Act** through `LLMClient.complete_json` only for `change` / `delete` /
    `insert` above the profile confidence floor. Otherwise a person.
+
+That is not the DOCX walk. Nested post-order name-then-judge on a tree, with
+comments rendered onto a new `reviewed.docx` only after both scans, is a Pack
+tree pass. A DOCX review is the stay-or-go walk of that same file.
 
 The effector materializes scan-2 actions only. Hierarchical scan order is
 still `sentence → paragraph → section → document` (powered by the generic
@@ -207,7 +319,8 @@ from a model name. `complete_json` accepts optional `LLMRequestOptions`
 (deadline, token bounds, temperature). The engine currently calls
 `complete_json(messages, schema)` without `options`.
 
-Call site: `review_tree(document, profile, llm, pack, decision)`,
+Call site: `review_docx(path, reviewer)`,
+`review_tree(document, profile, llm, pack, decision)`,
 `review_source(source, parser, profile, llm, pack, decision)`, or
 `review_document(...)`. The CLI is `reviewkit input.docx --profile DIR
 --pack FILE --decision module:factory --llm module:factory`. Tests and
@@ -326,8 +439,9 @@ replacement, insertion, deletion, flag, or advisory action.
 
 ## DOCX Rendering
 
-`reviewed.docx` starts from the source DOCX and patches reviewed paragraphs in
-place:
+`review_docx` writes comments and text changes onto the file it is walking.
+`review_document` can still render a separate `reviewed.docx` from a Pack tree
+pass:
 
 - body, table, header and footer paragraphs keep the original document structure;
 - text edits are written as native `w:ins` / `w:del` tracked changes;
