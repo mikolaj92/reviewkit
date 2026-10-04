@@ -19,7 +19,6 @@ from docxtor import (
     RevisionAuthor,
     RevisionPosition,
     RevisionRange,
-    add_paragraph_comment,
 )
 
 from reviewkit.comments import DocxComment, comments_from_document
@@ -66,24 +65,25 @@ class LiveDocx:
     ) -> str:
         """Add a Word comment on ``locator[start:end]``.
 
-        A later stay may add another comment on the same sentence. Existing
-        range markers make a second identical span opaque, so that extra
-        comment is placed on the paragraph and still sits on the sentence.
+        A later stay may add another comment on the same sentence.
         """
         writer = CommentAuthor(author=author, initials=initials)
         try:
-            try:
-                result = self._document.add_comment(
-                    CommentRange(locator, start, end, expected_text), text, writer
-                )
-            except (CommentMutationError, IndexError):
-                result = add_paragraph_comment(self._document.to_bytes(), locator, text, writer)
-                self._document._adopt_bytes(result.data)
+            result = self._document.add_comment(
+                CommentRange(locator, start, end, expected_text), text, writer
+            )
             created = result.receipt.created_ids
             if not created:
                 raise LiveDocxError("add comment produced no comment id")
             self._publish()
-        except (OSError, DocumentError, CommentMutationError, PublishError, ValueError) as exc:
+        except (
+            OSError,
+            DocumentError,
+            CommentMutationError,
+            PublishError,
+            ValueError,
+            IndexError,
+        ) as exc:
             raise LiveDocxError(str(exc)) from exc
         return created[0]
 
@@ -98,7 +98,7 @@ class LiveDocx:
 
     def delete_comment(self, comment_id: str) -> None:
         try:
-            self._document.delete_comment(comment_id)
+            self._document.remove_comments({comment_id})
             self._publish()
         except (OSError, DocumentError, CommentMutationError, PublishError, ValueError) as exc:
             raise LiveDocxError(str(exc)) from exc

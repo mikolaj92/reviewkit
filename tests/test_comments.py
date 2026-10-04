@@ -78,7 +78,8 @@ def test_read_comments_table_cell_gets_table_locator(tmp_path: Path) -> None:
 
 
 def test_read_comments_exposes_unique_sentence_range(tmp_path: Path) -> None:
-    from docxtor import CommentAuthor, CommentRange, add_comment
+    from docxtor import CommentAuthor, CommentRange
+    from docxtor import DocxDocument as OpenDocx
 
     first = "Strony mogą wypowiedzieć umowę."
     second = "Umowa obowiązuje od dnia podpisania."
@@ -87,19 +88,18 @@ def test_read_comments_exposes_unique_sentence_range(tmp_path: Path) -> None:
     docx = DocxDocument()
     docx.add_paragraph(paragraph)
     docx.save(path)
-    path.write_bytes(
-        add_comment(
-            path.read_bytes(),
-            CommentRange(
-                locator="body:p:0",
-                start_offset=0,
-                end_offset=len(first),
-                expected_text=first,
-            ),
-            "termin",
-            CommentAuthor(author="Reviewer", initials="RV"),
-        ).data
+    handle = OpenDocx.open(path)
+    handle.add_comment(
+        CommentRange(
+            locator="body:p:0",
+            start_offset=0,
+            end_offset=len(first),
+            expected_text=first,
+        ),
+        "termin",
+        CommentAuthor(author="Reviewer", initials="RV"),
     )
+    handle.publish()
 
     comments = read_comments(path)
     assert len(comments) == 1
