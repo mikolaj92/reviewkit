@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from docx import Document as DocxDocument
-from docxtor import CommentAuthor, CommentRange, add_comment, project_docx_for_review
+from docxtor import CommentAuthor, CommentRange, add_comment
 
 from reviewkit import (
     Effect,
@@ -14,6 +14,7 @@ from reviewkit import (
     StayOrGo,
     Visit,
     VisitDecision,
+    load_docx,
     read_comments,
     review_docx,
 )
@@ -178,11 +179,10 @@ def test_docx_walk_stays_on_first_zdanie_and_mutates_the_same_file(tmp_path: Pat
     ]
     assert {comment.text for comment in first_sentence_comments} >= {"pierwsza", "druga"}
 
-    paragraphs = {item.locator: item.text for item in project_docx_for_review(source).paragraphs}
-    assert "Second sentence." in paragraphs["body:p:1"]
-    assert "First sentence." in paragraphs["body:p:1"]
-    assert "Third clause." in paragraphs["body:p:2"]
-    assert "Third sentence." not in paragraphs["body:p:2"]
+    live = load_docx(source)
+    paragraphs = {paragraph.locator: paragraph.text for paragraph in live.iter_paragraphs()}
+    assert paragraphs["body:p:1"] == "First sentence. Second sentence."
+    assert paragraphs["body:p:2"] == "Third clause."
 
     other = tmp_path / "reviewed.docx"
     assert not other.exists()
