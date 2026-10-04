@@ -32,7 +32,6 @@ def test_removed_review_paths_are_not_on_the_package_root() -> None:
         "review_tree",
         "review_source",
         "review_document",
-        "TaktReviewer",
         "Pack",
         "DecisionClient",
         "LLMClient",

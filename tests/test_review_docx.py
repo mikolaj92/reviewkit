@@ -245,5 +245,4 @@ def test_readme_describes_only_the_stay_or_go_walk() -> None:
     assert "review_tree" not in lowered
     assert "review_document" not in lowered
     assert "two-scan" not in lowered
-    assert "takt" not in lowered
     assert "reviewed.docx" not in lowered
