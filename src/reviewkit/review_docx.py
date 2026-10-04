@@ -1,9 +1,8 @@
 """Review one DOCX by walking that same file.
 
-This is the library's primary review: zdanie, then akapit, then rozdział, then
-całość n times. Each level uses a stay-or-go loop. Side effects write the file
-under review; the walk does not judge an abstract copy and emit a different
-DOCX only at the end.
+That walk is the only review: zdanie, then akapit, then rozdział, then
+całość. Each unit has its own stay-or-go loop. Side effects are Word
+comments and tracked changes on this file.
 """
 
 from __future__ import annotations
@@ -32,21 +31,13 @@ class DocxReview:
 def review_docx(
     path: str | Path,
     reviewer: DocxReviewer | Callable[[ReviewUnit, LiveDocx], StayOrGo],
-    *,
-    calosc_times: int = 1,
-    max_stays: int = 64,
 ) -> DocxReview:
     """Review ``path`` by walking that file. Mutations land on ``path``."""
     live = LiveDocx(path)
     raw = getattr(reviewer, "decide", reviewer)
     if not callable(raw):
         raise TypeError("reviewer must be callable or provide decide(unit, docx)")
-    visits = walk_live_docx(
-        live,
-        cast(DecideFn, raw),
-        calosc_times=calosc_times,
-        max_stays=max_stays,
-    )
+    visits = walk_live_docx(live, cast(DecideFn, raw))
     return DocxReview(path=live.path, visits=visits)
 
 

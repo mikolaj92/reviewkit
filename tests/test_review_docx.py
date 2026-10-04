@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from zipfile import ZipFile
 
 from docx import Document as DocxDocument
 
@@ -23,6 +24,8 @@ _FIRST = "First sentence."
 _SECOND = "Second sentence."
 _THIRD = "Third sentence lives here."
 _THIRD_EDITED = "Third sentence was edited."
+_FOURTH = "Fourth sentence to drop."
+_INSERTED = " Extra sentence."
 _NOTE_ONE = "first note on the opening sentence"
 _NOTE_TWO = "second note on the same sentence"
 _NOTE_UPDATED = "updated note on the opening sentence"
@@ -33,20 +36,26 @@ def _sample_docx(path: Path) -> Path:
     document.add_heading("Rozdział 1", level=1)
     document.add_paragraph(f"{_FIRST} {_SECOND}")
     document.add_paragraph(_THIRD)
+    document.add_paragraph(_FOURTH)
     document.save(path)
     return path
+
+
+def _document_xml(path: Path) -> bytes:
+    with ZipFile(path) as archive:
+        return archive.read("word/document.xml")
 
 
 class ScriptedReviewer:
     def __init__(self) -> None:
         self.comments_before_second_sentence: list[str] | None = None
         self.second_sentence_seen = False
-        self.updated_id: str | None = None
-        self.deleted_id: str | None = None
-        self.saw_update_on_file = False
-        self.saw_delete_on_file = False
-        self.saw_text_change_on_file = False
         self.comment_ids: list[str] = []
+        self.saw_update_on_file = False
+        self.saw_insert_on_file = False
+        self.saw_delete_on_file = False
+        self.saw_replace_on_file = False
+        self.calosc_stays = 0
 
     def decide(self, unit: ReviewUnit, docx: LiveDocx) -> StayOrGo:
         if unit.level == ZDANIE and unit.text == _FIRST and unit.stay_index == 0:
@@ -61,40 +70,67 @@ class ScriptedReviewer:
             self.comments_before_second_sentence = [
                 comment.text for comment in read_comments(docx.path)
             ]
+            return StayOrGo.STAY
+        if unit.level == ZDANIE and unit.text == _FIRST and unit.stay_index == 2:
+            assert self.second_sentence_seen is False
             return StayOrGo.GO
         if unit.level == ZDANIE and unit.text == _SECOND:
             self.second_sentence_seen = True
             assert self.comments_before_second_sentence is not None
             return StayOrGo.GO
-        if unit.level == AKAPIT and not self.saw_update_on_file:
-            self.updated_id = docx.update_comment(self.comment_ids[0], _NOTE_UPDATED)
+        if unit.level == ZDANIE and _THIRD in unit.text and not self.saw_replace_on_file:
+            assert unit.paragraph_locator is not None
+            assert unit.char_start is not None
+            assert unit.char_end is not None
+            docx.replace_text(
+                locator=unit.paragraph_locator,
+                start=unit.char_start,
+                end=unit.char_end,
+                replacement=_THIRD_EDITED,
+                expected_text=unit.text,
+            )
+            assert _THIRD_EDITED in docx.load().text
+            self.saw_replace_on_file = True
+            return StayOrGo.GO
+        if unit.level == ZDANIE and unit.text == _FOURTH:
+            assert unit.paragraph_locator is not None
+            assert unit.char_start is not None
+            assert unit.char_end is not None
+            docx.delete_text(
+                locator=unit.paragraph_locator,
+                start=unit.char_start,
+                end=unit.char_end,
+                expected_text=unit.text,
+            )
+            self.saw_delete_on_file = True
+            return StayOrGo.GO
+        if unit.level == AKAPIT and _FIRST in unit.text and not self.saw_insert_on_file:
+            assert unit.paragraph_locator is not None
+            docx.insert_text(
+                locator=unit.paragraph_locator,
+                offset=len(unit.text),
+                text=_INSERTED,
+            )
+            assert _INSERTED.strip() in docx.load().text
+            self.saw_insert_on_file = True
+            return StayOrGo.GO
+        if unit.level == ROZDZIAL and not self.saw_update_on_file:
+            self.comment_ids[0] = docx.update_comment(self.comment_ids[0], _NOTE_UPDATED)
             texts = [comment.text for comment in read_comments(docx.path)]
             assert _NOTE_UPDATED in texts
             assert _NOTE_ONE not in texts
-            self.saw_update_on_file = True
-            return StayOrGo.GO
-        if unit.level == ROZDZIAL and not self.saw_delete_on_file:
             remaining = next(
                 comment.id for comment in read_comments(docx.path) if comment.text == _NOTE_TWO
             )
-            self.deleted_id = remaining
             docx.delete_comment(remaining)
             texts = [comment.text for comment in read_comments(docx.path)]
             assert _NOTE_TWO not in texts
-            self.saw_delete_on_file = True
+            self.saw_update_on_file = True
             return StayOrGo.GO
-        if unit.level == CALOSC and unit.calosc_pass == 0 and not self.saw_text_change_on_file:
-            paragraph = next(node for node in docx.load().iter_paragraphs() if _THIRD in node.text)
-            assert paragraph.locator is not None
-            start = paragraph.text.find(_THIRD)
-            docx.change_text(
-                locator=paragraph.locator,
-                start=start,
-                end=start + len(_THIRD),
-                replacement=_THIRD_EDITED,
-            )
-            assert _THIRD_EDITED in docx.load().text
-            self.saw_text_change_on_file = True
+        if unit.level == CALOSC:
+            self.calosc_stays += 1
+            if unit.stay_index == 0:
+                return StayOrGo.STAY
             return StayOrGo.GO
         return StayOrGo.GO
 
@@ -116,7 +152,7 @@ def test_review_walks_one_docx_in_place(tmp_path: Path) -> None:
     path = _sample_docx(tmp_path / "source.docx")
     reviewer = ScriptedReviewer()
 
-    result = review_docx(path, reviewer, calosc_times=2)
+    result = review_docx(path, reviewer)
 
     assert result.path == path
     levels = [visit.level for visit in result.visits]
@@ -125,10 +161,11 @@ def test_review_walks_one_docx_in_place(tmp_path: Path) -> None:
     assert CALOSC not in levels[: levels.index(ROZDZIAL)]
     zdanie = [visit for visit in result.visits if visit.level == ZDANIE]
     assert all(visit.level == ZDANIE for visit in result.visits[: len(zdanie)])
-    assert [visit.stay_index for visit in zdanie[:2]] == [0, 1]
+    assert [visit.stay_index for visit in zdanie[:3]] == [0, 1, 2]
     assert zdanie[0].text == _FIRST
     assert zdanie[1].text == _FIRST
-    assert zdanie[2].text == _SECOND
+    assert zdanie[2].text == _FIRST
+    assert zdanie[3].text == _SECOND
     assert reviewer.second_sentence_seen is True
     assert reviewer.comments_before_second_sentence is not None
     assert reviewer.comments_before_second_sentence.count(_NOTE_ONE) == 1
@@ -141,21 +178,27 @@ def test_review_walks_one_docx_in_place(tmp_path: Path) -> None:
     assert levels.count(AKAPIT) >= 2
     assert ROZDZIAL in levels
     calosc = [visit for visit in result.visits if visit.level == CALOSC]
-    assert [visit.calosc_pass for visit in calosc] == [0, 1]
+    assert [visit.stay_index for visit in calosc] == [0, 1]
+    assert reviewer.calosc_stays == 2
 
     assert reviewer.saw_update_on_file
+    assert reviewer.saw_insert_on_file
     assert reviewer.saw_delete_on_file
-    assert reviewer.saw_text_change_on_file
+    assert reviewer.saw_replace_on_file
     texts = [comment.text for comment in read_comments(path)]
     assert _NOTE_UPDATED in texts
     assert _NOTE_TWO not in texts
     assert _NOTE_ONE not in texts
     document = load_docx(path)
     assert _THIRD_EDITED in document.text
+    assert _INSERTED.strip() in document.text
     assert document.source_path == path
+    xml = _document_xml(path)
+    assert b"w:ins" in xml
+    assert b"w:del" in xml
 
 
-def test_readme_describes_the_same_file_stay_or_go_walk() -> None:
+def test_readme_describes_only_the_stay_or_go_walk() -> None:
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
     assert "```mermaid" in readme
     assert readme.count("```mermaid") == 1
@@ -178,3 +221,9 @@ def test_readme_describes_the_same_file_stay_or_go_walk() -> None:
     assert "grain" not in walk
     assert "percent" not in walk
     assert "sides" not in walk
+    lowered = readme.lower()
+    assert "review_tree" not in lowered
+    assert "review_document" not in lowered
+    assert "two-scan" not in lowered
+    assert "takt" not in lowered
+    assert "reviewed.docx" not in lowered

@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from reviewkit.comments import DocxComment, comments_for_locator
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
-from reviewkit.levels import AKAPIT, CALOSC, LEVEL_ORDER, ROZDZIAL, ZDANIE
+from reviewkit.levels import AKAPIT, CALOSC, ROZDZIAL, ZDANIE
 from reviewkit.live_docx import LiveDocx, LiveDocxError
 
 
@@ -31,9 +31,8 @@ class ReviewUnit:
     char_end: int | None
     comments: tuple[DocxComment, ...]
     stay_index: int = 0
-    calosc_pass: int | None = None
 
-    def at_stay(self, stay_index: int, *, calosc_pass: int | None = None) -> ReviewUnit:
+    def at_stay(self, stay_index: int) -> ReviewUnit:
         return ReviewUnit(
             level=self.level,
             node_id=self.node_id,
@@ -45,7 +44,6 @@ class ReviewUnit:
             char_end=self.char_end,
             comments=self.comments,
             stay_index=stay_index,
-            calosc_pass=self.calosc_pass if calosc_pass is None else calosc_pass,
         )
 
 
@@ -54,12 +52,7 @@ class WalkVisit:
     level: str
     node_id: str
     stay_index: int
-    calosc_pass: int | None
     text: str
-
-
-class WalkLimitError(RuntimeError):
-    """Stay-or-go stayed on one unit past the allowed bound."""
 
 
 _STORY_SKIP = frozenset({"header", "footer", "comment", "footnote", "endnote"})
@@ -91,47 +84,50 @@ def list_units(document: ReviewDocument, level: str) -> tuple[ReviewUnit, ...]:
 DecideFn = Callable[[ReviewUnit, LiveDocx], StayOrGo]
 
 
-def walk_live_docx(
-    live: LiveDocx,
-    decide: DecideFn,
-    *,
-    calosc_times: int = 1,
-    max_stays: int = 64,
-) -> tuple[WalkVisit, ...]:
+def walk_live_docx(live: LiveDocx, decide: DecideFn) -> tuple[WalkVisit, ...]:
     """Walk the live file. ``decide`` is ``decide(unit, live) -> StayOrGo``."""
-    if calosc_times < 1:
-        raise ValueError("calosc_times must be at least 1")
-    if max_stays < 1:
-        raise ValueError("max_stays must be at least 1")
     visits: list[WalkVisit] = []
-    for level in LEVEL_ORDER:
-        if level == CALOSC:
-            for calosc_pass in range(calosc_times):
-                units = list_units(live.load(), CALOSC)
-                _stay_or_go(live, decide, units[0], visits, max_stays, calosc_pass)
-            continue
-        for unit in list_units(live.load(), level):
-            _stay_or_go(live, decide, unit, visits, max_stays, None)
+    _walk_zdania(live, decide, visits)
+    _walk_akapity(live, decide, visits)
+    _walk_rozdzialy(live, decide, visits)
+    _walk_calosc(live, decide, visits)
     return tuple(visits)
 
 
-def _stay_or_go(
+def _walk_zdania(live: LiveDocx, decide: DecideFn, visits: list[WalkVisit]) -> None:
+    for unit in list_units(live.load(), ZDANIE):
+        _stay_loop(live, decide, unit, visits)
+
+
+def _walk_akapity(live: LiveDocx, decide: DecideFn, visits: list[WalkVisit]) -> None:
+    for unit in list_units(live.load(), AKAPIT):
+        _stay_loop(live, decide, unit, visits)
+
+
+def _walk_rozdzialy(live: LiveDocx, decide: DecideFn, visits: list[WalkVisit]) -> None:
+    for unit in list_units(live.load(), ROZDZIAL):
+        _stay_loop(live, decide, unit, visits)
+
+
+def _walk_calosc(live: LiveDocx, decide: DecideFn, visits: list[WalkVisit]) -> None:
+    units = list_units(live.load(), CALOSC)
+    _stay_loop(live, decide, units[0], visits)
+
+
+def _stay_loop(
     live: LiveDocx,
     decide: DecideFn,
     seed: ReviewUnit,
     visits: list[WalkVisit],
-    max_stays: int,
-    calosc_pass: int | None,
 ) -> None:
     stay_index = 0
     while True:
-        unit = _refresh(live, seed).at_stay(stay_index, calosc_pass=calosc_pass)
+        unit = _refresh(live, seed).at_stay(stay_index)
         visits.append(
             WalkVisit(
                 level=unit.level,
                 node_id=unit.node_id,
                 stay_index=unit.stay_index,
-                calosc_pass=unit.calosc_pass,
                 text=unit.text,
             )
         )
@@ -141,10 +137,6 @@ def _stay_or_go(
         if decision is not StayOrGo.STAY:
             raise TypeError(f"decide must return StayOrGo, got {decision!r}")
         stay_index += 1
-        if stay_index > max_stays:
-            raise WalkLimitError(
-                f"stayed on {unit.level} {unit.node_id!r} more than {max_stays} times"
-            )
 
 
 def _refresh(live: LiveDocx, seed: ReviewUnit) -> ReviewUnit:
@@ -269,7 +261,6 @@ __all__ = [
     "DecideFn",
     "ReviewUnit",
     "StayOrGo",
-    "WalkLimitError",
     "WalkVisit",
     "list_units",
     "walk_live_docx",

@@ -2,23 +2,16 @@
 
 ## Unreleased
 
-README mermaid: each zdanie / akapit / rozdział has its own stay-or-go box;
-stay loops back to that unit on the same DOCX; go moves to the next unit;
-całość stay walks the whole document again n times.
+The stay-or-go walk of one DOCX is the only review. `review_docx` opens that
+file and walks zdanie, then akapit, then rozdział, then całość. Each unit has
+its own stay loop. Stay count is however many times the reviewer stays. Go
+after the last całość leaves the same file.
 
-`review_docx` walks **one DOCX in place**. That walk is the review: zdanie,
-then akapit, then rozdział, then całość *n* times, each with a stay-or-go
-loop. Side effects (add / update / delete a comment, change text) land on
-that same file during the walk. This is not nested post-order of an
-abstract tree with a new `reviewed.docx` only after both Pack scans.
-
-Docs now match the 0.24.1 Pack surface: `review_tree` / `review_source` /
-`review_document` / `TaktReviewer` / CLI, plus `LLMClient.capabilities` and
-`LLMRequestOptions`. Removed insertion-engine claims the package no longer
-exports, and the unimplemented local takt source-checkout knob. Comment
-balloon offsets no longer import python-docx; physical DOCX stays behind
-Docxtor. Reviewed-comment `anchor_text` accepts a missing original quote
-(`str | None`), so `uv run mypy` is clean.
+Side effects are Word markup through Docxtor: add / update / delete a
+comment, or tracked insert / delete / replace of text. There is no
+two-scan name-then-judge, no `review_tree`, no `review_document` that writes
+a separate `reviewed.docx`, no takt cascade as a review, and no Pack
+pipeline as a second review.
 
 ## 0.24.1
 
@@ -70,7 +63,6 @@ with a structured trace; re-runs reset traces.
 
 Typing and public-export polish for the Pack path. Hosts import Pack schemas,
 plugin sockets, and review entry points from `reviewkit`.
-
 ## 0.24.0
 
 Breaking change. A review given a `Pack` runs two scans plus an optional write.

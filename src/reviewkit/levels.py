@@ -1,6 +1,7 @@
 """Walk levels for one-DOCX review.
 
-The names are the review grains. Do not substitute grain / percent / sides.
+The names are zdanie, akapit, rozdział, całość. Do not substitute
+grain / percent / sides.
 """
 
 from __future__ import annotations

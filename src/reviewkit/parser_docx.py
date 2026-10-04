@@ -15,6 +15,7 @@ from docxtor import (
     DocxReviewProjection,
     ReviewCoverage,
     ReviewParagraphProjection,
+    inventory_review_markup,
     project_docx_for_review,
 )
 
@@ -25,11 +26,13 @@ from reviewkit.comments import (
     comments_for_locator,
     comments_from_document,
 )
-from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
-from reviewkit.markup_purity import has_tracked_revisions
-from reviewkit.models import (
+from reviewkit.document import (
+    ParagraphNode,
+    ReviewDocument,
     RevisionCoverageState,
     RevisionLedger,
+    SectionNode,
+    SentenceNode,
     SourceRevision,
     SourceRevisionKind,
 )
@@ -37,7 +40,7 @@ from reviewkit.parser_text import split_sentences_with_spans
 
 
 def split_sentences(text: str) -> list[str]:
-    """Backward-compatible export of the shared format-neutral splitter."""
+    """Shared format-neutral splitter used by the DOCX walk tree."""
     return [sentence for sentence, _start, _end in split_sentences_with_spans(text)]
 
 
@@ -69,7 +72,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
     revision_ledger = revision_ledger.model_copy(
         update={"entries": revision_ledger.entries + paragraph_marks}
     )
-    tracked_revisions = has_tracked_revisions(source_path)
+    tracked_revisions = _has_tracked_revisions(source_path)
     if (
         projection.coverage is ReviewCoverage.INCOMPLETE
         or (projected_marks is None and tracked_revisions)
@@ -325,6 +328,16 @@ def _source_revision(
         revision_id=span.revision_id,
         author=span.revision_author,
         date=span.revision_date,
+    )
+
+
+def _has_tracked_revisions(path: Path) -> bool:
+    inventory = inventory_review_markup(path.read_bytes())
+    if inventory.revisions:
+        return True
+    return any(
+        diagnostic.code in {"unsupported_revision", "unsupported_namespace"}
+        for diagnostic in inventory.diagnostics
     )
 
 

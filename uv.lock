@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -100,7 +100,7 @@ wheels = [
 [[package]]
 name = "docxtor"
 version = "0.14.4"
-source = { git = "https://github.com/mikolaj92/Docxtor.git?rev=9f3c7dde281986e2f3e03beeffe3aaa2b8bf30e0#9f3c7dde281986e2f3e03beeffe3aaa2b8bf30e0" }
+source = { git = "https://github.com/mikolaj92/Docxtor.git?rev=daf03d84859c88d109971b11bb2c79c0be76e113#daf03d84859c88d109971b11bb2c79c0be76e113" }
 dependencies = [
     { name = "pymupdf" },
     { name = "python-docx" },
@@ -527,13 +527,12 @@ wheels = [
 
 [[package]]
 name = "reviewkit"
-version = "0.24.1"
+version = "0.25.0"
 source = { editable = "." }
 dependencies = [
     { name = "docxtor" },
     { name = "pydantic" },
     { name = "rich" },
-    { name = "takt" },
     { name = "typer" },
 ]
 
@@ -546,10 +545,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "docxtor", git = "https://github.com/mikolaj92/Docxtor.git?rev=9f3c7dde281986e2f3e03beeffe3aaa2b8bf30e0" },
+    { name = "docxtor", git = "https://github.com/mikolaj92/Docxtor.git?rev=daf03d84859c88d109971b11bb2c79c0be76e113" },
     { name = "pydantic", specifier = ">=2.13.5,<2.14" },
     { name = "rich", specifier = ">=15.0.0" },
-    { name = "takt", git = "https://github.com/mikolaj92/takt.git?rev=v0.3.2" },
     { name = "typer", specifier = ">=0.26.7" },
 ]
 
@@ -606,11 +604,6 @@ sdist = { url = "https://files.pythonhosted.org/packages/58/15/8b3609fd3830ef7b2
 wheels = [
     { url = "https://files.pythonhosted.org/packages/e0/f9/0595336914c5619e5f28a1fb793285925a8cd4b432c9da0a987836c7f822/shellingham-1.5.4-py2.py3-none-any.whl", hash = "sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686", size = 9755, upload-time = "2023-10-24T04:13:38.866Z" },
 ]
-
-[[package]]
-name = "takt"
-version = "0.3.2"
-source = { git = "https://github.com/mikolaj92/takt.git?rev=v0.3.2#2c5219aee2a5a544abc6bb391558f4413ddae531" }
 
 [[package]]
 name = "typer"

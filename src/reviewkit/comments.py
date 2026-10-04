@@ -89,9 +89,7 @@ def _marker_range(
     return _offsets_in_paragraph(paragraph, comment.comment_id)
 
 
-def _offsets_in_paragraph(
-    paragraph: object, comment_id: str
-) -> tuple[int | None, int | None]:
+def _offsets_in_paragraph(paragraph: object, comment_id: str) -> tuple[int | None, int | None]:
     element = getattr(paragraph, "_p", None)
     if element is None or not hasattr(element, "iter"):
         return (None, None)

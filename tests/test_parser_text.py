@@ -1,9 +1,4 @@
-from typing import Any
-
 from reviewkit import DocumentParser, ReviewDocument, TextDocumentParser, parse_text
-from reviewkit import review as review_module
-from reviewkit.decision import MockDecisionClient
-from reviewkit.pack import Function, Ontology, Pack
 
 
 def test_text_parser_builds_stable_four_level_tree() -> None:
@@ -49,49 +44,6 @@ def test_markdown_headings_do_not_require_blank_lines() -> None:
         "Paragraph one.",
         "Paragraph two.",
     ]
-
-
-def test_review_source_passes_the_parser_tree_to_format_neutral_review(monkeypatch) -> None:
-    parser = TextDocumentParser(source_name="note.txt")
-    captured: dict[str, Any] = {}
-
-    def fake_review_tree(document, profile_path, llm, pack, decision, **kwargs):  # type: ignore[no-untyped-def]
-        captured.update(
-            document=document,
-            profile_path=profile_path,
-            llm=llm,
-            pack=pack,
-            decision=decision,
-            kwargs=kwargs,
-        )
-        return "result"
-
-    monkeypatch.setattr(review_module, "review_tree", fake_review_tree)
-    llm = object()
-    pack = Pack(
-        ontology=Ontology(functions=[Function(id="claim", label="Claim", attach_to=["sentence"])]),
-        units={},
-        rules=[],
-    )
-    decision = MockDecisionClient()
-
-    result = review_module.review_source(
-        "A sentence.",
-        parser,
-        "profile",
-        llm,
-        pack,
-        decision,
-        context_provider="context",
-    )
-
-    assert result == "result"
-    assert captured["document"].metadata["source_name"] == "note.txt"
-    assert captured["profile_path"] == "profile"
-    assert captured["llm"] is llm
-    assert captured["pack"] is pack
-    assert captured["decision"] is decision
-    assert captured["kwargs"]["context_provider"] == "context"
 
 
 def test_text_parser_is_a_public_document_parser_adapter() -> None:
