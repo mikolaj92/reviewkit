@@ -7,7 +7,6 @@ comments and tracked insert / delete / replace land on that file.
 
 from reviewkit.comments import DocxComment, comments_for_locator, read_comments
 from reviewkit.document import (
-    DocumentParser,
     ReviewDocument,
     RevisionCoverageState,
     RevisionLedger,
@@ -16,8 +15,7 @@ from reviewkit.document import (
 )
 from reviewkit.levels import AKAPIT, CALOSC, LEVEL_ORDER, ROZDZIAL, ZDANIE
 from reviewkit.live_docx import LiveDocx, LiveDocxError
-from reviewkit.parser_docx import DocxDocumentParser, DocxFootnote, load_docx, read_footnotes
-from reviewkit.parser_text import TextDocumentParser, parse_text
+from reviewkit.parser_docx import load_docx
 from reviewkit.review_docx import DocxReview, DocxReviewer, review_docx
 from reviewkit.walk import ReviewUnit, StayOrGo, WalkVisit, list_units, walk_live_docx
 
@@ -27,10 +25,7 @@ __all__ = [
     "LEVEL_ORDER",
     "ROZDZIAL",
     "ZDANIE",
-    "DocumentParser",
     "DocxComment",
-    "DocxDocumentParser",
-    "DocxFootnote",
     "DocxReview",
     "DocxReviewer",
     "LiveDocx",
@@ -42,14 +37,11 @@ __all__ = [
     "SourceRevision",
     "SourceRevisionKind",
     "StayOrGo",
-    "TextDocumentParser",
     "WalkVisit",
     "comments_for_locator",
     "list_units",
     "load_docx",
-    "parse_text",
     "read_comments",
-    "read_footnotes",
     "review_docx",
     "walk_live_docx",
 ]

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import assert_never
 
@@ -37,19 +36,6 @@ from reviewkit.document import (
     SourceRevisionKind,
 )
 from reviewkit.parser_text import split_sentences_with_spans
-
-
-def split_sentences(text: str) -> list[str]:
-    """Shared format-neutral splitter used by the DOCX walk tree."""
-    return [sentence for sentence, _start, _end in split_sentences_with_spans(text)]
-
-
-@dataclass(frozen=True)
-class DocxDocumentParser:
-    """DocumentParser adapter backed only by Docxtor's public projection API."""
-
-    def parse(self, source: str | Path) -> ReviewDocument:
-        return load_docx(source)
 
 
 def load_docx(path: str | Path) -> ReviewDocument:
@@ -196,26 +182,6 @@ def _project_revision_input(
     )
 
 
-@dataclass(frozen=True)
-class DocxFootnote:
-    """One content footnote read from a ``.docx`` package: its ``w:id`` and visible text."""
-
-    id: str
-    text: str
-
-
-def read_footnotes(path: str | Path) -> list[DocxFootnote]:
-    try:
-        projection = project_docx_for_review(path)
-    except (OSError, DocumentError, ValueError):
-        return []
-    return [
-        DocxFootnote(id=note.note_id, text=note.text)
-        for note in projection.notes
-        if note.kind == "footnote"
-    ]
-
-
 def _paragraph_node(
     paragraph_id: str,
     text: str,
@@ -346,22 +312,6 @@ def _reviewkit_locator(container_id: str) -> str:
     if len(parts) == 8 and parts[0] == "table" and parts[2] == "r" and parts[4] == "c":
         return f"table:{parts[1]}:row:{parts[3]}:cell:{parts[5]}:p:{parts[7]}"
     return container_id
-
-
-def _comment_anchor_is_unresolved(comment: DocxComment, comments: list[DocxComment]) -> bool:
-    """Return whether a source comment has no usable story anchor.
-
-    Word replies normally have no range markers of their own. A reply is anchored through
-    its parent comment when that parent has a stable locator; only an unanchored standalone
-    comment (or a reply whose parent is missing/unanchored) makes revision coverage
-    incomplete.
-    """
-    if comment.locator is not None:
-        return False
-    if comment.parent_id is None:
-        return True
-    parent = next((candidate for candidate in comments if candidate.id == comment.parent_id), None)
-    return parent is None or parent.locator is None
 
 
 def _comment_ids_are_ambiguous(comments: list[DocxComment]) -> bool:

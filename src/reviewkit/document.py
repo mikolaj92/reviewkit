@@ -5,17 +5,10 @@ from __future__ import annotations
 from collections.abc import Iterator
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from reviewkit.comments import DocxComment
-
-
-class DocumentParser(Protocol):
-    """Format-adapter boundary for producing the walk tree."""
-
-    def parse(self, source: Any) -> ReviewDocument: ...
 
 
 class SourceRevisionKind(StrEnum):

@@ -38,6 +38,12 @@ def test_removed_review_paths_are_not_on_the_package_root() -> None:
         "LLMClient",
         "detect",
         "judge",
+        "parse_text",
+        "TextDocumentParser",
+        "DocumentParser",
+        "DocxDocumentParser",
+        "DocxFootnote",
+        "read_footnotes",
     ):
         assert name not in reviewkit.__all__, name
         assert not hasattr(reviewkit, name)
