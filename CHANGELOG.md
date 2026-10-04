@@ -5,7 +5,7 @@
 ReviewKit reviews one DOCX by walking that same file: zdanie, then akapit,
 then rozdział, then całość. On a unit, stay or go. Stay may add, update, or
 delete a Word comment, or change text as tracked insert / delete / replace,
-through one open Docxtor handle (0.17.0, `4abb4800`). Go moves to the next
+through one open Docxtor handle (0.18.0, `1e943830`). Go moves to the next
 unit.
 
 A stay that deletes or inserts a sentence rebuilds positional ids such as
