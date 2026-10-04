@@ -148,6 +148,26 @@ def _comment_on_unit(docx: LiveDocx, unit: ReviewUnit, text: str) -> str:
     )
 
 
+def test_live_docx_keeps_one_open_handle(tmp_path: Path) -> None:
+    path = _sample_docx(tmp_path / "handle.docx")
+    live = LiveDocx(path)
+    handle = live.open()
+    comment_id = live.add_comment(
+        locator="body:p:1",
+        start=0,
+        end=len(_FIRST),
+        text=_NOTE_ONE,
+        expected_text=_FIRST,
+    )
+    assert live.open() is handle
+    live.update_comment(comment_id, _NOTE_UPDATED)
+    assert live.open() is handle
+    live.delete_comment(comment_id)
+    assert live.open() is handle
+    live.insert_text(locator="body:p:1", offset=len(f"{_FIRST} {_SECOND}"), text=_INSERTED)
+    assert live.open() is handle
+
+
 def test_review_walks_one_docx_in_place(tmp_path: Path) -> None:
     path = _sample_docx(tmp_path / "source.docx")
     reviewer = ScriptedReviewer()
