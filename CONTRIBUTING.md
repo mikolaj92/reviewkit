@@ -14,9 +14,7 @@ uv run pytest
 ## Pull Requests
 
 - Keep changes focused and covered by tests.
-- Preserve the core contract: `reviewed.docx` marks every review action, while
-  `corrected.docx` is a clean corrected document.
-- Keep domain data in a host Pack (ontology, units, rules), not in
-  `src/reviewkit` and not in profile markdown as a Pack substitute.
-- Do not import a model runtime into core. Hosts inject `DecisionClient` and
-  `LLMClient`; tests use mocks.
+- The only review is the stay-or-go walk of one DOCX: zdanie, akapit,
+  rozdział, całość. Side effects are Word comments and tracked changes on
+  that same file via Docxtor.
+- Do not add a second review path.

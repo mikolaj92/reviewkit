@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Iterator
-from dataclasses import dataclass
 from pathlib import Path
 from typing import assert_never
 
@@ -15,6 +14,7 @@ from docxtor import (
     DocxReviewProjection,
     ReviewCoverage,
     ReviewParagraphProjection,
+    inventory_review_markup,
     project_docx_for_review,
 )
 
@@ -25,28 +25,17 @@ from reviewkit.comments import (
     comments_for_locator,
     comments_from_document,
 )
-from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
-from reviewkit.markup_purity import has_tracked_revisions
-from reviewkit.models import (
+from reviewkit.document import (
+    ParagraphNode,
+    ReviewDocument,
     RevisionCoverageState,
     RevisionLedger,
+    SectionNode,
+    SentenceNode,
     SourceRevision,
     SourceRevisionKind,
 )
 from reviewkit.parser_text import split_sentences_with_spans
-
-
-def split_sentences(text: str) -> list[str]:
-    """Backward-compatible export of the shared format-neutral splitter."""
-    return [sentence for sentence, _start, _end in split_sentences_with_spans(text)]
-
-
-@dataclass(frozen=True)
-class DocxDocumentParser:
-    """DocumentParser adapter backed only by Docxtor's public projection API."""
-
-    def parse(self, source: str | Path) -> ReviewDocument:
-        return load_docx(source)
 
 
 def load_docx(path: str | Path) -> ReviewDocument:
@@ -69,7 +58,7 @@ def load_docx(path: str | Path) -> ReviewDocument:
     revision_ledger = revision_ledger.model_copy(
         update={"entries": revision_ledger.entries + paragraph_marks}
     )
-    tracked_revisions = has_tracked_revisions(source_path)
+    tracked_revisions = _has_tracked_revisions(source_path)
     if (
         projection.coverage is ReviewCoverage.INCOMPLETE
         or (projected_marks is None and tracked_revisions)
@@ -193,26 +182,6 @@ def _project_revision_input(
     )
 
 
-@dataclass(frozen=True)
-class DocxFootnote:
-    """One content footnote read from a ``.docx`` package: its ``w:id`` and visible text."""
-
-    id: str
-    text: str
-
-
-def read_footnotes(path: str | Path) -> list[DocxFootnote]:
-    try:
-        projection = project_docx_for_review(path)
-    except (OSError, DocumentError, ValueError):
-        return []
-    return [
-        DocxFootnote(id=note.note_id, text=note.text)
-        for note in projection.notes
-        if note.kind == "footnote"
-    ]
-
-
 def _paragraph_node(
     paragraph_id: str,
     text: str,
@@ -328,27 +297,21 @@ def _source_revision(
     )
 
 
+def _has_tracked_revisions(path: Path) -> bool:
+    inventory = inventory_review_markup(path.read_bytes())
+    if inventory.revisions:
+        return True
+    return any(
+        diagnostic.code in {"unsupported_revision", "unsupported_namespace"}
+        for diagnostic in inventory.diagnostics
+    )
+
+
 def _reviewkit_locator(container_id: str) -> str:
     parts = container_id.split(":")
     if len(parts) == 8 and parts[0] == "table" and parts[2] == "r" and parts[4] == "c":
         return f"table:{parts[1]}:row:{parts[3]}:cell:{parts[5]}:p:{parts[7]}"
     return container_id
-
-
-def _comment_anchor_is_unresolved(comment: DocxComment, comments: list[DocxComment]) -> bool:
-    """Return whether a source comment has no usable story anchor.
-
-    Word replies normally have no range markers of their own. A reply is anchored through
-    its parent comment when that parent has a stable locator; only an unanchored standalone
-    comment (or a reply whose parent is missing/unanchored) makes revision coverage
-    incomplete.
-    """
-    if comment.locator is not None:
-        return False
-    if comment.parent_id is None:
-        return True
-    parent = next((candidate for candidate in comments if candidate.id == comment.parent_id), None)
-    return parent is None or parent.locator is None
 
 
 def _comment_ids_are_ambiguous(comments: list[DocxComment]) -> bool:

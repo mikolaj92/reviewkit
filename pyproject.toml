@@ -1,7 +1,7 @@
 [project]
 name = "reviewkit"
-version = "0.24.1"
-description = "Hierarchical human-like document review workflow engine"
+version = "0.25.0"
+description = "Stay-or-go walk of one DOCX: zdanie, akapit, rozdział, całość"
 readme = "README.md"
 authors = [
     { name = "mikolaj92", email = "mikolaj92@users.noreply.github.com" }
@@ -9,7 +9,7 @@ authors = [
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.13"
-keywords = ["docx", "llm", "review", "document-review", "python"]
+keywords = ["docx", "review", "document-review", "python"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -23,9 +23,7 @@ dependencies = [
     "pydantic>=2.13.5,<2.14",
     "rich>=15.0.0",
     "typer>=0.26.7",
-    # Required cascade engine; binding/import failures propagate (no local fallback).
-    "takt @ git+https://github.com/mikolaj92/takt.git@v0.3.2",
-    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@9f3c7dde281986e2f3e03beeffe3aaa2b8bf30e0",
+    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@4abb48008c18d668e755000c26a650a15349bc4b",
 ]
 
 [project.scripts]

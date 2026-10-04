@@ -1,23 +1,50 @@
-"""Internal document tree used by hierarchical review."""
+"""Internal document tree used by the one-DOCX walk."""
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Protocol
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from reviewkit.comments import DocxComment
-from reviewkit.models import ReviewResult, RevisionCoverageState, RevisionLedger
 
 
-class DocumentParser(Protocol):
-    """Format-adapter boundary for producing the canonical review tree."""
+class SourceRevisionKind(StrEnum):
+    INSERTED = "inserted"
+    DELETED = "deleted"
 
-    def parse(self, source: Any) -> ReviewDocument:
-        """Parse ``source`` into a document with stable node locators and metadata."""
-        ...
+
+class RevisionCoverageState(StrEnum):
+    COMPLETE = "complete"
+    INCOMPLETE = "incomplete"
+
+
+class SourceRevision(BaseModel):
+    """One addressable source revision span projected from Docxtor."""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: SourceRevisionKind
+    text: str
+    locator: str
+    span_id: str
+    start_offset: int = Field(ge=0)
+    end_offset: int = Field(ge=0)
+    revision_id: str | None = None
+    author: str | None = None
+    date: str | None = None
+    paragraph_mark: bool = False
+
+
+class RevisionLedger(BaseModel):
+    """Typed source-revision coverage and entries for one review document."""
+
+    model_config = ConfigDict(frozen=True)
+
+    coverage: RevisionCoverageState
+    entries: tuple[SourceRevision, ...] = ()
 
 
 class SentenceNode(BaseModel):
@@ -37,12 +64,7 @@ class ParagraphNode(BaseModel):
     locator: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
     sentences: list[SentenceNode] = Field(default_factory=list)
-    # Spans of ``text`` contributed by non-editable inline content (tabs, breaks,
-    # hyperlink/field text, ...). Coordinates match ``text`` (post-strip). Filled by
-    # the DOCX parser; empty for plain-text paragraphs or unknown layouts.
     opaque_ranges: list[tuple[int, int]] = Field(default_factory=list)
-    # Existing Word comments whose range starts in this paragraph. Range is
-    # ``start_offset``/``end_offset`` when the balloon names a unique span.
     comments: list[DocxComment] = Field(default_factory=list)
 
 
@@ -67,8 +89,6 @@ class ReviewDocument(BaseModel):
     source_path: Path | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
     sections: list[SectionNode] = Field(default_factory=list)
-    # Structured existing Word comments (locator + range + text). Empty when
-    # the source has none; never a reason to refuse a review.
     comments: list[DocxComment] = Field(default_factory=list)
     revision_ledger: RevisionLedger = Field(
         default_factory=lambda: RevisionLedger(coverage=RevisionCoverageState.COMPLETE)
@@ -88,30 +108,3 @@ class ReviewDocument(BaseModel):
     def iter_sentences(self) -> Iterator[SentenceNode]:
         for paragraph in self.iter_paragraphs():
             yield from paragraph.sentences
-
-    def paragraph_for_sentence(self, sentence_id: str) -> ParagraphNode | None:
-        for paragraph in self.iter_paragraphs():
-            if any(sentence.id == sentence_id for sentence in paragraph.sentences):
-                return paragraph
-        return None
-
-    def get_node_text(self, node_id: str) -> str | None:
-        if node_id == self.id:
-            return self.text
-
-        for section in self.sections:
-            if section.id == node_id:
-                return section.text
-            for paragraph in section.paragraphs:
-                if paragraph.id == node_id:
-                    return paragraph.text
-                for sentence in paragraph.sentences:
-                    if sentence.id == node_id:
-                        return sentence.text
-        return None
-
-    def sentence_ids_for_paragraph(self, paragraph: ParagraphNode) -> set[str]:
-        return {sentence.id for sentence in paragraph.sentences}
-
-
-ReviewResult.model_rebuild(_types_namespace={"ReviewDocument": ReviewDocument})
