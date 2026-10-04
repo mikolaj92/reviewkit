@@ -13,6 +13,7 @@ from docxtor import (
     PublishError,
     SegmentReplacement,
     add_comment,
+    add_paragraph_comment,
     publish_docx,
     remove_comments,
 )
@@ -55,13 +56,24 @@ class LiveDocx:
         author: str = "Reviewer",
         initials: str = "RV",
     ) -> str:
+        """Add a comment on ``locator[start:end]``.
+
+        A later stay may add another comment on the same sentence. Existing
+        range markers make a second identical span opaque, so that extra
+        comment is placed on the paragraph and still sits on the sentence.
+        """
+        data = self.path.read_bytes()
+        writer = CommentAuthor(author=author, initials=initials)
         try:
-            result = add_comment(
-                self.path.read_bytes(),
-                CommentRange(locator, start, end, expected_text),
-                text,
-                CommentAuthor(author=author, initials=initials),
-            )
+            try:
+                result = add_comment(
+                    data,
+                    CommentRange(locator, start, end, expected_text),
+                    text,
+                    writer,
+                )
+            except (CommentMutationError, IndexError):
+                result = add_paragraph_comment(data, locator, text, writer)
             created = result.receipt.created_ids
             if not created:
                 raise LiveDocxError("add comment produced no comment id")
