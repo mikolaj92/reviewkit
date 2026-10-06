@@ -15,6 +15,8 @@ from docxtor import (
     CommentRange,
     DocumentError,
     DocxDocument,
+    PhysicalCommentRange,
+    PhysicalCommentSpan,
     PublishError,
     RevisionAuthor,
     RevisionPosition,
@@ -23,7 +25,7 @@ from docxtor import (
 
 from reviewkit.comments import DocxComment, comments_from_document
 from reviewkit.document import ReviewDocument
-from reviewkit.parser_docx import load_docx
+from reviewkit.parser_docx import document_from_projection
 
 
 class LiveDocxError(RuntimeError):
@@ -41,7 +43,7 @@ class LiveDocx:
         return self._document
 
     def load(self) -> ReviewDocument:
-        return load_docx(self.path)
+        return document_from_projection(self._document.project_review(), source_path=self.path)
 
     def comments(self) -> list[DocxComment]:
         return comments_from_document(self._document)
@@ -75,6 +77,40 @@ class LiveDocx:
             created = result.receipt.created_ids
             if not created:
                 raise LiveDocxError("add comment produced no comment id")
+            self._publish()
+        except (
+            OSError,
+            DocumentError,
+            CommentMutationError,
+            PublishError,
+            ValueError,
+            IndexError,
+        ) as exc:
+            raise LiveDocxError(str(exc)) from exc
+        return created[0]
+
+    def add_comment_region(
+        self,
+        *,
+        physical_spans: tuple[PhysicalCommentSpan, ...],
+        document_sha256: str,
+        text: str,
+        author: str = "Reviewer",
+        initials: str = "RV",
+    ) -> str:
+        """Add a comment to provider-proven spans on this exact DOCX snapshot.
+
+        Docxtor validates the source hash, the complete ordered region and its
+        raw text, then places the point or cross-paragraph Word markers.
+        """
+        writer = CommentAuthor(author=author, initials=initials)
+        try:
+            result = self._document.add_physical_comment(
+                PhysicalCommentRange(document_sha256, physical_spans), text, writer
+            )
+            created = result.receipt.created_ids
+            if not created:
+                raise LiveDocxError("add comment region produced no comment id")
             self._publish()
         except (
             OSError,

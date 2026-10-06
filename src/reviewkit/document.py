@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from enum import StrEnum
 from pathlib import Path
 
+from docxtor import PhysicalCommentSpan, ReviewCoverage, ReviewDiagnostic
 from pydantic import BaseModel, ConfigDict, Field
 
 from reviewkit.comments import DocxComment
@@ -55,6 +56,10 @@ class SentenceNode(BaseModel):
     char_end: int | None = None
     locator: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
+    physical_spans: tuple[PhysicalCommentSpan, ...] = ()
+    document_sha256: str | None = None
+    geometry_coverage: ReviewCoverage = ReviewCoverage.INCOMPLETE
+    geometry_diagnostics: tuple[ReviewDiagnostic, ...] = ()
 
 
 class ParagraphNode(BaseModel):
@@ -66,6 +71,10 @@ class ParagraphNode(BaseModel):
     sentences: list[SentenceNode] = Field(default_factory=list)
     opaque_ranges: list[tuple[int, int]] = Field(default_factory=list)
     comments: list[DocxComment] = Field(default_factory=list)
+    physical_spans: tuple[PhysicalCommentSpan, ...] = ()
+    document_sha256: str | None = None
+    geometry_coverage: ReviewCoverage = ReviewCoverage.INCOMPLETE
+    geometry_diagnostics: tuple[ReviewDiagnostic, ...] = ()
 
 
 class SectionNode(BaseModel):
@@ -74,6 +83,10 @@ class SectionNode(BaseModel):
     locator: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
     paragraphs: list[ParagraphNode] = Field(default_factory=list)
+    physical_spans: tuple[PhysicalCommentSpan, ...] = ()
+    document_sha256: str | None = None
+    geometry_coverage: ReviewCoverage = ReviewCoverage.INCOMPLETE
+    geometry_diagnostics: tuple[ReviewDiagnostic, ...] = ()
 
     @property
     def text(self) -> str:
@@ -90,6 +103,10 @@ class ReviewDocument(BaseModel):
     metadata: dict[str, str] = Field(default_factory=dict)
     sections: list[SectionNode] = Field(default_factory=list)
     comments: list[DocxComment] = Field(default_factory=list)
+    physical_spans: tuple[PhysicalCommentSpan, ...] = ()
+    document_sha256: str | None = None
+    geometry_coverage: ReviewCoverage = ReviewCoverage.INCOMPLETE
+    geometry_diagnostics: tuple[ReviewDiagnostic, ...] = ()
     revision_ledger: RevisionLedger = Field(
         default_factory=lambda: RevisionLedger(coverage=RevisionCoverageState.COMPLETE)
     )

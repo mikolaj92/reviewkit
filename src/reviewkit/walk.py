@@ -6,6 +6,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
+from docxtor import PhysicalCommentSpan, ReviewCoverage, ReviewDiagnostic
+
 from reviewkit.comments import DocxComment, comments_for_locator
 from reviewkit.document import ParagraphNode, ReviewDocument, SectionNode, SentenceNode
 from reviewkit.levels import AKAPIT, CALOSC, ROZDZIAL, ZDANIE
@@ -31,6 +33,10 @@ class ReviewUnit:
     char_end: int | None
     comments: tuple[DocxComment, ...]
     stay_index: int = 0
+    physical_spans: tuple[PhysicalCommentSpan, ...] = ()
+    document_sha256: str | None = None
+    geometry_coverage: ReviewCoverage = ReviewCoverage.INCOMPLETE
+    geometry_diagnostics: tuple[ReviewDiagnostic, ...] = ()
 
     def at_stay(self, stay_index: int) -> ReviewUnit:
         return ReviewUnit(
@@ -44,6 +50,10 @@ class ReviewUnit:
             char_end=self.char_end,
             comments=self.comments,
             stay_index=stay_index,
+            physical_spans=self.physical_spans,
+            document_sha256=self.document_sha256,
+            geometry_coverage=self.geometry_coverage,
+            geometry_diagnostics=self.geometry_diagnostics,
         )
 
 
@@ -167,9 +177,7 @@ def _same_unit(units: Sequence[ReviewUnit], seed: ReviewUnit) -> ReviewUnit | No
     if len(by_text) == 1:
         return by_text[0]
     by_anchor = [
-        unit
-        for unit in units
-        if _same_container(unit, seed) and unit.char_start == seed.char_start
+        unit for unit in units if _same_container(unit, seed) and unit.char_start == seed.char_start
     ]
     if len(by_anchor) == 1:
         return by_anchor[0]
@@ -249,7 +257,11 @@ def _sentence_unit(
         paragraph_locators=(locator,) if locator else (),
         char_start=sentence.char_start,
         char_end=sentence.char_end,
-        comments=_comments_on_span(comments, locator, sentence.char_start, sentence.char_end),
+        comments=_comments_on_span(comments, locator, sentence.physical_spans),
+        physical_spans=sentence.physical_spans,
+        document_sha256=sentence.document_sha256,
+        geometry_coverage=sentence.geometry_coverage,
+        geometry_diagnostics=sentence.geometry_diagnostics,
     )
 
 
@@ -265,6 +277,10 @@ def _paragraph_unit(paragraph: ParagraphNode, comments: Sequence[DocxComment]) -
         char_start=0,
         char_end=len(paragraph.text),
         comments=tuple(comments_for_locator(list(comments), locator)),
+        physical_spans=paragraph.physical_spans,
+        document_sha256=paragraph.document_sha256,
+        geometry_coverage=paragraph.geometry_coverage,
+        geometry_diagnostics=paragraph.geometry_diagnostics,
     )
 
 
@@ -273,6 +289,7 @@ def _chapter_unit(section: SectionNode, comments: Sequence[DocxComment]) -> Revi
         paragraph.locator for paragraph in section.paragraphs if paragraph.locator is not None
     )
     first = locators[0] if locators else section.locator
+    physical_locators = {span.locator for span in section.physical_spans} or set(locators)
     return ReviewUnit(
         level=ROZDZIAL,
         node_id=section.id,
@@ -285,8 +302,13 @@ def _chapter_unit(section: SectionNode, comments: Sequence[DocxComment]) -> Revi
         comments=tuple(
             comment
             for comment in comments
-            if comment.locator is not None and comment.locator in locators
+            if comment.locator in physical_locators
+            or any(span.locator in physical_locators for span in comment.physical_spans)
         ),
+        physical_spans=section.physical_spans,
+        document_sha256=section.document_sha256,
+        geometry_coverage=section.geometry_coverage,
+        geometry_diagnostics=section.geometry_diagnostics,
     )
 
 
@@ -307,24 +329,34 @@ def _document_unit(document: ReviewDocument, comments: Sequence[DocxComment]) ->
         char_start=None,
         char_end=None,
         comments=tuple(comments),
+        physical_spans=document.physical_spans,
+        document_sha256=document.document_sha256,
+        geometry_coverage=document.geometry_coverage,
+        geometry_diagnostics=document.geometry_diagnostics,
     )
 
 
 def _comments_on_span(
     comments: Sequence[DocxComment],
     locator: str | None,
-    start: int | None,
-    end: int | None,
+    physical_spans: tuple[PhysicalCommentSpan, ...],
 ) -> tuple[DocxComment, ...]:
     matched = comments_for_locator(list(comments), locator)
-    if start is None or end is None:
+    if len(physical_spans) != 1:
         return tuple(matched)
+    start = physical_spans[0].start_offset
+    end = physical_spans[0].end_offset
     sitting: list[DocxComment] = []
     for comment in matched:
-        if comment.start_offset is None or comment.end_offset is None:
+        span = next((span for span in comment.physical_spans if span.locator == locator), None)
+        comment_start = span.start_offset if span is not None else comment.start_offset
+        comment_end = span.end_offset if span is not None else comment.end_offset
+        if comment_start is None or comment_end is None:
             sitting.append(comment)
             continue
-        if comment.start_offset < end and comment.end_offset > start:
+        if (comment_start == comment_end and start <= comment_start <= end) or (
+            comment_start < end and comment_end > start
+        ):
             sitting.append(comment)
     return tuple(sitting)
 

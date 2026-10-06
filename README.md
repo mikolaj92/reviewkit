@@ -90,6 +90,49 @@ result = review_docx(path, reviewer)
 Stay count on one unit is however many times the reviewer stays. Go at the
 end leaves that same file.
 
+## Physical comment regions
+
+The walk keeps its semantic text. `ReviewUnit.physical_spans` is a separate,
+Docxtor-proven raw region for that unit. Each span carries
+its physical locator, offsets and exact source text. Chapter regions include
+their heading and empty paragraphs; the whole-document region includes every
+body/table paragraph in source order. `document_sha256` binds these spans to
+the same DOCX snapshot. `at_stay()` retains that evidence, and the next stay
+refreshes it from the live handle.
+
+Use those spans for a region comment, rather than treating the joined
+`unit.text` or the legacy `paragraph_locator` as a physical range:
+
+```python
+from docxtor import ReviewCoverage
+
+if unit.physical_spans and unit.geometry_coverage is ReviewCoverage.COMPLETE:
+    assert unit.document_sha256 is not None
+    docx.add_comment_region(
+        physical_spans=unit.physical_spans,
+        document_sha256=unit.document_sha256,
+        text="Review remark.",
+    )
+```
+
+Docxtor validates the hash, ordered spans and exact raw text, then writes the
+Word markers on that same handle. Header/footer stories stay separate and
+cannot be folded into one body comment range. Sentence and paragraph units
+retain their semantic coordinates, while Docxtor maps their physical spans
+through leading/trailing whitespace only. Pending source revisions or a text
+profile that cannot be mapped exactly produce incomplete geometry and an
+explicit diagnostic; callers must not fall back to the semantic offsets.
+
+Existing `DocxComment.start_offset` and `end_offset` describe a proven
+single-paragraph anchor, including a point such as `(0, 0)`. A cross-paragraph
+comment has `physical_spans` and `end_locator`, with both scalar offsets left
+unset. Missing, duplicated, reversed or unsupported markers retain incomplete
+`geometry_coverage` and diagnostics; ReviewKit does not guess an anchor by
+searching for its text. `read_comments(path, strict=True)` propagates read
+failures for consumers that must distinguish failure from no comments. The
+legacy tolerant default remains available; the live walk always propagates
+projection failures.
+
 ## Install and run
 
 ```bash
