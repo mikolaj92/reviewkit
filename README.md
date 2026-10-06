@@ -22,7 +22,7 @@ Order, always:
    each paragraph.
 3. **rozdział** — then the same loop over each chapter (a section cut of
    the document).
-4. **całość** — then the whole document, walked *n* times, with the same
+4. **całość** — then the complete body/table text, walked *n* times, with the same
    stay-or-go loop on each walk.
 
 ```mermaid
@@ -116,7 +116,10 @@ if unit.physical_spans and unit.geometry_coverage is ReviewCoverage.COMPLETE:
 ```
 
 Docxtor validates the hash, ordered spans and exact raw text, then writes the
-Word markers on that same handle. Header/footer stories stay separate and
+Word markers on that same handle. The current walk covers body/table text at
+every level, including całość; its text, comments and region share that scope.
+Header/footer text remains available in `ReviewDocument` extraction but is outside
+this walk. Header/footer stories stay separate and
 cannot be folded into one body comment range. Sentence and paragraph units
 retain their semantic coordinates, while Docxtor maps their physical spans
 through leading/trailing whitespace only. Pending source revisions or a text

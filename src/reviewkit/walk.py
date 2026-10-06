@@ -319,16 +319,27 @@ def _document_unit(document: ReviewDocument, comments: Sequence[DocxComment]) ->
         if paragraph.locator is not None
     )
     first = locators[0] if locators else None
+    physical_locators = {span.locator for span in document.physical_spans}
+    text = "\n\n".join(
+        section.text
+        for section in document.sections
+        if _body_section(section) and section.text.strip()
+    )
     return ReviewUnit(
         level=CALOSC,
         node_id=document.id,
-        text=document.text,
+        text=text,
         locator=first,
         paragraph_locator=first,
         paragraph_locators=locators,
         char_start=None,
         char_end=None,
-        comments=tuple(comments),
+        comments=tuple(
+            comment
+            for comment in comments
+            if comment.locator in physical_locators
+            or any(span.locator in physical_locators for span in comment.physical_spans)
+        ),
         physical_spans=document.physical_spans,
         document_sha256=document.document_sha256,
         geometry_coverage=document.geometry_coverage,
