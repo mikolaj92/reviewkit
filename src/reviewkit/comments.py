@@ -1,17 +1,20 @@
-"""Review-semantic projection of Docxtor comment inventory."""
+"""Review-semantic projection of Docxtor's proven comment geometry."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 from docxtor import (
     AddressableComment,
     DocumentError,
     DocxDocument,
+    DocxReviewProjection,
+    PhysicalCommentAnchor,
+    PhysicalCommentSpan,
     ReviewCoverage,
-    inventory_review_markup,
+    ReviewDiagnostic,
+    project_docx_for_review,
 )
 
 
@@ -26,126 +29,101 @@ class DocxComment:
     parent_id: str | None = None
     start_offset: int | None = None
     end_offset: int | None = None
+    # Keep legacy content equality; callers authorize geometry using these fields.
+    end_locator: str | None = field(default=None, compare=False)
+    physical_spans: tuple[PhysicalCommentSpan, ...] = field(default=(), compare=False)
+    document_sha256: str | None = field(default=None, compare=False)
+    geometry_coverage: ReviewCoverage = field(default=ReviewCoverage.INCOMPLETE, compare=False)
+    geometry_diagnostics: tuple[ReviewDiagnostic, ...] = field(default=(), compare=False)
+
+    @property
+    def addressable(self) -> bool:
+        """Whether Docxtor proved a physical anchor for this source snapshot."""
+        return (
+            self.geometry_coverage is ReviewCoverage.COMPLETE
+            and bool(self.physical_spans)
+            and bool(self.document_sha256)
+        )
 
 
-def read_comments(path: str | Path) -> list[DocxComment]:
+def read_comments(path: str | Path, *, strict: bool = False) -> list[DocxComment]:
+    """Read comments; use ``strict=True`` when failure must not mean no comments.
+
+    The tolerant default preserves the existing convenience API. The review walk
+    and live handle use the strict projection path directly.
+    """
     try:
-        return comments_from_document(DocxDocument.open(path))
+        return comments_from_projection(project_docx_for_review(Path(path).read_bytes()))
     except (OSError, DocumentError, ValueError):
+        if strict:
+            raise
         return []
 
 
 def comments_from_document(document: DocxDocument) -> list[DocxComment]:
+    return comments_from_projection(document.project_review())
+
+
+def comments_from_projection(projection: DocxReviewProjection) -> list[DocxComment]:
+    geometry = projection.physical_geometry
+    if geometry is None:
+        raise DocumentError("review projection has no physical geometry")
+    anchors = {anchor.comment_id: anchor for anchor in geometry.comment_anchors}
     return [
-        _project_comment(
-            comment,
-            _host_paragraph_text(document, comment.locator),
-            _marker_range(document, comment),
-        )
-        for comment in document.comments
+        _project_comment(comment, anchors.get(comment.comment_id), geometry.document_sha256)
+        for comment in projection.comments
     ]
 
 
 def comments_for_locator(comments: list[DocxComment], locator: str | None) -> list[DocxComment]:
-    return [] if not locator else [comment for comment in comments if comment.locator == locator]
+    if not locator:
+        return []
+    return [
+        comment
+        for comment in comments
+        if comment.locator == locator
+        or any(span.locator == locator for span in comment.physical_spans)
+    ]
 
 
 def _project_comment(
     comment: AddressableComment,
-    paragraph_text: str = "",
-    marker_range: tuple[int | None, int | None] = (None, None),
+    anchor: PhysicalCommentAnchor | None,
+    document_sha256: str,
 ) -> DocxComment:
-    start, end = marker_range
-    if start is None or end is None:
-        start, end = _unique_range(paragraph_text, comment.anchor_text)
+    trusted = (
+        anchor is not None and anchor.addressable and anchor.document_sha256 == document_sha256
+    )
+    spans: tuple[PhysicalCommentSpan, ...] = anchor.spans if anchor is not None and trusted else ()
+    # Scalar offsets describe exactly one paragraph, including a proven point.
+    # A multi-paragraph range retains its endpoints and ordered physical spans.
+    single_span = spans[0] if len(spans) == 1 else None
     return DocxComment(
-        comment.comment_id,
-        comment.author or "",
-        comment.initials or "",
-        comment.text,
-        comment.locator,
-        comment.anchor_text,
-        comment.parent_id,
-        start,
-        end,
+        id=comment.comment_id,
+        author=comment.author or "",
+        initials=comment.initials or "",
+        text=comment.text,
+        locator=anchor.start_locator if spans and anchor is not None else comment.locator,
+        anchor_text=comment.anchor_text,
+        parent_id=comment.parent_id,
+        start_offset=single_span.start_offset if single_span is not None else None,
+        end_offset=single_span.end_offset if single_span is not None else None,
+        end_locator=anchor.end_locator if anchor is not None else None,
+        physical_spans=spans,
+        document_sha256=document_sha256,
+        geometry_coverage=(
+            anchor.coverage
+            if anchor is not None and anchor.document_sha256 == document_sha256
+            else ReviewCoverage.INCOMPLETE
+        ),
+        geometry_diagnostics=(
+            anchor.diagnostics
+            if anchor is not None and anchor.document_sha256 == document_sha256
+            else (
+                ReviewDiagnostic(
+                    "unprojected_comment_anchor",
+                    f"Comment {comment.comment_id!r} has no matching physical anchor projection.",
+                ),
+            )
+        ),
     )
-
-
-def _host_paragraph_text(document: DocxDocument, locator: str | None) -> str:
-    if not locator:
-        return ""
-    paragraph = document.resolve_paragraph(locator)
-    return paragraph.text if paragraph is not None else ""
-
-
-def _marker_range(
-    document: DocxDocument, comment: AddressableComment
-) -> tuple[int | None, int | None]:
-    if not comment.locator:
-        return (None, None)
-    paragraph = document.resolve_paragraph(comment.locator)
-    if paragraph is None:
-        return (None, None)
-    return _offsets_in_paragraph(paragraph, comment.comment_id)
-
-
-def _offsets_in_paragraph(paragraph: object, comment_id: str) -> tuple[int | None, int | None]:
-    element = getattr(paragraph, "_p", None)
-    if element is None or not hasattr(element, "iter"):
-        return (None, None)
-    start: int | None = None
-    end: int | None = None
-    cursor = 0
-    for node in element.iter():
-        local = _local_name(getattr(node, "tag", ""))
-        marker_id = _attr(node, "id")
-        if local == "commentRangeStart" and marker_id == comment_id:
-            start = cursor
-        elif local == "commentRangeEnd" and marker_id == comment_id:
-            end = cursor
-        elif local == "t":
-            text = getattr(node, "text", None)
-            if text:
-                cursor += len(text)
-        elif local == "tab" or local in {"br", "cr"}:
-            cursor += 1
-    if start is None or end is None or not 0 <= start < end:
-        return (None, None)
-    return (start, end)
-
-
-def _local_name(tag: object) -> str:
-    return tag.rsplit("}", 1)[-1] if isinstance(tag, str) else ""
-
-
-def _attr(node: object, local: str) -> str | None:
-    attrib: Any = getattr(node, "attrib", None)
-    if not attrib:
-        return None
-    for name, value in attrib.items():
-        if _local_name(name) == local:
-            return value
-    return None
-
-
-def _unique_range(paragraph_text: str, anchor_text: str) -> tuple[int | None, int | None]:
-    if not paragraph_text or not anchor_text:
-        return (None, None)
-    start = paragraph_text.find(anchor_text)
-    if start < 0:
-        return (None, None)
-    if paragraph_text.find(anchor_text, start + 1) >= 0:
-        return (None, None)
-    return (start, start + len(anchor_text))
-
-
-def _comment_markers_are_complete(path: str | Path, comments: list[DocxComment]) -> bool:
-    inventory = inventory_review_markup(Path(path).read_bytes())
-    return inventory.coverage is ReviewCoverage.COMPLETE and len({c.id for c in comments}) == len(
-        comments
-    )
-
-
-def _comment_thread_ids_are_complete(path: str | Path) -> bool:
-    inventory = inventory_review_markup(Path(path).read_bytes())
-    return inventory.coverage is ReviewCoverage.COMPLETE
