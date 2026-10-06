@@ -103,8 +103,8 @@ def document_from_projection(
         physical_span = _physical_span(physical_paragraphs, locator)
         text = effective_texts.get(locator, segment.text).strip()
 
-        if segment.is_heading and text:
-            if current.title or current.paragraphs:
+        if segment.is_heading:
+            if current.title or current.paragraphs or current.physical_spans:
                 sections.append(current)
                 current = SectionNode(
                     id=f"s{next(section_ids)}",
@@ -147,7 +147,7 @@ def document_from_projection(
             )
         )
 
-    if current.title or current.paragraphs or not sections:
+    if current.title or current.paragraphs or current.physical_spans or not sections:
         sections.append(current)
 
     # Header/footer paragraphs get their own synthetic sections keyed by source so they
