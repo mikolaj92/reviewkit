@@ -313,11 +313,7 @@ def _chapter_unit(section: SectionNode, comments: Sequence[DocxComment]) -> Revi
 
 
 def _document_unit(document: ReviewDocument, comments: Sequence[DocxComment]) -> ReviewUnit:
-    locators = tuple(
-        paragraph.locator
-        for paragraph in _body_paragraphs(document)
-        if paragraph.locator is not None
-    )
+    locators = tuple(span.locator for span in document.physical_spans)
     first = locators[0] if locators else None
     physical_locators = {span.locator for span in document.physical_spans}
     text = "\n\n".join(
