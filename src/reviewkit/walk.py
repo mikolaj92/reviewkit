@@ -231,16 +231,24 @@ def _body_paragraphs(document: ReviewDocument) -> tuple[ParagraphNode, ...]:
     return tuple(
         paragraph
         for paragraph in document.iter_paragraphs()
-        if paragraph.metadata.get("source") not in _STORY_SKIP
+        if _reviewable_source(paragraph.metadata.get("source"))
+    )
+
+
+def _reviewable_source(source: str | None) -> bool:
+    return source not in _STORY_SKIP and not (
+        source is not None and source.startswith(("header-", "footer-"))
     )
 
 
 def _body_section(section: SectionNode) -> bool:
     source = section.metadata.get("source")
-    if source in _STORY_SKIP:
+    if not _reviewable_source(source):
         return False
     paragraphs = section.paragraphs
-    skipped = all(paragraph.metadata.get("source") in _STORY_SKIP for paragraph in paragraphs)
+    skipped = all(
+        not _reviewable_source(paragraph.metadata.get("source")) for paragraph in paragraphs
+    )
     return not (paragraphs and skipped)
 
 
@@ -319,8 +327,8 @@ def _document_unit(document: ReviewDocument, comments: Sequence[DocxComment]) ->
     text = "\n\n".join(
         section.text
         for section in document.sections
-        if _body_section(section)
-        and section.metadata.get("source") != "txbx"
+        if section.physical_spans
+        and all(span.locator in physical_locators for span in section.physical_spans)
         and section.text.strip()
     )
     return ReviewUnit(

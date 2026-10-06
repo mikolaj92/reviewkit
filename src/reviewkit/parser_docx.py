@@ -323,16 +323,17 @@ def _story_sections(
     if geometry is None:
         raise DocumentError("review projection has no physical geometry")
     physical_paragraphs = {paragraph.locator: paragraph for paragraph in geometry.paragraphs}
-    grouped: dict[str, list[ReviewParagraphProjection]] = {}
+    grouped: dict[tuple[str, str], list[ReviewParagraphProjection]] = {}
     for segment in _iter_review_segments(projection.paragraphs, body=False):
         locator = segment.locator
         source = _segment_source(locator)
         if source in {"comment", "footnote", "endnote"}:
             continue
-        grouped.setdefault(source, []).append(segment)
+        story_id = physical_paragraphs[locator].story_id
+        grouped.setdefault((source, story_id), []).append(segment)
 
     sections: list[SectionNode] = []
-    for source, entries in grouped.items():
+    for (source, story_id), entries in grouped.items():
         non_empty = [
             segment
             for segment in entries
@@ -361,7 +362,7 @@ def _story_sections(
             SectionNode(
                 id=section_id,
                 title=None,
-                metadata={"source": source},
+                metadata={"source": source, "story_id": story_id},
                 paragraphs=paragraphs,
                 physical_spans=tuple(
                     _physical_span(physical_paragraphs, segment.locator) for segment in entries
