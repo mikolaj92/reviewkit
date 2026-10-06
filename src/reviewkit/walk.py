@@ -323,7 +323,9 @@ def _document_unit(document: ReviewDocument, comments: Sequence[DocxComment]) ->
     text = "\n\n".join(
         section.text
         for section in document.sections
-        if _body_section(section) and section.text.strip()
+        if _body_section(section)
+        and section.metadata.get("source") != "txbx"
+        and section.text.strip()
     )
     return ReviewUnit(
         level=CALOSC,

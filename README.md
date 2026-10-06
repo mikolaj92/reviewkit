@@ -119,7 +119,8 @@ Docxtor validates the hash, ordered spans and exact raw text, then writes the
 Word markers on that same handle. The current walk covers body/table text at
 every level, including całość; its text, comments and region share that scope.
 Header/footer text remains available in `ReviewDocument` extraction but is outside
-this walk. Header/footer stories stay separate and
+this walk. Textboxes retain their own lower-level units; they are separate
+stories and are excluded from the body/table całość region. Header/footer stories stay separate and
 cannot be folded into one body comment range. Sentence and paragraph units
 retain their semantic coordinates, while Docxtor maps their physical spans
 through leading/trailing whitespace only. Pending source revisions or a text
