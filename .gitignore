@@ -11,3 +11,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Lokay mill state (factory graph, never in the product tree)
+.lokay/
