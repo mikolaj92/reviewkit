@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from rich.console import Console
 
 from reviewkit.review_docx import review_docx
 
 app = typer.Typer(no_args_is_help=True)
+console = Console()
 
 
 @app.command()
@@ -29,8 +31,8 @@ def review(
 ) -> None:
     client = _resolve_reviewer(reviewer)
     result = review_docx(input_docx, client)
-    typer.echo(f"Reviewed DOCX: {result.path}")
-    typer.echo(f"Visits: {len(result.visits)}")
+    console.print(f"Reviewed DOCX: {result.path}", soft_wrap=True)
+    console.print(f"Visits: {len(result.visits)}")
 
 
 def _resolve_reviewer(spec: str) -> Any:
