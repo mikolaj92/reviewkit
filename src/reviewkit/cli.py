@@ -31,7 +31,7 @@ def review(
 ) -> None:
     client = _resolve_reviewer(reviewer)
     result = review_docx(input_docx, client)
-    console.print(f"Reviewed DOCX: {result.path}", soft_wrap=True)
+    console.print(f"Reviewed DOCX: {result.path}")
     console.print(f"Visits: {len(result.visits)}")
 
 

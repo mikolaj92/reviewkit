@@ -32,6 +32,7 @@ def test_cli_walks_the_same_docx(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
         [str(input_path), "--reviewer", "test_cli:make_reviewer"],
+        env={"COLUMNS": str(len(f"Reviewed DOCX: {input_path}") + 1)},
     )
 
     assert result.exit_code == 0, result.output
