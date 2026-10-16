@@ -117,6 +117,12 @@ one native comment per region. The comments share a `region_set_id` and
 consumer can treat the native set as one review instruction. No prose prefix
 or external feedback file carries that relationship.
 
+For a validated native bridge between a logical scope and its visible Word
+comment, `DocxComment.user_note_text` contains the canonical reviewer remark.
+`DocxComment.text` retains the actual full Word text, including its generated
+link label. Plain native comments have no separate `user_note_text`. Consumers
+use the typed value directly and do not strip labels from comment prose.
+
 The lower-level `add_comment_region(physical_spans=...,
 document_sha256=..., text=...)` remains a single-story primitive. Consumers must
 not flatten several `ReviewRegion` values into it. Docxtor maps revised effective
