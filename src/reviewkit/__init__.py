@@ -16,8 +16,19 @@ from reviewkit.document import (
 from reviewkit.levels import AKAPIT, CALOSC, LEVEL_ORDER, ROZDZIAL, ZDANIE
 from reviewkit.live_docx import LiveDocx, LiveDocxError
 from reviewkit.parser_docx import load_docx
+from reviewkit.regions import ReviewRegion
 from reviewkit.review_docx import DocxReview, DocxReviewer, review_docx
-from reviewkit.walk import ReviewUnit, StayOrGo, WalkVisit, list_units, walk_live_docx
+from reviewkit.walk import (
+    ReviewEvent,
+    ReviewEventKind,
+    ReviewObserver,
+    ReviewTraversalError,
+    ReviewUnit,
+    StayOrGo,
+    WalkVisit,
+    list_units,
+    walk_live_docx,
+)
 
 __all__ = [
     "AKAPIT",
@@ -31,6 +42,11 @@ __all__ = [
     "LiveDocx",
     "LiveDocxError",
     "ReviewDocument",
+    "ReviewEvent",
+    "ReviewEventKind",
+    "ReviewObserver",
+    "ReviewRegion",
+    "ReviewTraversalError",
     "ReviewUnit",
     "RevisionCoverageState",
     "RevisionLedger",

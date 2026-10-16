@@ -36,6 +36,7 @@ from reviewkit.document import (
     SourceRevisionKind,
 )
 from reviewkit.parser_text import split_sentences_with_spans
+from reviewkit.regions import group_regions
 
 
 def load_docx(path: str | Path) -> ReviewDocument:
@@ -126,12 +127,9 @@ def document_from_projection(
                     geometry_coverage=geometry.coverage,
                     geometry_diagnostics=geometry.diagnostics,
                 )
-            current.physical_spans += (physical_span,)
-            continue
+            current.metadata["title_in_paragraphs"] = "true"
 
         current.physical_spans += (physical_span,)
-        if not text:
-            continue
 
         current.paragraphs.append(
             _paragraph_node(
@@ -150,9 +148,6 @@ def document_from_projection(
     if current.title or current.paragraphs or current.physical_spans or not sections:
         sections.append(current)
 
-    # Header/footer paragraphs get their own synthetic sections keyed by source so they
-    # are not misread as body prose tacked onto the trailing body section. Locator strings
-    # ("header:S:p:P"/"footer:S:p:P") are unchanged, so rendering resolves them identically.
     sections.extend(
         _story_sections(
             projection,
@@ -163,6 +158,11 @@ def document_from_projection(
         )
     )
 
+    inventory = tuple(
+        paragraph for paragraph in geometry.paragraphs if paragraph.story_kind != "comment"
+    )
+    paragraph_stories = {paragraph.locator: paragraph.story_id for paragraph in inventory}
+    regions = group_regions((paragraph.span for paragraph in inventory), paragraph_stories)
     metadata = {
         "paragraph_count": str(sum(len(section.paragraphs) for section in sections)),
         "table_count": str(projection.table_count),
@@ -176,11 +176,15 @@ def document_from_projection(
         metadata=metadata,
         comments=comments,
         revision_ledger=revision_ledger,
-        physical_spans=tuple(
-            paragraph.span
-            for paragraph in geometry.paragraphs
-            if paragraph.locator.startswith(("body:", "table:"))
+        physical_spans=regions[0].spans if len(regions) == 1 else (),
+        regions=regions,
+        original_paragraph_locators=tuple(paragraph.locator for paragraph in inventory),
+        original_text_paragraph_locators=tuple(
+            paragraph.locator
+            for paragraph in inventory
+            if effective_texts.get(paragraph.locator, paragraph.text).strip()
         ),
+        paragraph_stories=paragraph_stories,
         document_sha256=geometry.document_sha256,
         geometry_coverage=geometry.coverage,
         geometry_diagnostics=geometry.diagnostics,
@@ -195,7 +199,7 @@ def _project_revision_input(
     coverage = RevisionCoverageState.COMPLETE
     for span in spans:
         locator = _reviewkit_locator(span.container_id)
-        effective = effective_parts.setdefault(span.container_id, [])
+        effective = effective_parts.setdefault(locator, [])
         match span.role:
             case "insertion":
                 effective.append(span.text)
@@ -232,7 +236,15 @@ def _paragraph_node(
     if geometry is None:
         raise DocumentError("review projection has no physical geometry")
     sentences = []
-    for index, (sentence, start, end) in enumerate(split_sentences_with_spans(text), start=1):
+    sentence_spans = split_sentences_with_spans(text)
+    cursor = 0
+    for sentence, start, end in sentence_spans:
+        if start < cursor or text[cursor:start].strip() or text[start:end] != sentence:
+            raise DocumentError(f"sentence segmentation does not cover paragraph {locator!r}")
+        cursor = end
+    if text[cursor:].strip():
+        raise DocumentError(f"sentence segmentation omits paragraph text {locator!r}")
+    for index, (sentence, start, end) in enumerate(sentence_spans, start=1):
         spans, coverage, diagnostics = _semantic_range(
             physical_paragraph, text, start, end, sentence, geometry.coverage
         )
@@ -327,23 +339,16 @@ def _story_sections(
     for segment in _iter_review_segments(projection.paragraphs, body=False):
         locator = segment.locator
         source = _segment_source(locator)
-        if source in {"comment", "footnote", "endnote"}:
+        if source == "comment":
             continue
         story_id = physical_paragraphs[locator].story_id
         grouped.setdefault((source, story_id), []).append(segment)
 
     sections: list[SectionNode] = []
     for (source, story_id), entries in grouped.items():
-        non_empty = [
-            segment
-            for segment in entries
-            if effective_texts.get(segment.locator, segment.text).strip()
-        ]
-        if not non_empty:
-            continue
         section_id = f"s{next(section_ids)}"
         paragraphs: list[ParagraphNode] = []
-        for segment in non_empty:
+        for segment in entries:
             locator = segment.locator
             paragraphs.append(
                 _paragraph_node(

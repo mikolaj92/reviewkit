@@ -10,6 +10,7 @@ from docxtor import PhysicalCommentSpan, ReviewCoverage, ReviewDiagnostic
 from pydantic import BaseModel, ConfigDict, Field
 
 from reviewkit.comments import DocxComment
+from reviewkit.regions import ReviewRegion
 
 
 class SourceRevisionKind(StrEnum):
@@ -91,7 +92,7 @@ class SectionNode(BaseModel):
     @property
     def text(self) -> str:
         parts: list[str] = []
-        if self.title:
+        if self.title and self.metadata.get("title_in_paragraphs") != "true":
             parts.append(self.title)
         parts.extend(paragraph.text for paragraph in self.paragraphs)
         return "\n\n".join(part for part in parts if part.strip())
@@ -107,6 +108,10 @@ class ReviewDocument(BaseModel):
     document_sha256: str | None = None
     geometry_coverage: ReviewCoverage = ReviewCoverage.INCOMPLETE
     geometry_diagnostics: tuple[ReviewDiagnostic, ...] = ()
+    regions: tuple[ReviewRegion, ...] = ()
+    original_paragraph_locators: tuple[str, ...] = ()
+    original_text_paragraph_locators: tuple[str, ...] = ()
+    paragraph_stories: dict[str, str] = Field(default_factory=dict)
     revision_ledger: RevisionLedger = Field(
         default_factory=lambda: RevisionLedger(coverage=RevisionCoverageState.COMPLETE)
     )
