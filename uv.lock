@@ -99,8 +99,8 @@ wheels = [
 
 [[package]]
 name = "docxtor"
-version = "0.18.0"
-source = { git = "https://github.com/mikolaj92/Docxtor.git?rev=19ddf4735c1cfb6d37d69ba21e681c6acb9ba671#19ddf4735c1cfb6d37d69ba21e681c6acb9ba671" }
+version = "0.19.0"
+source = { git = "https://github.com/mikolaj92/Docxtor.git?rev=v0.19.0#f3568dc491708863a5b0b575d11e6d1b1f63739c" }
 dependencies = [
     { name = "pymupdf" },
     { name = "python-docx" },
@@ -527,7 +527,7 @@ wheels = [
 
 [[package]]
 name = "reviewkit"
-version = "0.25.0"
+version = "0.26.0"
 source = { editable = "." }
 dependencies = [
     { name = "docxtor" },
@@ -545,7 +545,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "docxtor", git = "https://github.com/mikolaj92/Docxtor.git?rev=19ddf4735c1cfb6d37d69ba21e681c6acb9ba671" },
+    { name = "docxtor", git = "https://github.com/mikolaj92/Docxtor.git?rev=v0.19.0" },
     { name = "pydantic", specifier = ">=2.13.5,<2.14" },
     { name = "rich", specifier = ">=15.0.0" },
     { name = "typer", specifier = ">=0.26.7" },

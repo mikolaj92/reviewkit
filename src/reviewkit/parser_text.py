@@ -8,43 +8,6 @@ _SENTENCE_PUNCT_RE = re.compile(r"[.!?。！？…؟।]+", re.UNICODE)
 _STRONG_TERMINATORS = frozenset("。！？…؟।")
 _TRAILING_WORD_RE = re.compile(r"(\w+)$", re.UNICODE)
 _CLOSERS = frozenset("\"'”’»)]}")
-_LEGAL_ABBREVIATIONS = frozenset(
-    {
-        "art",
-        "ust",
-        "pkt",
-        "lit",
-        "poz",
-        "nr",
-        "sygn",
-        "dz",
-        "sp",
-        "al",
-        "ul",
-        "par",
-        "rozdz",
-        "str",
-        "zob",
-        "por",
-        "np",
-        "tj",
-        "tzn",
-        "tzw",
-        "prof",
-        "dr",
-        "hab",
-        "inż",
-        "mgr",
-        "św",
-        "im",
-        "godz",
-        "tel",
-        "zw",
-        "wyr",
-        "post",
-        "uchw",
-    }
-)
 _NUMBERED_PREFIX_RE = re.compile(
     r"(?:^|\n)\s*(?:§\s*)?\(?(?:\d+(?:\.\d+)*[a-z]?|[ivxlcdm]+)\)?$",
     re.IGNORECASE,
@@ -98,8 +61,6 @@ def _is_sentence_boundary(text: str, punct_start: int, punct_end: int) -> bool:
     trailing = _TRAILING_WORD_RE.search(text[:punct_start])
     if trailing is not None:
         word = trailing.group(1)
-        if word.casefold() in _LEGAL_ABBREVIATIONS:
-            return False
         if len(word) == 1 and word.isalpha():
             return False
     following = _next_non_space_char(text, after)

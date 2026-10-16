@@ -98,6 +98,10 @@ tables, headers, footers, user footnotes, endnotes and text boxes participate at
 every level. Native comment bodies remain context. Mechanical note separators
 are excluded by Docxtor's physical inventory.
 
+Sentence segmentation uses general punctuation, initials, and numbering rules.
+It is heuristic and contains no domain abbreviation dictionary. Domain knowledge
+belongs to applications using the review protocol.
+
 `ReviewUnit.regions` contains one `ReviewRegion(story_id, spans)` per original
 story. Each span has an exact physical locator, offsets and raw source text.
 `document_sha256` binds all regions to the current DOCX snapshot. The existing

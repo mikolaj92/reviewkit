@@ -1,6 +1,6 @@
 [project]
 name = "reviewkit"
-version = "0.25.0"
+version = "0.26.0"
 description = "Stay-or-go walk of one DOCX: zdanie, akapit, rozdział, całość"
 readme = "README.md"
 authors = [
@@ -23,7 +23,7 @@ dependencies = [
     "pydantic>=2.13.5,<2.14",
     "rich>=15.0.0",
     "typer>=0.26.7",
-    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@19ddf4735c1cfb6d37d69ba21e681c6acb9ba671",
+    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@v0.19.0",
 ]
 
 [project.scripts]
