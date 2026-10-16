@@ -23,7 +23,7 @@ dependencies = [
     "pydantic>=2.13.5,<2.14",
     "rich>=15.0.0",
     "typer>=0.26.7",
-    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@946d185ab3c305dc2d587865e5b72ca648341d94",
+    "docxtor @ git+https://github.com/mikolaj92/Docxtor.git@19ddf4735c1cfb6d37d69ba21e681c6acb9ba671",
 ]
 
 [project.scripts]
