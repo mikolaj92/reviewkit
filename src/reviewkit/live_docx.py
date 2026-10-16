@@ -8,6 +8,7 @@ replace text. It does not invent markup.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from docxtor import (
     CommentAuthor,
@@ -18,6 +19,7 @@ from docxtor import (
     PhysicalCommentRange,
     PhysicalCommentSpan,
     PublishError,
+    ReviewCoverage,
     RevisionAuthor,
     RevisionPosition,
     RevisionRange,
@@ -26,6 +28,9 @@ from docxtor import (
 from reviewkit.comments import DocxComment, comments_from_document
 from reviewkit.document import ReviewDocument
 from reviewkit.parser_docx import document_from_projection
+
+if TYPE_CHECKING:
+    from reviewkit.walk import ReviewUnit
 
 
 class LiveDocxError(RuntimeError):
@@ -122,6 +127,35 @@ class LiveDocx:
         ) as exc:
             raise LiveDocxError(str(exc)) from exc
         return created[0]
+
+    def add_review_comment(
+        self,
+        unit: ReviewUnit,
+        text: str,
+        author: str = "Reviewer",
+        initials: str = "RV",
+    ) -> tuple[str, ...]:
+        if (
+            not unit.regions
+            or not unit.document_sha256
+            or unit.geometry_coverage is not ReviewCoverage.COMPLETE
+        ):
+            raise LiveDocxError("review scope has no source-bound physical regions")
+        writer = CommentAuthor(author=author, initials=initials)
+        try:
+            result = self._document.add_physical_comment_regions(
+                tuple(region.spans for region in unit.regions),
+                text,
+                writer,
+                document_sha256=unit.document_sha256,
+            )
+            created = tuple(result.receipt.created_ids)
+            if len(created) != len(unit.regions):
+                raise LiveDocxError("review comment did not cover every story region")
+            self._publish()
+        except (OSError, DocumentError, CommentMutationError, PublishError, ValueError) as exc:
+            raise LiveDocxError(str(exc)) from exc
+        return created
 
     def update_comment(self, comment_id: str, text: str) -> str:
         """Change the body of an existing Word comment. Range markers stay."""

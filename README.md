@@ -22,7 +22,7 @@ Order, always:
    each paragraph.
 3. **rozdział** — then the same loop over each chapter (a section cut of
    the document).
-4. **całość** — then the complete body/table text, walked *n* times, with the same
+4. **całość** — then all original-text stories, walked *n* times, with the same
    stay-or-go loop on each walk.
 
 ```mermaid
@@ -92,40 +92,64 @@ end leaves that same file.
 
 ## Physical comment regions
 
-The walk keeps its semantic text. `ReviewUnit.physical_spans` is a separate,
-Docxtor-proven raw region for that unit. Each span carries
-its physical locator, offsets and exact source text. Chapter regions include
-their heading and empty paragraphs; the whole-document region includes every
-body/table paragraph in source order. `document_sha256` binds these spans to
-the same DOCX snapshot. `at_stay()` retains that evidence, and the next stay
-refreshes it from the live handle.
+The walk keeps its semantic text. Every heading participates as its own paragraph
+and sentences, while its chapter includes the heading text once. Body text,
+tables, headers, footers, user footnotes, endnotes and text boxes participate at
+every level. Native comment bodies remain context. Mechanical note separators
+are excluded by Docxtor's physical inventory.
 
-Use those spans for a region comment, rather than treating the joined
-`unit.text` or the legacy `paragraph_locator` as a physical range:
+`ReviewUnit.regions` contains one `ReviewRegion(story_id, spans)` per original
+story. Each span has an exact physical locator, offsets and raw source text.
+`document_sha256` binds all regions to the current DOCX snapshot. The existing
+`physical_spans` field contains spans only when the unit has one story. A
+multi-story scope never pretends to be one cross-story Word range.
+
+Use the live review operation to comment on a scope:
 
 ```python
-from docxtor import ReviewCoverage
-
-if unit.physical_spans and unit.geometry_coverage is ReviewCoverage.COMPLETE:
-    assert unit.document_sha256 is not None
-    docx.add_comment_region(
-        physical_spans=unit.physical_spans,
-        document_sha256=unit.document_sha256,
-        text="Review remark.",
-    )
+comment_ids = docx.add_review_comment(unit, "Review remark.")
 ```
 
-Docxtor validates the hash, ordered spans and exact raw text, then writes the
-Word markers on that same handle. The current walk covers body/table text at
-every level, including całość; its text, comments and region share that scope.
-Header/footer text remains available in `ReviewDocument` extraction but is outside
-this walk. Textboxes retain their own lower-level units; they are separate
-stories and are excluded from the body/table całość region. Header/footer stories stay separate and
-cannot be folded into one body comment range. Sentence and paragraph units
-retain their semantic coordinates, while Docxtor maps their physical spans
-through leading/trailing whitespace only. Pending source revisions or a text
-profile that cannot be mapped exactly produce incomplete geometry and an
-explicit diagnostic; callers must not fall back to the semantic offsets.
+Docxtor validates every source-bound region before adopting the complete
+mutation. One story produces one native comment. A multi-story scope produces
+one native comment per region. The comments share a `region_set_id` and
+`region_set_size` persisted inside DOCX. `DocxComment` exposes those fields so a
+consumer can treat the native set as one review instruction. No prose prefix
+or external feedback file carries that relationship.
+
+The lower-level `add_comment_region(physical_spans=...,
+document_sha256=..., text=...)` remains a single-story primitive. Consumers must
+not flatten several `ReviewRegion` values into it. Docxtor maps revised effective
+text to physical raw origins, preserving the original tracked revisions.
+Incomplete geometry raises instead of guessing an anchor from matching text.
+
+Each level captures its ordered source scopes once. The next STAY reloads the
+same captured scope's current text, comments and proven geometry. Native tracked
+edits carry a source-bound operation receipt chain on the live Docxtor handle.
+The walk maps that captured scope through the chain and materializes effective
+text from Docxtor's exact source origins. A replacement may produce two sentences
+inside the same scope. A complete deletion leaves an empty effective scope.
+Both still receive the next callback with the same node ID until explicit GO.
+
+GO advances to the next captured scope. Removing a sentence terminator cannot
+silently skip the following original sentence when the current text now parses
+as one sentence. A missing physical story or unproved mutation interrupts the
+walk. No text matching or semantic-offset guess selects a replacement scope.
+Each level validates its represented
+paragraph locators against the original-text physical inventory. Successful
+`DocxReview.coverage` is `ReviewCoverage.COMPLETE`.
+
+An optional synchronous observer receives typed events:
+
+```python
+result = review_docx(path, reviewer, observer=record_event)
+```
+
+`ReviewEvent.kind` is `entered`, `stayed`, `advanced`, `interrupted` or `completed`.
+Events carry a monotonic sequence, level, node ID, stay index, before/after
+snapshot hashes and newly created native comment IDs. They carry no document or
+comment text. Exceptions remain exceptions after `interrupted` is emitted.
+The observer is diagnostic. DOCX remains the review state.
 
 Existing `DocxComment.start_offset` and `end_offset` describe a proven
 single-paragraph anchor, including a point such as `(0, 0)`. A cross-paragraph

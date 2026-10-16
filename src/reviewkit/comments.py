@@ -36,6 +36,9 @@ class DocxComment:
     geometry_coverage: ReviewCoverage = field(default=ReviewCoverage.INCOMPLETE, compare=False)
     geometry_diagnostics: tuple[ReviewDiagnostic, ...] = field(default=(), compare=False)
 
+    region_set_id: str | None = field(default=None, compare=False)
+    region_set_size: int | None = field(default=None, compare=False)
+
     @property
     def addressable(self) -> bool:
         """Whether Docxtor proved a physical anchor for this source snapshot."""
@@ -106,6 +109,8 @@ def _project_comment(
         locator=anchor.start_locator if spans and anchor is not None else comment.locator,
         anchor_text=comment.anchor_text,
         parent_id=comment.parent_id,
+        region_set_id=comment.region_set_id,
+        region_set_size=comment.region_set_size,
         start_offset=single_span.start_offset if single_span is not None else None,
         end_offset=single_span.end_offset if single_span is not None else None,
         end_locator=anchor.end_locator if anchor is not None else None,
