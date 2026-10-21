@@ -180,7 +180,7 @@ def walk_live_docx(
         state.emit(ReviewEventKind.COMPLETED, state.digest, _digest(live))
     except (Exception, KeyboardInterrupt):
         try:
-            after = _digest(live)
+            after: str | None = _digest(live)
             created = tuple(
                 comment.id
                 for comment in live.comments()

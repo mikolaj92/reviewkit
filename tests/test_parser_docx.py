@@ -20,9 +20,9 @@ def test_document_is_split_into_sections_paragraphs_and_sentences(tmp_path: Path
     assert len(document.sections) == 1
     assert document.sections[0].id == "s1"
     assert document.sections[0].title == "Rozdział 1"
-    assert len(document.sections[0].paragraphs) == 1
-    paragraph = document.sections[0].paragraphs[0]
-    assert paragraph.id == "p1"
+    assert len(document.sections[0].paragraphs) == 2
+    paragraph = document.sections[0].paragraphs[1]
+    assert paragraph.id == "p2"
     assert paragraph.locator == "body:p:1"
     assert document.metadata["tracked_revisions_detected"] == "false"
     assert [sentence.text for sentence in paragraph.sentences] == ["Ala ma kota.", "Kot ma dom."]
@@ -61,7 +61,7 @@ def test_english_styled_heading_starts_a_new_section(tmp_path: Path) -> None:
     document = load_docx(input_path)
 
     assert [section.title for section in document.sections] == ["Introduction", "Conclusion"]
-    assert [len(section.paragraphs) for section in document.sections] == [1, 1]
+    assert [len(section.paragraphs) for section in document.sections] == [2, 2]
 
 
 def test_core_source_contains_no_polish_or_domain_vocabulary() -> None:
@@ -126,8 +126,8 @@ def test_table_lands_under_its_authoring_section(tmp_path: Path) -> None:
 
     assert "table:0:r:0:c:0:p:0" in first_locators
     assert "body:p:1" in first_locators  # "Intro paragraph." keeps its true body index
-    assert first_locators == ["body:p:1", "table:0:r:0:c:0:p:0"]
-    assert second_locators == ["body:p:3"]  # heading at p:2 consumes an index
+    assert first_locators == ["body:p:0", "body:p:1", "table:0:r:0:c:0:p:0"]
+    assert second_locators == ["body:p:2", "body:p:3"]
 
 
 def test_header_and_footer_get_dedicated_sections(tmp_path: Path) -> None:
