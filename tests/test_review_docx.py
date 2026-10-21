@@ -205,11 +205,10 @@ def test_review_walks_one_docx_in_place(tmp_path: Path) -> None:
     assert CALOSC not in levels[: levels.index(ROZDZIAL)]
     zdanie = [visit for visit in result.visits if visit.level == ZDANIE]
     assert all(visit.level == ZDANIE for visit in result.visits[: len(zdanie)])
-    assert [visit.stay_index for visit in zdanie[:3]] == [0, 1, 2]
-    assert zdanie[0].text == _FIRST
-    assert zdanie[1].text == _FIRST
-    assert zdanie[2].text == _FIRST
-    assert zdanie[3].text == _SECOND
+    assert [visit.stay_index for visit in zdanie[:4]] == [0, 0, 1, 2]
+    assert zdanie[0].text == "Rozdział 1"
+    assert [visit.text for visit in zdanie[1:4]] == [_FIRST] * 3
+    assert zdanie[4].text == _SECOND
     assert reviewer.second_sentence_seen is True
     assert reviewer.comments_before_second_sentence is not None
     assert reviewer.comments_before_second_sentence.count(_NOTE_ONE) == 1
@@ -253,7 +252,7 @@ def test_delete_middle_sentence_then_dalej_continues_walk(tmp_path: Path) -> Non
     result = review_docx(path, decide)
 
     zdanie = [visit for visit in result.visits if visit.level == ZDANIE]
-    assert [visit.text for visit in zdanie] == [_ALPHA, _BRAVO, _CHARLIE]
+    assert [visit.text for visit in zdanie] == ["Rozdział 1", _ALPHA, _BRAVO, _CHARLIE]
     levels = [visit.level for visit in result.visits]
     assert AKAPIT in levels
     assert ROZDZIAL in levels
@@ -269,16 +268,14 @@ def test_delete_then_zostan_does_not_continue_on_next_sentence(tmp_path: Path) -
             _delete_unit_text(docx, unit)
             return StayOrGo.STAY
         if unit.level == ZDANIE and unit.stay_index > 0:
-            raise AssertionError(f"stay continued onto {unit.text!r}")
+            assert unit.text == "" and unit.node_id == "p2.s2"
         return StayOrGo.GO
 
     result = review_docx(path, decide)
 
     zdanie = [visit for visit in result.visits if visit.level == ZDANIE]
     assert [(visit.text, visit.stay_index) for visit in zdanie] == [
-        (_ALPHA, 0),
-        (_BRAVO, 0),
-        (_CHARLIE, 0),
+        ("Rozdział 1", 0), (_ALPHA, 0), (_BRAVO, 0), ("", 1), (_CHARLIE, 0),
     ]
     levels = [visit.level for visit in result.visits]
     assert AKAPIT in levels
@@ -286,7 +283,7 @@ def test_delete_then_zostan_does_not_continue_on_next_sentence(tmp_path: Path) -
     assert CALOSC in levels
 
 
-def test_new_sentence_created_during_zdanie_is_visited(tmp_path: Path) -> None:
+def test_new_sentence_created_during_zdanie_stays_in_captured_scope(tmp_path: Path) -> None:
     path = _three_sentence_docx(tmp_path / "insert-zdanie.docx")
     inserted = False
 
@@ -310,9 +307,9 @@ def test_new_sentence_created_during_zdanie_is_visited(tmp_path: Path) -> None:
     result = review_docx(path, decide)
 
     zdanie = [visit.text for visit in result.visits if visit.level == ZDANIE]
-    assert zdanie == [_ALPHA, _BRAVO, _CHARLIE, _DELTA]
+    assert zdanie == ["Rozdział 1", _ALPHA, _BRAVO, f"{_CHARLIE} {_DELTA}"]
     levels = [visit.level for visit in result.visits]
-    assert AKAPIT in levels
+    assert any(_DELTA in visit.text for visit in result.visits if visit.level == AKAPIT)
     assert ROZDZIAL in levels
     assert CALOSC in levels
 
